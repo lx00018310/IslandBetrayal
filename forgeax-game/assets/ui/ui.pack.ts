@@ -6,7 +6,6 @@ import { ok } from '@forgeax/engine/types';
 
 import type {} from '@forgeax/engine/app';
 import { createGuideUi } from './guide-controller.ts';
-import { mountIslandGame } from './island-game.ts';
 
 export const ui: Plugin.Object<{ readonly guide: string }> = {
   name: 'game-3d/ui',
@@ -21,8 +20,6 @@ export const ui: Plugin.Object<{ readonly guide: string }> = {
       yield () => assets.release(loaded.value).unwrap();
       const ui = await createGuideUi(assets.read(loaded.value).unwrap(), ctx.gameHost!);
       yield () => ui.dispose();
-      const island = mountIslandGame();
-      yield () => island.dispose();
     });
   },
 };

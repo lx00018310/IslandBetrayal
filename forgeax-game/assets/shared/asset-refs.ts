@@ -19,6 +19,8 @@ export const PACKAGE_IDS = Object.freeze({
   fantasyMeshes: definePackageId('019fb7ce-3500-7000-8000-000000000000'),
   ui: definePackageId('019fb7ce-3600-7000-8000-000000000000'),
   character: definePackageId('019fb7ce-3700-7000-8000-000000000000'),
+  islandArt: definePackageId('019fb7ce-3f00-7000-8000-000000000000'),
+  islandGame: definePackageId('019fb7ce-4000-7000-8000-000000000000'),
 });
 
 /** Material identities are derived from the owning Pack namespace and source key. */

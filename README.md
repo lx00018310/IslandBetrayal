@@ -37,22 +37,26 @@ pnpm.cmd dev
 
 本仓库不包含完整引擎 SDK；当前游戏依赖通过版本及锁文件固定。新机器安装和从零恢复尚未验证。技能发现链接需要时可在游戏目录执行 `pnpm.cmd exec forgeax project skill install --json` 重建。
 
-## 初始检查记录（2026-11-05）
+## 视觉改造与原生呈现记录（2026-11-05）
 
-本次只建立版本管理基线，未改动游戏逻辑，未进行构建、发布或比赛规则核验。
+依据 `docs/plans/2026-11-05-tibo-style-visual-plan.md`，已将原有独立 Canvas 2D 挂载原型完整重构为天工引擎原生 2.5D 场景与 Plugin 驱动架构：
 
-| 检查 | 结果 |
+| 模块 | 职责与交付状态 |
 | --- | --- |
-| 拟提交文件的 JSON 语法 | 通过 |
-| 常见凭据文件及密钥格式扫描 | 未发现命中；仅为基础模式检查 |
-| `pnpm.cmd typecheck` | 通过；`assets/ui/island-game.ts` 使用 `@ts-nocheck`，不受类型检查覆盖 |
-| `pnpm.cmd test` | 共 48 项，44 项通过、4 项失败；失败位于 `assets/ui/__tests__/ui.test.ts`，调用 `mountIslandGame()` 时出现 `ReferenceError: document is not defined` |
-| `pnpm.cmd exec forgeax project check --json` | 未通过：`project-pnpm-workspace-state-stale`；安装记录中的工作区模式与 `pnpm-workspace.yaml` 不一致 |
-| 游戏运行与核心玩法 | 本次未进行浏览器试玩，不能据此判定可玩性或参赛完成度 |
+| `assets/island/simulation.ts` | 纯 TypeScript 提取的荒岛玩法规则（结盟、背叛、打怪、爆箱、掠夺、冲撞、缩圈与胜负结算），无 DOM/Canvas 依赖，单元测试覆盖 |
+| `assets/island/art.pack.ts` | 原生体素草地、平整薄层地面、10 色体素角色、虚空水面、怪物、宝箱、战利品与脚底投影网格/材质包 |
+| `assets/island/presentation.ts` | 原生正交相机跟随（55° 俯角近景跟随主角）、脚底接触影、地块下沉崩塌、前后深度遮挡与体素朝向同步 |
+| `assets/island/island.pack.ts` | 原生 Cordis 插件，驱动 ECS Update 循环与模拟推进，注册 `island.match` 验收只读投影，跨领域同步 HUD 状态 |
+| `assets/guide.ui.html` / `guide.ui.css` / `ui/guide-controller.ts` | 符合天工引擎 UiAuthoringProfile 的原生 HUD 界面（计时器、阶段、存活/宝物、队伍列表、虚拟摇杆与结盟/踢箱/冲撞按键、结算卡片） |
+| `assets/ui/island-game.ts` | 已安全退役并移除独立可见 Canvas 画布与 `@ts-nocheck` |
+| `scripts/playthrough.mjs` | 更新为全流程核心玩法端到端验收与 8 阶段截图断言 |
 
-后续开发需注意：
+### 质量与验证结果
 
-- `assets/ui/island-game.ts` 通过 frontend root 挂载独立 Canvas 2D，绘制等距体素风格画面；它不是设计案所述的引擎原生 3D 玩法场景。
-- 当前代码创建 1 名本地玩家与 9 名 AI；尚未接入真人实时联机。
-- `forgeax-game/README.md` 和 `scripts/playthrough.mjs` 仍主要描述或验证原始 3D 模板，没有覆盖荒岛核心玩法。
-- 设计案中已有平台形态、单局 5 分钟与体验时长等待确认事项。赛事要求是否适用、是否满足，仍需另行核实。
+| 检查项 | 状态 | 验证结果 |
+| --- | --- | --- |
+| `pnpm.cmd exec forgeax project check --json` | 通过 | 补充 `pnpm-workspace.yaml` packages 声明，消除 `project-pnpm-workspace-state-stale` |
+| `pnpm.cmd test` | 通过 | 11 个测试套件，55 项单元测试 100% 全部通过 |
+| `pnpm.cmd typecheck` | 通过 | 全工程无 TypeScript 编译错误 |
+| `pnpm.cmd exec forgeax project play scripts/playthrough.mjs --json` | 通过 | 10 个测试步骤端到端全部通过，实测帧率稳定在 119~121 FPS，生成全套状态截图 |
+

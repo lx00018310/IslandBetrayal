@@ -1,97 +1,346 @@
+/* 《荒岛合纵：破箱局》HUD 样式表 */
 :host {
-  display: block;
-  color: #fff;
-  font: 600 13px ui-sans-serif, system-ui, sans-serif;
-  user-select: none;
-}
-.guide {
-  position: absolute;
-  top: 14px;
-  left: 14px;
-  display: grid;
-  gap: 3px;
-  padding: 9px 11px;
-  background: rgb(8 18 32 / 78%);
-  border: 1px solid rgb(255 255 255 / 20%);
-  border-radius: 9px;
+  position: fixed;
+  inset: 0;
   pointer-events: none;
-}
-.guide strong { color: #ffdf76; text-transform: uppercase; letter-spacing: 0.08em; }
-.guide small { color: #c8d7e8; font-weight: 500; }
-.languages { display: flex; gap: 6px; margin-top: 3px; }
-.guide button { pointer-events: auto; cursor: pointer; padding: 4px 10px; border: 1px solid #678; border-radius: 4px; background: #203040; color: white; }
-.crosshair { position: absolute; top: 50%; left: 50%; display: none; transform: translate(-50%, -50%); font-size: 24px; text-shadow: 0 1px 4px #000; }
-:host(.locked) .crosshair { display: block; }
-.vase-panel {
-  position: absolute;
-  top: 14px;
-  right: 14px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+  color: #cfe3ef;
+  user-select: none;
   box-sizing: border-box;
-  width: 240px;
-  max-height: calc(100% - 28px);
-  overflow: auto;
-  padding: 12px;
-  border: 1px solid rgb(255 255 255 / 20%);
-  border-radius: 9px;
-  background: rgb(8 18 32 / 90%);
+}
+
+*, *::before, *::after {
+  box-sizing: border-box;
+}
+
+.hidden {
+  display: none !important;
+}
+
+/* 顶部信息栏 */
+.island-hud {
+  position: absolute;
+  top: 10px;
+  left: 12px;
+  right: 12px;
+  display: flex;
+  gap: 10px;
+  justify-content: space-between;
   pointer-events: auto;
 }
-.vase-body { display: none; }
-:host(.vase-open) .vase-body { display: block; }
-.vase-panel p, .vase-panel [data-ui-part="vase-status"] { display: block; color: #c8d7e8; font-size: 12px; font-weight: 400; line-height: 1.45; }
-.vase-panel form { display: grid; gap: 9px; margin: 12px 0; }
-.vase-panel label { display: flex; align-items: center; justify-content: space-between; }
-.vase-panel input { width: 76px; padding: 5px; border: 1px solid #526377; border-radius: 4px; background: #152637; color: white; font: inherit; }
-.vase-panel button { padding: 8px; border: 0; border-radius: 5px; color: #142230; background: #ffdf76; font: inherit; cursor: pointer; }
-.vase-panel [data-ui-part="vase-toggle"] { width: 100%; }
-.vase-panel :disabled { opacity: 0.6; cursor: wait; }
-:host(.locked) .vase-panel { display: none; }
-.touch-controls { display: none; }
-:host(.touch.controls-ready) .touch-controls { display: block; }
-:host(.touch.vase-open) .touch-controls { display: none; }
-.move-stick, .look-pad, .touch-actions { position: absolute; box-sizing: border-box; pointer-events: auto; touch-action: none; }
+
+.hud-col {
+  background: rgba(12, 24, 38, 0.88);
+  border: 1px solid rgba(150, 200, 225, 0.28);
+  border-radius: 6px;
+  padding: 6px 12px;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+}
+
+.hud-title-col {
+  min-width: 220px;
+}
+.game-title {
+  font-size: 15px;
+  color: #ffe6a8;
+  font-weight: bold;
+}
+.game-subtitle {
+  font-size: 10px;
+  color: #8fb6c9;
+  margin-top: 2px;
+}
+
+.hud-center-col {
+  min-width: 180px;
+  align-items: center;
+}
+.match-timer {
+  font-size: 18px;
+  font-weight: bold;
+  color: #ffffff;
+  letter-spacing: 1px;
+}
+.match-phase {
+  font-size: 10px;
+  color: #7ee08a;
+  margin-top: 2px;
+}
+
+.hud-stats-col {
+  min-width: 140px;
+  align-items: center;
+}
+.survivors-count {
+  font-size: 14px;
+  font-weight: bold;
+  color: #ffffff;
+}
+.player-treasure {
+  font-size: 10px;
+  color: #ffd257;
+  margin-top: 2px;
+}
+
+.hud-speed-col {
+  min-width: 160px;
+  align-items: flex-end;
+}
+.btn-speed {
+  background: rgba(45, 85, 120, 0.6);
+  border: 1px solid rgba(140, 200, 240, 0.4);
+  color: #ffe6a8;
+  font-size: 11px;
+  font-weight: bold;
+  padding: 3px 8px;
+  border-radius: 4px;
+  cursor: pointer;
+}
+.btn-speed:hover {
+  background: rgba(60, 110, 155, 0.8);
+}
+.shortcut-tip {
+  font-size: 8px;
+  color: #7f9cae;
+  margin-top: 3px;
+}
+
+/* 队伍侧边栏 */
+.team-sidebar {
+  position: absolute;
+  top: 72px;
+  left: 12px;
+  width: 170px;
+  background: rgba(12, 24, 38, 0.78);
+  border: 1px solid rgba(150, 200, 225, 0.24);
+  border-radius: 6px;
+  padding: 8px 10px;
+  pointer-events: auto;
+}
+.sidebar-title {
+  font-size: 11px;
+  font-weight: bold;
+  color: #9fc4d8;
+  border-bottom: 1px solid rgba(150, 200, 225, 0.18);
+  padding-bottom: 4px;
+  margin-bottom: 6px;
+}
+.team-list {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.team-item {
+  font-size: 10px;
+  color: #dbe9f2;
+}
+.empty-team {
+  color: #6a889c;
+  font-style: italic;
+}
+
+/* 玩家状态卡片 */
+.player-card {
+  position: absolute;
+  top: 72px;
+  right: 12px;
+  width: 180px;
+  background: rgba(12, 24, 38, 0.78);
+  border: 1px solid rgba(150, 200, 225, 0.24);
+  border-radius: 6px;
+  padding: 8px 10px;
+  pointer-events: auto;
+}
+.player-name-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  font-weight: bold;
+  color: #e05a4f;
+}
+.player-hp-bar {
+  width: 100%;
+  height: 6px;
+  background: rgba(0, 0, 0, 0.5);
+  border-radius: 3px;
+  margin: 6px 0;
+  overflow: hidden;
+}
+.hp-fill {
+  height: 100%;
+  width: 100%;
+  background: #7ee08a;
+}
+.player-status-hint {
+  font-size: 9px;
+  color: #9fc4d8;
+}
+.kick-charge-container {
+  margin-top: 6px;
+}
+.kick-label {
+  font-size: 9px;
+  color: #ff8a6a;
+  font-weight: bold;
+  margin-bottom: 2px;
+}
+.kick-bar {
+  width: 100%;
+  height: 4px;
+  background: rgba(0, 0, 0, 0.5);
+  border-radius: 2px;
+  overflow: hidden;
+}
+.kick-fill {
+  height: 100%;
+  width: 0%;
+  background: #ff6a4a;
+}
+
+/* 触控控件（默认在桌面非 touch 模式下隐藏） */
+.touch-controls {
+  display: none;
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+}
+
+:host(.touch) .touch-controls {
+  display: block;
+}
+
 .move-stick {
-  bottom: 42px; left: 24px; width: 124px; height: 124px;
-  border: 2px solid rgb(216 233 251 / 60%); border-radius: 50%;
-  background: rgb(8 18 32 / 64%);
+  position: absolute;
+  left: 28px;
+  bottom: 28px;
+  width: 110px;
+  height: 110px;
+  border-radius: 50%;
+  background: rgba(15, 30, 48, 0.45);
+  border: 2px solid rgba(160, 210, 240, 0.35);
+  pointer-events: auto;
+  touch-action: none;
+  display: flex;
+  align-items: center;
+  justify-content: center;
 }
-.move-thumb { position: absolute; left: 50%; top: 50%; margin-left: -22px; margin-top: -22px; width: 44px; height: 44px; border-radius: 50%; background: #ffdf76; border: 2px solid #fff0ad; box-sizing: border-box; pointer-events: none; }
-.move-label { position: absolute; bottom: 10px; left: 0; width: 100%; text-align: center; font-size: 11px; pointer-events: none; }
-.look-pad { right: 24px; bottom: 132px; width: 152px; height: 124px; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 6px; border: 1px solid rgb(216 233 251 / 50%); border-radius: 18px; background: rgb(8 18 32 / 42%); }
-.look-pad strong, .look-pad small { pointer-events: none; }
-.look-pad small { font-size: 11px; color: #c8d7e8; }
-.touch-actions { right: 24px; bottom: 42px; display: flex; gap: 10px; }
-.touch-actions button { width: 72px; height: 66px; border-radius: 14px; border: 2px solid #d8e9fb; background: #142b43; color: white; font: inherit; cursor: pointer; }
-.touch-actions [data-ui-part="jump"] { background: #ffdf76; color: #142230; border-color: #fff0ad; }
-.touch-actions button.held, .move-stick.held, .look-pad.held { background: #426681; border-color: #ffdf76; }
-:host(.touch) .guide { top: 52px; left: 20px; right: 20px; gap: 3px; font-size: 12px; }
-:host(.touch) .guide small { font-size: 11px; }
-:host(.touch) .languages button { padding: 4px 6px; font-size: 10px; }
-:host(.touch) .vase-panel { top: 188px; right: 20px; width: 166px; padding: 6px; max-height: calc(100% - 228px); }
-:host(.touch.vase-open) .vase-panel { width: 240px; padding: 12px; }
-@media (orientation: landscape) {
-  :host(.touch) .guide { top: 22px; left: 56px; right: auto; width: 290px; }
-  :host(.touch) .vase-panel { top: 60px; right: 56px; max-height: calc(100% - 88px); }
-  .move-stick { left: 56px; bottom: 28px; }
-  .look-pad { right: 56px; bottom: 112px; height: 106px; }
-  .touch-actions { right: 56px; bottom: 28px; }
+.move-thumb {
+  width: 44px;
+  height: 44px;
+  border-radius: 50%;
+  background: rgba(200, 230, 250, 0.65);
+  pointer-events: none;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.35);
 }
-@media (max-height: 360px) and (orientation: landscape) {
-  :host(.touch) .guide { top: 16px; width: 242px; }
-  :host(.touch) .languages { display: none; }
-  :host(.touch) .vase-panel { top: 60px; max-height: calc(100% - 84px); }
-  .move-stick { width: 104px; height: 104px; bottom: 24px; }
-  .look-pad { height: 76px; bottom: 94px; }
-  .touch-actions { bottom: 24px; }
-  .touch-actions button { height: 56px; }
+.move-label {
+  position: absolute;
+  bottom: -20px;
+  font-size: 10px;
+  color: #8fb6c9;
 }
+
+.touch-actions {
+  position: absolute;
+  right: 28px;
+  bottom: 24px;
+  display: flex;
+  gap: 12px;
+  align-items: flex-end;
+  pointer-events: auto;
+}
+.action-btn {
+  width: 60px;
+  height: 60px;
+  border-radius: 50%;
+  border: 2px solid rgba(255, 255, 255, 0.5);
+  color: #ffffff;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  touch-action: none;
+  box-shadow: 0 4px 10px rgba(0, 0, 0, 0.4);
+}
+.action-btn:active {
+  transform: scale(0.92);
+}
+.btn-dash { background: rgba(60, 140, 195, 0.78); }
+.btn-kick { background: rgba(215, 110, 70, 0.78); }
+.btn-ally { background: rgba(75, 175, 115, 0.78); }
+.btn-main { font-size: 12px; font-weight: bold; }
+.btn-sub { font-size: 9px; opacity: 0.8; margin-top: 1px; }
+
+/* 结算弹窗 */
+.result-backdrop {
+  position: absolute;
+  inset: 0;
+  background: rgba(5, 12, 20, 0.85);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  pointer-events: auto;
+}
+.result-card {
+  width: 340px;
+  background: rgba(14, 28, 44, 0.98);
+  border: 1px solid rgba(160, 210, 245, 0.35);
+  border-radius: 10px;
+  padding: 20px 24px;
+  text-align: center;
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.6);
+}
+.result-title {
+  margin: 0;
+  font-size: 22px;
+  color: #ffe6a8;
+}
+.result-subtitle {
+  margin: 4px 0 16px 0;
+  font-size: 12px;
+  color: #8fb6c9;
+}
+.result-stats {
+  border-top: 1px solid rgba(150, 200, 225, 0.15);
+  border-bottom: 1px solid rgba(150, 200, 225, 0.15);
+  padding: 10px 0;
+  margin-bottom: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.stat-row {
+  display: flex;
+  justify-content: space-between;
+  font-size: 11px;
+}
+.stat-row span { color: #8fb6c9; }
+.stat-row strong { color: #ffe6a8; }
+.btn-restart {
+  width: 100%;
+  padding: 10px 0;
+  background: #7ee08a;
+  border: none;
+  border-radius: 6px;
+  font-size: 14px;
+  font-weight: bold;
+  color: #0b1c14;
+  cursor: pointer;
+  box-shadow: 0 3px 8px rgba(126, 224, 138, 0.35);
+}
+.btn-restart:hover {
+  background: #96e8a0;
+}
+
+/* 响应式适配 */
 @media (max-width: 600px) {
-  :host(:not(.touch)) { overflow-y: auto; }
-  :host(:not(.touch)) .guide {
-    position: relative; top: auto; left: auto; margin: 14px;
-  }
-  :host(:not(.touch)) .vase-panel {
-    position: relative; top: auto; right: auto; bottom: auto;
-    width: auto; max-height: none; margin: 0 14px 14px;
-  }
+  .hud-title-col { display: none; }
+  .team-sidebar { display: none; }
+  .island-hud { gap: 6px; }
+  .player-card { width: 140px; }
+  .action-btn { width: 50px; height: 50px; }
 }
