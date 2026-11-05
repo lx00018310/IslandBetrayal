@@ -1,5 +1,5 @@
 // 《荒岛合纵：破箱局》HUD 控制器
-// 驱动顶部仪表盘、队伍状态、触屏摇杆动作与结算弹窗
+// 驱动顶部仪表盘、组队选择/邀请横幅、触屏摇杆动作、超距预警与结算弹窗
 
 import type { GameHost } from '@forgeax/engine/app';
 import { mountUi, type UiAsset, type UiInstance } from '@forgeax/engine/ui';
@@ -124,7 +124,12 @@ export async function createGuideUi(
       }
     };
 
-    // 绑定触屏摇杆与按键
+    // 当前候选目标与邀请状态缓存
+    let activeIncomingInviteId: number | null = null;
+    let activeIncomingFromId: number | null = null;
+    let activeCandidateId: number | null = null;
+
+    // 绑定触屏与交互按键
     if (shadow) {
       const stick = shadow.querySelector<HTMLElement>('[data-ui-part="move-stick"]');
       const thumb = shadow.querySelector<HTMLElement>('[data-ui-part="move-thumb"]');
@@ -165,29 +170,49 @@ export async function createGuideUi(
         stick.addEventListener('pointercancel', onUp);
       }
 
-      const btnAlly = shadow.querySelector<HTMLElement>('[data-ui-part="btn-ally"]');
-      if (btnAlly) {
-        btnAlly.addEventListener('click', () => sendTouch({ kind: 'ally' }));
+      // 组队 / 接受主按钮
+      const triggerMainChoice = () => {
+        if (activeIncomingInviteId !== null) {
+          sendTouch({ kind: 'accept', inviteId: activeIncomingInviteId });
+        } else if (activeCandidateId !== null) {
+          sendTouch({ kind: 'invite', targetId: activeCandidateId });
+        }
+      };
+
+      const btnChoiceMain = shadow.querySelector<HTMLElement>('[data-ui-part="btn-choice-main"]');
+      if (btnChoiceMain) {
+        btnChoiceMain.addEventListener('click', triggerMainChoice);
       }
+      const btnAllyTouch = shadow.querySelector<HTMLElement>('[data-ui-part="btn-ally-touch"]');
+      if (btnAllyTouch) {
+        btnAllyTouch.addEventListener('click', triggerMainChoice);
+      }
+
+      // 忽略按钮
+      const triggerIgnore = () => {
+        if (activeIncomingFromId !== null) {
+          sendTouch({ kind: 'ignore', targetId: activeIncomingFromId });
+        } else if (activeCandidateId !== null) {
+          sendTouch({ kind: 'ignore', targetId: activeCandidateId });
+        }
+      };
+
+      const btnChoiceIgnore = shadow.querySelector<HTMLElement>(
+        '[data-ui-part="btn-choice-ignore"]',
+      );
+      if (btnChoiceIgnore) {
+        btnChoiceIgnore.addEventListener('click', triggerIgnore);
+      }
+      const btnIgnoreTouch = shadow.querySelector<HTMLElement>(
+        '[data-ui-part="btn-ignore-touch"]',
+      );
+      if (btnIgnoreTouch) {
+        btnIgnoreTouch.addEventListener('click', triggerIgnore);
+      }
+
       const btnDash = shadow.querySelector<HTMLElement>('[data-ui-part="btn-dash"]');
       if (btnDash) {
         btnDash.addEventListener('click', () => sendTouch({ kind: 'dash' }));
-      }
-      const btnKick = shadow.querySelector<HTMLElement>('[data-ui-part="btn-kick"]');
-      if (btnKick) {
-        let kickPointer = -1;
-        btnKick.addEventListener('pointerdown', (e) => {
-          kickPointer = e.pointerId;
-          sendTouch({ kind: 'kick', held: true });
-        });
-        const stopKick = (e: PointerEvent) => {
-          if (e.pointerId === kickPointer) {
-            kickPointer = -1;
-            sendTouch({ kind: 'kick', held: false });
-          }
-        };
-        btnKick.addEventListener('pointerup', stopKick);
-        btnKick.addEventListener('pointercancel', stopKick);
       }
       const btnSpeed = shadow.querySelector<HTMLElement>('[data-ui-part="btn-speed"]');
       if (btnSpeed) {
@@ -210,14 +235,21 @@ export async function createGuideUi(
     const treasureElem = shadow?.querySelector<HTMLElement>('[data-ui-part="player-treasure"]');
     const hpFill = shadow?.querySelector<HTMLElement>('[data-ui-part="hp-fill"]');
     const statusHint = shadow?.querySelector<HTMLElement>('[data-ui-part="player-status-hint"]');
-    const kickContainer = shadow?.querySelector<HTMLElement>('[data-ui-part="kick-charge-container"]');
-    const kickPct = shadow?.querySelector<HTMLElement>('[data-ui-part="kick-pct"]');
-    const kickFill = shadow?.querySelector<HTMLElement>('[data-ui-part="kick-fill"]');
+    const warningHint = shadow?.querySelector<HTMLElement>(
+      '[data-ui-part="distance-warning-hint"]',
+    );
+    const choiceBanner = shadow?.querySelector<HTMLElement>('[data-ui-part="choice-banner"]');
+    const choiceText = shadow?.querySelector<HTMLElement>('[data-ui-part="choice-text"]');
+    const btnChoiceMain = shadow?.querySelector<HTMLElement>('[data-ui-part="btn-choice-main"]');
+    const btnChoiceIgnore = shadow?.querySelector<HTMLElement>(
+      '[data-ui-part="btn-choice-ignore"]',
+    );
     const resultModal = shadow?.querySelector<HTMLElement>('[data-ui-part="result-modal"]');
     const resultTitle = shadow?.querySelector<HTMLElement>('[data-ui-part="result-title"]');
     const resultSub = shadow?.querySelector<HTMLElement>('[data-ui-part="result-subtitle"]');
     const statTreasure = shadow?.querySelector<HTMLElement>('[data-ui-part="stat-treasure"]');
     const statBreaks = shadow?.querySelector<HTMLElement>('[data-ui-part="stat-breaks"]');
+    const statDisbands = shadow?.querySelector<HTMLElement>('[data-ui-part="stat-disbands"]');
     const statBetrayals = shadow?.querySelector<HTMLElement>('[data-ui-part="stat-betrayals"]');
     const statKills = shadow?.querySelector<HTMLElement>('[data-ui-part="stat-kills"]');
     const statRank = shadow?.querySelector<HTMLElement>('[data-ui-part="stat-rank"]');
@@ -244,7 +276,7 @@ export async function createGuideUi(
               : elapsed < 60
                 ? '寻找队友 · 合作打怪'
                 : elapsed < 120
-                  ? '宝箱成长 · 背叛频发'
+                  ? '宝箱成长 · 谨防断线'
                   : '外部掠夺 · 争夺宝物';
         if (phaseElem) phaseElem.textContent = phase;
 
@@ -253,6 +285,7 @@ export async function createGuideUi(
 
         const pTreas = typeof state.playerTreasure === 'number' ? state.playerTreasure : 0;
         const breaks = typeof state.chestBreaks === 'number' ? state.chestBreaks : 0;
+        const disbands = typeof state.playerDisbands === 'number' ? state.playerDisbands : 0;
         if (treasureElem) treasureElem.textContent = `◆ ${pTreas} · 爆箱 ${breaks}`;
 
         if (hpFill) {
@@ -262,21 +295,78 @@ export async function createGuideUi(
         }
 
         const partnerName = state.partnerName as string | null;
+        const partnerDist = state.partnerDistance as number | null;
+        const isWarning = state.isWarning === true;
+
         if (statusHint) {
           statusHint.textContent = partnerName
-            ? `队友 ${partnerName} · 长按 F 踢箱`
-            : '单人 · 靠近他人按 E 结盟';
+            ? `队友 ${partnerName} · 距离 ${partnerDist ?? 0}m`
+            : '单人 · 靠近他人可邀请组队';
         }
 
-        if (kickContainer && kickPct && kickFill) {
-          const charge = typeof state.kickCharge === 'number' ? state.kickCharge : 0;
-          if (charge > 0 && partnerName) {
-            kickContainer.style.display = 'block';
-            const pct = Math.min(100, Math.round(charge * 100));
-            kickPct.textContent = `${pct}%`;
-            kickFill.style.width = `${pct}%`;
+        if (warningHint) {
+          if (isWarning && partnerName) {
+            warningHint.textContent = `⚠️ 距离过远 (${partnerDist ?? 0}/5.0m)！超距断线爆箱！`;
+            warningHint.classList.remove('hidden');
           } else {
-            kickContainer.style.display = 'none';
+            warningHint.classList.add('hidden');
+          }
+        }
+
+        // 组队邀请与候选横幅展示
+        const incoming = state.incomingInvite as
+          | { id: number; fromId: number; fromName: string; timeLeft: number }
+          | null
+          | undefined;
+        const outgoing = state.outgoingInvite as
+          | { id: number; toId: number; toName: string; timeLeft: number }
+          | null
+          | undefined;
+        const candidate = state.candidate as
+          | { id: number; name: string; distance: number; canInvite: boolean; reason?: string }
+          | null
+          | undefined;
+
+        if (incoming) {
+          activeIncomingInviteId = incoming.id;
+          activeIncomingFromId = incoming.fromId;
+          activeCandidateId = null;
+          if (choiceBanner && choiceText && btnChoiceMain && btnChoiceIgnore) {
+            choiceText.textContent = `${incoming.fromName} 邀请与你组队 (${incoming.timeLeft}s)`;
+            btnChoiceMain.textContent = '接受 (E)';
+            btnChoiceMain.style.display = 'inline-block';
+            btnChoiceIgnore.textContent = '忽略 60s (X)';
+            btnChoiceIgnore.style.display = 'inline-block';
+            choiceBanner.classList.remove('hidden');
+          }
+        } else if (outgoing) {
+          activeIncomingInviteId = null;
+          activeIncomingFromId = null;
+          activeCandidateId = null;
+          if (choiceBanner && choiceText && btnChoiceMain && btnChoiceIgnore) {
+            choiceText.textContent = `已向 ${outgoing.toName} 发送邀请... 等待回应 (${outgoing.timeLeft}s)`;
+            btnChoiceMain.style.display = 'none';
+            btnChoiceIgnore.style.display = 'none';
+            choiceBanner.classList.remove('hidden');
+          }
+        } else if (candidate && candidate.canInvite && !partnerName) {
+          activeIncomingInviteId = null;
+          activeIncomingFromId = null;
+          activeCandidateId = candidate.id;
+          if (choiceBanner && choiceText && btnChoiceMain && btnChoiceIgnore) {
+            choiceText.textContent = `附近发现 ${candidate.name} (${candidate.distance}m)`;
+            btnChoiceMain.textContent = '组队 (E)';
+            btnChoiceMain.style.display = 'inline-block';
+            btnChoiceIgnore.textContent = '忽略 60s (X)';
+            btnChoiceIgnore.style.display = 'inline-block';
+            choiceBanner.classList.remove('hidden');
+          }
+        } else {
+          activeIncomingInviteId = null;
+          activeIncomingFromId = null;
+          activeCandidateId = null;
+          if (choiceBanner) {
+            choiceBanner.classList.add('hidden');
           }
         }
 
@@ -296,7 +386,8 @@ export async function createGuideUi(
           }
           if (statTreasure) statTreasure.textContent = String(pTreas);
           if (statBreaks) statBreaks.textContent = String(breaks);
-          if (statBetrayals) statBetrayals.textContent = String(state.betrayals ?? 0);
+          if (statDisbands) statDisbands.textContent = String(disbands);
+          if (statBetrayals) statBetrayals.textContent = String(disbands);
           if (statKills) statKills.textContent = String(state.kills ?? 0);
           if (statRank) statRank.textContent = `${isWinner ? '1' : Math.max(2, 11 - aliveCount)} / 10`;
         }

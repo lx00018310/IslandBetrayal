@@ -84,6 +84,8 @@ export default definePack({
     // 战利品与场景道具部件
     const cubeMesh = createBoxGeometry(0.32, 0.32, 0.32);
     if (!cubeMesh.ok) return cubeMesh;
+    const teamBeamMesh = createBoxGeometry(0.12, 0.12, 1.0);
+    if (!teamBeamMesh.ok) return teamBeamMesh;
     const bushMesh = createBoxGeometry(0.85, 0.70, 0.85);
     if (!bushMesh.ok) return bushMesh;
     const rockMesh = createBoxGeometry(0.92, 0.60, 0.80);
@@ -521,8 +523,37 @@ export default definePack({
       };
     }
 
-    // 24 个公共散落金宝物实体池（初始隐藏）
-    for (let i = 0; i < 24; i++) {
+    // 5 条队伍连线束（正常绿束 + 预警红束，初始隐藏）
+    for (let i = 0; i < 5; i++) {
+      entities[`team-beam-${i}`] = {
+        components: {
+          Name: { value: `Team Beam ${i}` },
+          Transform: { pos: [0, -999, 0] },
+          MeshFilter: {
+            assetHandle: guidText(assetGuid(PACKAGE_IDS.islandArt, 'mesh/team-beam')),
+          },
+          MeshRenderer: {
+            materials: [guidText(assetGuid(PACKAGE_IDS.islandArt, 'material/team-beam'))],
+          },
+        },
+      };
+
+      entities[`team-beam-warn-${i}`] = {
+        components: {
+          Name: { value: `Team Beam Warning ${i}` },
+          Transform: { pos: [0, -999, 0] },
+          MeshFilter: {
+            assetHandle: guidText(assetGuid(PACKAGE_IDS.islandArt, 'mesh/team-beam')),
+          },
+          MeshRenderer: {
+            materials: [guidText(assetGuid(PACKAGE_IDS.islandArt, 'material/danger-border'))],
+          },
+        },
+      };
+    }
+
+    // 48 个公共散落金宝物实体池（支持大爆箱全量可见，初始隐藏）
+    for (let i = 0; i < 48; i++) {
       entities[`loot-${i}`] = {
         components: {
           Name: { value: `Loot ${i}` },
@@ -570,6 +601,11 @@ export default definePack({
       'mesh/chest-body': chestBody.value,
       'mesh/chest-lid': chestLid.value,
       'mesh/chest-lock': chestLock.value,
+      'mesh/team-beam': withMaterial(
+        teamBeamMesh.value,
+        assetGuid(PACKAGE_IDS.islandArt, 'material/team-beam'),
+        'island:team-beam',
+      ),
       'mesh/cube': withMaterial(
         cubeMesh.value,
         assetGuid(PACKAGE_IDS.islandArt, 'material/loot'),

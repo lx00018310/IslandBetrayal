@@ -43,20 +43,20 @@ pnpm.cmd dev
 
 | 模块 | 职责与交付状态 |
 | --- | --- |
-| `assets/island/simulation.ts` | 纯 TypeScript 提取的荒岛玩法规则（结盟、背叛、打怪、爆箱、掠夺、冲撞、缩圈与胜负结算），无 DOM/Canvas 依赖，单元测试覆盖 |
-| `assets/island/art.pack.ts` | 原生体素草地、平整薄层地面、10 色体素角色、虚空水面、怪物、宝箱、战利品与脚底投影网格/材质包 |
-| `assets/island/presentation.ts` | 原生正交相机跟随（55° 俯角近景跟随主角）、脚底接触影、地块下沉崩塌、前后深度遮挡与体素朝向同步 |
-| `assets/island/island.pack.ts` | 原生 Cordis 插件，驱动 ECS Update 循环与模拟推进，注册 `island.match` 验收只读投影，跨领域同步 HUD 状态 |
-| `assets/guide.ui.html` / `guide.ui.css` / `ui/guide-controller.ts` | 符合天工引擎 UiAuthoringProfile 的原生 HUD 界面（计时器、阶段、存活/宝物、队伍列表、虚拟摇杆与结盟/踢箱/冲撞按键、结算卡片） |
+| `assets/island/simulation.ts` | 纯 TypeScript 提取的荒岛玩法规则（双向邀请确认成队、忽略 60 秒屏蔽、4.0m 连线预警、超 5.0m 断线爆箱、外部掠夺打爆箱体保留队伍、物理哄抢、冲撞击退、边缘缩圈与胜负结算），无 DOM/Canvas 依赖，单元测试覆盖 |
+| `assets/island/art.pack.ts` | 原生体素草地、平整薄层地面、10 色体素角色、虚空水面、怪物、宝箱、发光连线束（正常绿与预警红）、48 个战利品池与脚底投影网格/材质包 |
+| `assets/island/presentation.ts` | 原生正交相机跟随（55° 俯角近景跟随主角）、脚底接触影、地块下沉崩塌、队伍实时连线与预警变色、前后深度遮挡与体素朝向同步 |
+| `assets/island/island.pack.ts` | 原生 Cordis 插件，驱动 ECS Update 循环与模拟推进，注册 `island.match` 验收只读投影（含候选人、邀请、忽略与断线事件），跨领域同步 HUD 状态 |
+| `assets/guide.ui.html` / `guide.ui.css` / `ui/guide-controller.ts` | 符合天工引擎 UiAuthoringProfile 的原生 HUD 界面（计时器、阶段、存活/宝物、队伍列表、候选人选择与邀请横幅、超距警报、虚拟摇杆与组队/忽略/冲撞按键、结算卡片） |
 | `assets/ui/island-game.ts` | 已安全退役并移除独立可见 Canvas 画布与 `@ts-nocheck` |
-| `scripts/playthrough.mjs` | 更新为全流程核心玩法端到端验收与 8 阶段截图断言 |
+| `scripts/playthrough.mjs` | 更新为全流程核心玩法端到端验收（含出生、移动、冲撞、靠近选择、忽略、邀请结盟、距离预警、超距爆箱、战利品争抢、缩圈、结算等阶段截图断言） |
 
 ### 质量与验证结果
 
 | 检查项 | 状态 | 验证结果 |
 | --- | --- | --- |
 | `pnpm.cmd exec forgeax project check --json` | 通过 | 补充 `pnpm-workspace.yaml` packages 声明，消除 `project-pnpm-workspace-state-stale` |
-| `pnpm.cmd test` | 通过 | 11 个测试套件，55 项单元测试 100% 全部通过 |
+| `pnpm.cmd test` | 通过 | 11 个测试套件，**57 项单元测试 100% 全部通过** |
 | `pnpm.cmd typecheck` | 通过 | 全工程无 TypeScript 编译错误 |
-| `pnpm.cmd exec forgeax project play scripts/playthrough.mjs --json` | 通过 | 10 个测试步骤端到端全部通过，实测帧率稳定在 119~121 FPS，生成全套状态截图 |
+| `pnpm.cmd exec forgeax project play scripts/playthrough.mjs --json` | 通过 | 13 个测试步骤端到端全部通过，实测帧率稳定在 115~120 FPS，生成全套状态截图 |
 

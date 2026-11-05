@@ -1,11 +1,13 @@
 // 《荒岛合纵：破箱局》呈现控制层
-// 驱动原生正交相机、薄层地面崩塌、3D 体素角色、道具遮挡与脚底阴影
+// 驱动原生正交相机、薄层地面崩塌、3D 体素角色、道具遮挡、连线束（预警变红）与脚底阴影
 
 import type { EntityHandle, World } from '@forgeax/engine/ecs';
 import { quat } from '@forgeax/engine/math';
+import { MeshRenderer } from '@forgeax/engine/render';
 import { sceneEntity, Transform, worldResolveSceneEntity } from '@forgeax/engine/scene';
+import { assetGuid, guidText, PACKAGE_IDS } from '../shared/asset-refs.ts';
 import type { SimulationState } from './simulation.ts';
-import { GRID_SIZE } from './simulation.ts';
+import { GRID_SIZE, TEAM_WARNING_DISTANCE } from './simulation.ts';
 
 const SCENE_KEY = 'scene/island' as const;
 const SPRITE_QUAT = [-0.4617486, 0, 0, 0.8870108] as const;
@@ -74,9 +76,17 @@ export function setupPresentation(
     });
   }
 
-  // 缓存 24 个掉落金宝物实体池
+  // 缓存 5 条队伍连线束（正常与预警红束）
+  const teamBeamEntities: EntityHandle[] = [];
+  const teamBeamWarnEntities: EntityHandle[] = [];
+  for (let i = 0; i < 5; i++) {
+    teamBeamEntities.push(resolve(`team-beam-${i}`));
+    teamBeamWarnEntities.push(resolve(`team-beam-warn-${i}`));
+  }
+
+  // 缓存 48 个掉落金宝物实体池
   const lootEntities: EntityHandle[] = [];
-  for (let i = 0; i < 24; i++) {
+  for (let i = 0; i < 48; i++) {
     lootEntities.push(resolve(`loot-${i}`));
   }
 
@@ -95,12 +105,13 @@ export function setupPresentation(
   }
 
   const spinQ = quat.create();
+  const beamQ = quat.create();
 
   return {
     update(sim: SimulationState, dt: number): void {
       const player = sim.actors[0]!;
 
-      // 1. 正交相机平滑跟随主角（主角存活跟随，死亡后视野锁定）
+      // 1. 正交相机平滑跟随主角（存活跟随，死亡后视野锁定）
       if (player.alive) {
         const follow = 1 - Math.exp(-8.0 * dt);
         camX += (player.x - camX) * follow;
@@ -144,7 +155,6 @@ export function setupPresentation(
           continue;
         }
 
-        // 面向角度翻转或旋转
         const dirSign = a.vx < -0.05 ? -1 : 1;
         world
           .set(e.root, Transform, {
@@ -153,7 +163,6 @@ export function setupPresentation(
           })
           .unwrap();
 
-        // 统一固定方向脚底阴影（右下偏置贴地）
         world
           .set(e.shadow, Transform, {
             pos: [a.x + 0.12, 0.005, a.y + 0.16],
@@ -202,7 +211,6 @@ export function setupPresentation(
           continue;
         }
 
-        // 宝箱尺寸随财富适度增加 (0.85 ~ 1.25)
         const size = 0.85 + Math.min(0.4, c.treasure * 0.035);
         world
           .set(e.root, Transform, {
@@ -220,8 +228,55 @@ export function setupPresentation(
           .unwrap();
       }
 
-      // 6. 自由拾取宝物实体池（散落、弹跳与多轴自转）
-      for (let i = 0; i < 24; i++) {
+      // 6. 队伍连线束呈现与超距预警变红
+      const teamPairs: Array<{ a: typeof sim.actors[0]; b: typeof sim.actors[0]; dist: number }> = [];
+      for (const a of sim.actors) {
+        if (!a.alive || a.team < 0 || a.id > a.team) continue;
+        const b = sim.actors[a.team];
+        if (b && b.alive) {
+          const d = Math.hypot(a.x - b.x, a.y - b.y);
+          teamPairs.push({ a, b, dist: d });
+        }
+      }
+
+      for (let i = 0; i < 5; i++) {
+        const beamHandle = teamBeamEntities[i]!;
+        const warnHandle = teamBeamWarnEntities[i]!;
+        const pair = teamPairs[i];
+
+        if (!pair) {
+          world.set(beamHandle, Transform, { pos: [0, -999, 0] }).unwrap();
+          world.set(warnHandle, Transform, { pos: [0, -999, 0] }).unwrap();
+          continue;
+        }
+
+        const midX = (pair.a.x + pair.b.x) / 2;
+        const midZ = (pair.a.y + pair.b.y) / 2;
+        const length = Math.max(0.2, pair.dist);
+
+        quat.fromLookAt(
+          beamQ,
+          [pair.a.x, 0.22, pair.a.y],
+          [pair.b.x, 0.22, pair.b.y],
+          [0, 1, 0],
+        );
+
+        const isWarning = pair.dist >= TEAM_WARNING_DISTANCE;
+        const activeHandle = isWarning ? warnHandle : beamHandle;
+        const inactiveHandle = isWarning ? beamHandle : warnHandle;
+
+        world
+          .set(activeHandle, Transform, {
+            pos: [midX, 0.22, midZ],
+            scale: [1, 1, length],
+            quat: [beamQ[0] ?? 0, beamQ[1] ?? 0, beamQ[2] ?? 0, beamQ[3] ?? 1],
+          })
+          .unwrap();
+        world.set(inactiveHandle, Transform, { pos: [0, -999, 0] }).unwrap();
+      }
+
+      // 7. 自由拾取宝物实体池（散落、弹跳与多轴自转）
+      for (let i = 0; i < 48; i++) {
         const handle = lootEntities[i]!;
         const l = sim.loots[i];
 

@@ -10,23 +10,33 @@ import { ok } from '@forgeax/engine/types';
 import { assetGuid, PACKAGE_IDS } from '../shared/asset-refs.ts';
 import { setupPresentation } from './presentation.ts';
 import {
+  acceptInvite,
   aliveActors,
   createInitialSimulation,
+  dist,
+  getIgnoreRemaining,
+  getNearbyCandidate,
+  ignorePair,
+  isPairIgnored,
   landRadius,
   MATCH_SECONDS,
   partnerOf,
   type PlayerInputIntent,
+  sendInvite,
   stepSimulation,
+  TEAM_BREAK_DISTANCE,
+  TEAM_WARNING_DISTANCE,
 } from './simulation.ts';
 
 export const ISLAND_CONTROL_CHANNEL = 'island/controls';
 
 export interface IslandTouchMessage {
   channel: typeof ISLAND_CONTROL_CHANNEL;
-  kind: 'move' | 'dash' | 'ally' | 'kick' | 'speed' | 'restart' | 'reset';
+  kind: 'move' | 'dash' | 'invite' | 'accept' | 'ignore' | 'speed' | 'restart' | 'reset';
   x?: number;
   y?: number;
-  held?: boolean;
+  targetId?: number;
+  inviteId?: number;
 }
 
 export const islandPlugin: Plugin = {
@@ -57,16 +67,17 @@ export const islandPlugin: Plugin = {
       const presentation = setupPresentation(world, root, sim);
       yield () => presentation.dispose();
 
-      // 触控输入状态缓存
+      // 前端控制输入意图
       let touchMoveX = 0;
       let touchMoveY = 0;
       let touchDash = false;
-      let touchInteract = false;
-      let touchKickHeld = false;
+      let touchInviteTargetId: number | null = null;
+      let touchAcceptInviteId: number | null = null;
+      let touchIgnoreTargetId: number | null = null;
       let touchSpeedToggle = false;
       let touchRestart = false;
 
-      // 监听来自前端 UI 的触控和按钮消息
+      // 监听来自前端 UI 的消息
       const port = host?.presentationPort ?? host?.port;
       if (port) {
         const onMessage = (event: MessageEvent) => {
@@ -80,11 +91,14 @@ export const islandPlugin: Plugin = {
             case 'dash':
               touchDash = true;
               break;
-            case 'ally':
-              touchInteract = true;
+            case 'invite':
+              if (typeof data.targetId === 'number') touchInviteTargetId = data.targetId;
               break;
-            case 'kick':
-              touchKickHeld = data.held ?? false;
+            case 'accept':
+              if (typeof data.inviteId === 'number') touchAcceptInviteId = data.inviteId;
+              break;
+            case 'ignore':
+              if (typeof data.targetId === 'number') touchIgnoreTargetId = data.targetId;
               break;
             case 'speed':
               touchSpeedToggle = true;
@@ -95,7 +109,6 @@ export const islandPlugin: Plugin = {
             case 'reset':
               touchMoveX = 0;
               touchMoveY = 0;
-              touchKickHeld = false;
               break;
           }
         };
@@ -111,6 +124,28 @@ export const islandPlugin: Plugin = {
         read: () => {
           const p = sim.actors[0]!;
           const partner = partnerOf(sim, p);
+          const partnerDist = partner ? dist(p, partner) : null;
+          const candidate = getNearbyCandidate(sim, p);
+          const incoming = sim.invites.find((i) => i.toId === p.id && sim.elapsed <= i.expiresAt);
+          const outgoing = sim.invites.find((i) => i.fromId === p.id && sim.elapsed <= i.expiresAt);
+
+          let nearestActor: { id: number; name: string; x: number; y: number; distance: number } | null = null;
+          let minActorDist = 999;
+          for (const o of aliveActors(sim)) {
+            if (o.id === p.id) continue;
+            const d = dist(p, o);
+            if (d < minActorDist) {
+              minActorDist = d;
+              nearestActor = {
+                id: o.id,
+                name: o.name,
+                x: Number(o.x.toFixed(2)),
+                y: Number(o.y.toFixed(2)),
+                distance: Number(d.toFixed(2)),
+              };
+            }
+          }
+
           return {
             elapsed: Number(sim.elapsed.toFixed(2)),
             progress: Number((sim.elapsed / MATCH_SECONDS).toFixed(3)),
@@ -132,23 +167,75 @@ export const islandPlugin: Plugin = {
               team: p.team,
               treasure: p.treasure,
               kills: p.kills,
-              kickCharge: Number(p.kickCharge.toFixed(2)),
               dashCd: Number(p.dashCd.toFixed(2)),
               grounded: true,
             },
-            partner: partner ? { id: partner.id, name: partner.name } : null,
+            partner: partner
+              ? {
+                  id: partner.id,
+                  name: partner.name,
+                  distance: Number(partnerDist?.toFixed(2) ?? 0),
+                  isWarning: (partnerDist ?? 0) >= TEAM_WARNING_DISTANCE,
+                }
+              : null,
+            candidate: candidate
+              ? {
+                  id: candidate.id,
+                  name: candidate.name,
+                  distance: candidate.distance,
+                  canInvite: candidate.canInvite,
+                  reason: candidate.reason ?? null,
+                }
+              : null,
+            nearestActor: nearestActor
+              ? {
+                  id: nearestActor.id,
+                  name: nearestActor.name,
+                  x: nearestActor.x,
+                  y: nearestActor.y,
+                  distance: nearestActor.distance,
+                }
+              : null,
+            incomingInvite: incoming
+              ? {
+                  id: incoming.id,
+                  fromId: incoming.fromId,
+                  fromName: sim.actors[incoming.fromId]?.name ?? '',
+                  timeLeft: Number(Math.max(0, incoming.expiresAt - sim.elapsed).toFixed(1)),
+                }
+              : null,
+            outgoingInvite: outgoing
+              ? {
+                  id: outgoing.id,
+                  toId: outgoing.toId,
+                  toName: sim.actors[outgoing.toId]?.name ?? '',
+                  timeLeft: Number(Math.max(0, outgoing.expiresAt - sim.elapsed).toFixed(1)),
+                }
+              : null,
             chestsCount: sim.chests.filter((c) => c.hp > 0).length,
             monstersCount: sim.monsters.filter((m) => m.alive).length,
             lootsCount: sim.loots.filter((l) => l.value > 0).length,
-            betrayals: sim.betrayals,
+            playerDisbands: sim.playerDisbands,
+            betrayals: sim.playerDisbands,
             chestBreaks: sim.chestBreaks,
             playerTreasure: sim.playerTreasure,
+            lastBreakEvent: sim.lastBreakEvent
+              ? {
+                  seq: sim.lastBreakEvent.seq,
+                  a: sim.lastBreakEvent.a,
+                  b: sim.lastBreakEvent.b,
+                  x: Number(sim.lastBreakEvent.x.toFixed(2)),
+                  y: Number(sim.lastBreakEvent.y.toFixed(2)),
+                  lootCount: sim.lastBreakEvent.lootCount,
+                  reason: sim.lastBreakEvent.reason,
+                }
+              : null,
           };
         },
       });
       if (unregisterIslandMatch) yield unregisterIslandMatch;
 
-      // 主循环系统：采样键盘与触控输入，单向推进模拟，同步呈现，向 UI 推送 HUD 状态
+      // 主循环系统
       let hudSyncCounter = 0;
       world
         .addSystem(Update, {
@@ -159,18 +246,21 @@ export const islandPlugin: Plugin = {
             let moveX = touchMoveX;
             let moveY = touchMoveY;
             let dash = touchDash;
-            let interact = touchInteract;
-            let kickHeld = touchKickHeld;
+            let inviteTargetId = touchInviteTargetId;
+            let acceptInviteId = touchAcceptInviteId;
+            let ignoreTargetId = touchIgnoreTargetId;
             let speedToggle = touchSpeedToggle;
             let restart = touchRestart;
 
-            // 清零一次性触控标志
+            // 清除一次性触发参数
             touchDash = false;
-            touchInteract = false;
+            touchInviteTargetId = null;
+            touchAcceptInviteId = null;
+            touchIgnoreTargetId = null;
             touchSpeedToggle = false;
             touchRestart = false;
 
-            // 读取键盘 InputSnapshot
+            // 键盘快捷键响应
             const snap = world.getResource<InputSnapshot>(INPUT_SNAPSHOT_RESOURCE_KEY);
             if (snap) {
               const kb = snap.keyboard;
@@ -188,8 +278,37 @@ export const islandPlugin: Plugin = {
               }
 
               if (kb.justPressedCode('Space')) dash = true;
-              if (kb.justPressedCode('KeyE')) interact = true;
-              if (kb.downCode('KeyF')) kickHeld = true;
+
+              // E 键：有收到的邀请则接受；否则若有附近候选角色则发送邀请
+              if (kb.justPressedCode('KeyE')) {
+                const incoming = sim.invites.find(
+                  (i) => i.toId === sim.actors[0]!.id && sim.elapsed <= i.expiresAt,
+                );
+                if (incoming) {
+                  acceptInviteId = incoming.id;
+                } else {
+                  const candidate = getNearbyCandidate(sim, sim.actors[0]!);
+                  if (candidate && candidate.canInvite) {
+                    inviteTargetId = candidate.id;
+                  }
+                }
+              }
+
+              // X 键：忽略附近候选角色或发邀请者 60 秒
+              if (kb.justPressedCode('KeyX')) {
+                const incoming = sim.invites.find(
+                  (i) => i.toId === sim.actors[0]!.id && sim.elapsed <= i.expiresAt,
+                );
+                if (incoming) {
+                  ignoreTargetId = incoming.fromId;
+                } else {
+                  const candidate = getNearbyCandidate(sim, sim.actors[0]!);
+                  if (candidate) {
+                    ignoreTargetId = candidate.id;
+                  }
+                }
+              }
+
               if (kb.justPressedCode('KeyQ')) speedToggle = true;
               if (kb.justPressedCode('KeyR')) restart = true;
             }
@@ -198,8 +317,9 @@ export const islandPlugin: Plugin = {
               moveX,
               moveY,
               dash,
-              interact,
-              kickHeld,
+              inviteTargetId,
+              acceptInviteId,
+              ignoreTargetId,
               speedToggle,
               restart,
             };
@@ -212,6 +332,11 @@ export const islandPlugin: Plugin = {
             if (port && hudSyncCounter % 4 === 0) {
               const p = sim.actors[0]!;
               const partner = partnerOf(sim, p);
+              const partnerDist = partner ? dist(p, partner) : null;
+              const candidate = getNearbyCandidate(sim, p);
+              const incoming = sim.invites.find((i) => i.toId === p.id && sim.elapsed <= i.expiresAt);
+              const outgoing = sim.invites.find((i) => i.fromId === p.id && sim.elapsed <= i.expiresAt);
+
               port.postMessage({
                 channel: 'island/hud-state',
                 elapsed: sim.elapsed,
@@ -225,10 +350,37 @@ export const islandPlugin: Plugin = {
                 treasure: p.treasure,
                 playerTreasure: sim.playerTreasure,
                 chestBreaks: sim.chestBreaks,
-                betrayals: sim.betrayals,
+                playerDisbands: sim.playerDisbands,
+                betrayals: sim.playerDisbands,
                 kills: p.kills,
                 partnerName: partner?.name ?? null,
-                kickCharge: p.kickCharge,
+                partnerDistance: partnerDist !== null ? Number(partnerDist.toFixed(1)) : null,
+                isWarning: (partnerDist ?? 0) >= TEAM_WARNING_DISTANCE,
+                candidate: candidate
+                  ? {
+                      id: candidate.id,
+                      name: candidate.name,
+                      distance: candidate.distance,
+                      canInvite: candidate.canInvite,
+                      reason: candidate.reason,
+                    }
+                  : null,
+                incomingInvite: incoming
+                  ? {
+                      id: incoming.id,
+                      fromId: incoming.fromId,
+                      fromName: sim.actors[incoming.fromId]?.name ?? '',
+                      timeLeft: Math.max(0, Math.ceil(incoming.expiresAt - sim.elapsed)),
+                    }
+                  : null,
+                outgoingInvite: outgoing
+                  ? {
+                      id: outgoing.id,
+                      toId: outgoing.toId,
+                      toName: sim.actors[outgoing.toId]?.name ?? '',
+                      timeLeft: Math.max(0, Math.ceil(outgoing.expiresAt - sim.elapsed)),
+                    }
+                  : null,
               });
             }
           },
