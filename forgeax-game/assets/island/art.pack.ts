@@ -1,4 +1,4 @@
-// 《荒岛合纵：破箱局》受管艺术资产包
+// 《荒岛分赃》受管艺术资产包
 // 统一低对比自然平整草地、3D 体素角色、道具、光照与材质
 
 import { createBoxGeometry, createPlaneGeometry } from '@forgeax/engine/geometry';
@@ -267,6 +267,19 @@ export default definePack({
           MeshFilter: { assetHandle: guidText(assetGuid(PACKAGE_IDS.islandArt, 'mesh/char-body')) },
           MeshRenderer: {
             materials: [guidText(assetGuid(PACKAGE_IDS.islandArt, `material/char-${i}`))],
+          },
+        },
+      };
+
+      // 受击红闪图层（初始隐藏，hitFlash > 0 时激活）
+      entities[`actor-${i}-hit`] = {
+        components: {
+          Name: { value: `Actor ${i} Hit Overlay` },
+          Transform: { pos: [0, -999, 0] },
+          ChildOf: { parent: `actor-${i}` },
+          MeshFilter: { assetHandle: guidText(assetGuid(PACKAGE_IDS.islandArt, 'mesh/char-body')) },
+          MeshRenderer: {
+            materials: [guidText(assetGuid(PACKAGE_IDS.islandArt, 'material/char-hit'))],
           },
         },
       };
@@ -552,8 +565,8 @@ export default definePack({
       };
     }
 
-    // 48 个公共散落金宝物实体池（支持大爆箱全量可见，初始隐藏）
-    for (let i = 0; i < 48; i++) {
+    // 72 个公共散落金宝物实体池（支持大爆箱全量可见，初始隐藏）
+    for (let i = 0; i < 72; i++) {
       entities[`loot-${i}`] = {
         components: {
           Name: { value: `Loot ${i}` },

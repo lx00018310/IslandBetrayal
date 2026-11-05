@@ -1,0 +1,191 @@
+{
+  "reviewedCommit": "114bc5d585ee6be298b6ae3dabe7a039697343d3",
+  "generatedAtUtc": "2026-11-05T04:01:27.167Z",
+  "scope": "Read-only review; production source unchanged. Fixtures mutate only in-memory simulation instances.",
+  "freshChecks": {
+    "unitTests": {
+      "exitCode": 0,
+      "suites": 11,
+      "passed": 57
+    },
+    "typecheck": {
+      "exitCode": 0
+    },
+    "projectCheck": "No result after several minutes; review-owned command was terminated. Not counted as passed.",
+    "fullBrowserPlay": "Not rerun in this review; inspected existing report and images."
+  },
+  "probes": {
+    "external_raid": {
+      "hp": 0,
+      "chestTreasure": 5,
+      "publicLootValue": 0,
+      "chestBreaks": 0,
+      "teamRelation": [
+        2,
+        1
+      ]
+    },
+    "ignore_refresh": {
+      "firstExpiry": 60,
+      "afterRepeatedInputExpiry": 119,
+      "remaining": 60
+    },
+    "candidate_blocking": {
+      "chosen": {
+        "id": 1,
+        "name": "青岚",
+        "distance": 0.2,
+        "canInvite": false,
+        "reason": "被忽略中"
+      },
+      "availableThirdPartyId": 2,
+      "availableThirdPartyDistance": 1
+    },
+    "invite_capacity": {
+      "sameRecipientInvites": [
+        {
+          "from": 0,
+          "to": 1
+        },
+        {
+          "from": 2,
+          "to": 1
+        }
+      ],
+      "afterSenderRetarget": [
+        {
+          "from": 2,
+          "to": 1
+        },
+        {
+          "from": 0,
+          "to": 3
+        }
+      ]
+    },
+    "finished_match_combat": {
+      "winnerId": 1,
+      "winnerAlive": false,
+      "winnerHP": 0,
+      "playerKills": 1
+    },
+    "finished_match_move": {
+      "beforeX": 11,
+      "afterX": 14.1
+    },
+    "cooperative_ai_loot": {
+      "selectedAim": {
+        "x": 5,
+        "y": 11
+      },
+      "aimDistanceFromPartner": 7,
+      "explicitBetrayalIntent": false,
+      "teamAfterMovement": [
+        -1,
+        -1
+      ]
+    },
+    "attack_benefits": {
+      "solo": {
+        "damage": 1,
+        "cooldown": 0.7
+      },
+      "team": {
+        "damage": 1,
+        "cooldown": 0.7
+      },
+      "richSolo": {
+        "damage": 1,
+        "cooldown": 0.7
+      },
+      "richTeam": {
+        "damage": 1,
+        "cooldown": 0.7
+      }
+    },
+    "drop_capacity": {
+      "generatedValue": 50,
+      "visibleEntityCapacityInSource": 48
+    },
+    "post_move_hazard_order": {
+      "playerX": 21.5,
+      "tileLand": false,
+      "playerAlive": true,
+      "playerDisbands": 1,
+      "lastBreakReason": "distance"
+    }
+  },
+  "savedPlayReport": {
+    "path": "artifacts/play/scripts/playthrough/play.json",
+    "passed": true,
+    "state": {
+      "elapsed": 71.16,
+      "progress": 0.237,
+      "phase": "normal",
+      "shrink": 0,
+      "landRadius": 0.98,
+      "gameOver": true,
+      "winnerId": 0,
+      "winnerName": "赤羽",
+      "aliveCount": 1,
+      "player": {
+        "id": 0,
+        "name": "赤羽",
+        "alive": true,
+        "x": 15.14,
+        "y": 13.37,
+        "position": [
+          15.14,
+          0,
+          13.37
+        ],
+        "hp": 60,
+        "team": -1,
+        "treasure": 13,
+        "kills": 2,
+        "dashCd": 0,
+        "grounded": true
+      },
+      "partner": null,
+      "candidate": null,
+      "nearestActor": null,
+      "incomingInvite": null,
+      "outgoingInvite": null,
+      "chestsCount": 0,
+      "monstersCount": 6,
+      "lootsCount": 0,
+      "playerDisbands": 1,
+      "betrayals": 1,
+      "chestBreaks": 4,
+      "playerTreasure": 13,
+      "lastBreakEvent": {
+        "seq": 1,
+        "a": 0,
+        "b": 5,
+        "x": 15.2,
+        "y": 13.85,
+        "lootCount": 0,
+        "reason": "distance"
+      }
+    },
+    "viewports": [
+      "1280x720",
+      "1280x600"
+    ],
+    "returned": {
+      "walked": 0.31,
+      "aliveCount": 1,
+      "chestBreaks": 4,
+      "playerDisbands": 1,
+      "playerTreasure": 13,
+      "gameOver": true
+    }
+  },
+  "staticFindings": {
+    "restartTransforms": "presentation.ts:127-145 has gone/falling branches but no restoration of healthy tiles after restart.",
+    "resultVisibility": "guide-controller.ts:373-393 only opens modal; keyboard R restart has no state-driven hide.",
+    "uiTouch": "new island joystick has no blur/visibility/lostpointercapture reset path; reset only changes move scalars.",
+    "visuals": "pixel-art-data.ts has no consumer; presentation does not consume particles/floats/hitFlash/facing; 3D actor only mirrors X scale.",
+    "mobile": "saved layout-mobile-landscape.png is 1280x600; CSS remaining min-widths exceed 390px."
+  }
+}

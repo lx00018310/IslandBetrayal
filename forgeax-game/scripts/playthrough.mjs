@@ -1,4 +1,4 @@
-// 《荒岛合纵：破箱局》端到端玩法验收与多状态截图断言
+// 《荒岛分赃》端到端玩法验收与多状态截图断言
 // 验证：靠近选择 -> 双方同意组队 -> 连线与共享宝箱 -> 拉开距离断线 -> 中点爆箱 -> 争抢
 // 运行: pnpm exec forgeax project play scripts/playthrough.mjs --json
 

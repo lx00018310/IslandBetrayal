@@ -1,4 +1,4 @@
-// 《荒岛合纵：破箱局》原生游戏 Plugin 与生命周期管理
+// 《荒岛分赃》原生游戏 Plugin 与生命周期管理
 // 挂载原生场景、推进核心玩法模拟、更新呈现、注册只读投影
 
 import { Time, Update } from '@forgeax/engine/ecs';
@@ -12,6 +12,7 @@ import { setupPresentation } from './presentation.ts';
 import {
   acceptInvite,
   aliveActors,
+  chestOf,
   createInitialSimulation,
   dist,
   getIgnoreRemaining,
@@ -120,7 +121,7 @@ export const islandPlugin: Plugin = {
       const unregisterIslandMatch = host?.gameProjection?.registerRead({
         id: 'island.match',
         title: 'Island Match State',
-        description: 'Read-only state for 《荒岛合纵：破箱局》 gameplay assertions',
+        description: 'Read-only state for 《荒岛分赃》 gameplay assertions',
         read: () => {
           const p = sim.actors[0]!;
           const partner = partnerOf(sim, p);
@@ -146,6 +147,8 @@ export const islandPlugin: Plugin = {
             }
           }
 
+          const ownChest = p.team >= 0 ? chestOf(sim, p.team) : null;
+
           return {
             elapsed: Number(sim.elapsed.toFixed(2)),
             progress: Number((sim.elapsed / MATCH_SECONDS).toFixed(3)),
@@ -160,6 +163,7 @@ export const islandPlugin: Plugin = {
               id: p.id,
               name: p.name,
               alive: p.alive,
+              rank: p.rank,
               x: Number(p.x.toFixed(2)),
               y: Number(p.y.toFixed(2)),
               position: [Number(p.x.toFixed(2)), 0, Number(p.y.toFixed(2))],
@@ -168,7 +172,7 @@ export const islandPlugin: Plugin = {
               treasure: p.treasure,
               kills: p.kills,
               dashCd: Number(p.dashCd.toFixed(2)),
-              grounded: true,
+              grounded: p.alive,
             },
             partner: partner
               ? {
@@ -212,7 +216,14 @@ export const islandPlugin: Plugin = {
                   timeLeft: Number(Math.max(0, outgoing.expiresAt - sim.elapsed).toFixed(1)),
                 }
               : null,
-            chestsCount: sim.chests.filter((c) => c.hp > 0).length,
+            ownChest: ownChest
+              ? {
+                  treasure: ownChest.treasure,
+                  hp: ownChest.hp,
+                  maxHp: ownChest.maxHp,
+                }
+              : null,
+            chestsCount: sim.chests.filter((c) => c.hp > 0 || c.treasure > 0).length,
             monstersCount: sim.monsters.filter((m) => m.alive).length,
             lootsCount: sim.loots.filter((l) => l.value > 0).length,
             playerDisbands: sim.playerDisbands,
@@ -336,6 +347,23 @@ export const islandPlugin: Plugin = {
               const candidate = getNearbyCandidate(sim, p);
               const incoming = sim.invites.find((i) => i.toId === p.id && sim.elapsed <= i.expiresAt);
               const outgoing = sim.invites.find((i) => i.fromId === p.id && sim.elapsed <= i.expiresAt);
+              const ownChest = p.team >= 0 ? chestOf(sim, p.team) : null;
+
+              // 场上队伍列表
+              const activeTeams: Array<{ aName: string; bName: string; treasure: number }> = [];
+              for (const a of sim.actors) {
+                if (a.alive && a.team >= 0 && a.id < a.team) {
+                  const b = sim.actors[a.team];
+                  if (b && b.alive) {
+                    const c = chestOf(sim, a.id);
+                    activeTeams.push({
+                      aName: a.name,
+                      bName: b.name,
+                      treasure: c ? c.treasure : 0,
+                    });
+                  }
+                }
+              }
 
               port.postMessage({
                 channel: 'island/hud-state',
@@ -343,7 +371,9 @@ export const islandPlugin: Plugin = {
                 phase: sim.finalPhase ? 'final' : sim.shrink > 0 ? 'shrink' : 'normal',
                 shrink: sim.shrink,
                 gameOver: sim.gameOver,
+                isWinner: sim.winner?.id === p.id,
                 winnerName: sim.winner?.name ?? null,
+                playerRank: p.rank,
                 aliveCount: aliveActors(sim).length,
                 hp: Math.round(p.hp),
                 isAlive: p.alive,
@@ -356,6 +386,14 @@ export const islandPlugin: Plugin = {
                 partnerName: partner?.name ?? null,
                 partnerDistance: partnerDist !== null ? Number(partnerDist.toFixed(1)) : null,
                 isWarning: (partnerDist ?? 0) >= TEAM_WARNING_DISTANCE,
+                ownChest: ownChest
+                  ? {
+                      treasure: ownChest.treasure,
+                      hp: Math.max(0, ownChest.hp),
+                      maxHp: ownChest.maxHp,
+                    }
+                  : null,
+                teams: activeTeams,
                 candidate: candidate
                   ? {
                       id: candidate.id,

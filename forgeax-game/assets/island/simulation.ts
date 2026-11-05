@@ -1,4 +1,4 @@
-// 《荒岛合纵：破箱局》核心规则与模拟状态模块
+// 《荒岛分赃》核心规则与模拟状态模块
 // 纯 TypeScript 逻辑，无 DOM、Canvas 或外部运行时依赖。
 // 规则：靠近选择 -> 双方同意组队 -> 连线与共享宝箱 -> 拉开距离断线 -> 中点爆箱 -> 争抢
 
@@ -63,6 +63,7 @@ export interface ActorState {
   kills: number;
   hitFlash: number;
   facing: number;
+  rank: number | null;
   runningAwayFromPartner?: boolean;
 }
 
@@ -223,9 +224,19 @@ export function getIgnoreRemaining(sim: SimulationState, a: number, b: number): 
   return Math.max(0, until - sim.elapsed);
 }
 
-export function ignorePair(sim: SimulationState, a: number, b: number): void {
+/** 建立双方 60 秒双向屏蔽，已有活跃屏蔽不重复延长 */
+export function ignorePair(sim: SimulationState, a: number, b: number): boolean {
+  if (a === b) return false;
+  const fromActor = sim.actors[a];
+  const toActor = sim.actors[b];
+  if (!fromActor || !toActor || !fromActor.alive || !toActor.alive || sim.gameOver) return false;
+
+  // 已有活跃屏蔽不重复刷新时长（R04）
+  if (isPairIgnored(sim, a, b)) return false;
+
   const key = getPairKey(a, b);
   sim.ignores.set(key, sim.elapsed + ALLY_IGNORE_SECONDS);
+
   // 清除涉及该对的待处理邀请
   sim.invites = sim.invites.filter(
     (inv) =>
@@ -234,8 +245,9 @@ export function ignorePair(sim: SimulationState, a: number, b: number): void {
         (inv.fromId === b && inv.toId === a)
       ),
   );
-  const targetName = sim.actors[b]?.name ?? `角色${b}`;
-  pulse(sim, `忽略 ${targetName} 60秒`, sim.actors[a]?.x ?? 11, sim.actors[a]?.y ?? 11, '#cfd8e0');
+
+  pulse(sim, `已忽略 ${toActor.name}，60秒内互不组队`, fromActor.x, fromActor.y, '#cfd8e0');
+  return true;
 }
 
 export function createInitialSimulation(): SimulationState {
@@ -317,6 +329,7 @@ export function createInitialSimulation(): SimulationState {
       kills: 0,
       hitFlash: 0,
       facing: 0,
+      rank: null,
     });
   }
 
@@ -377,7 +390,7 @@ export function partnerOf(sim: SimulationState, actor: ActorState): ActorState |
 }
 
 export function chestOf(sim: SimulationState, teamId: number): ChestState | null {
-  return sim.chests.find((c) => c.hp > 0 && (c.a === teamId || c.b === teamId)) ?? null;
+  return sim.chests.find((c) => (c.hp > 0 || c.treasure > 0) && (c.a === teamId || c.b === teamId)) ?? null;
 }
 
 export function pulse(sim: SimulationState, text: string, x: number, y: number, color = '#ffe27a'): void {
@@ -424,17 +437,20 @@ export function scatterLoot(sim: SimulationState, x: number, y: number, count: n
       spin: Math.random() * 6,
     });
   }
-  burst(sim, x, y, '#ffd257', Math.min(22, 6 + count * 2));
+  burst(sim, x, y, '#ffd257', Math.min(24, 6 + count * 2));
 }
 
-/** 破坏有效宝箱：单次释放全部财物并置为无效，不解除队伍关系 */
+/** 破坏有效宝箱（R01 修复）：释放全部所含财物并置为无效，单次生效，不解除队伍关系 */
 export function destroyChest(sim: SimulationState, chest: ChestState, originX: number, originY: number): number {
-  if (chest.hp <= 0) return 0;
+  if (chest.hp <= 0 && chest.treasure <= 0) return 0;
   const count = chest.treasure;
   chest.treasure = 0;
   chest.hp = 0;
   sim.chestBreaks++;
-  scatterLoot(sim, originX, originY, count);
+  if (count > 0) {
+    scatterLoot(sim, originX, originY, count);
+  }
+  burst(sim, originX, originY, '#ffd257', 18);
   return count;
 }
 
@@ -448,7 +464,7 @@ export function disbandTeam(sim: SimulationState, a: ActorState, reason: 'distan
   const chest = chestOf(sim, a.team);
 
   let releasedCount = 0;
-  if (chest && chest.hp > 0) {
+  if (chest && (chest.hp > 0 || chest.treasure > 0)) {
     releasedCount = destroyChest(sim, chest, cx, cy);
   }
 
@@ -458,7 +474,7 @@ export function disbandTeam(sim: SimulationState, a: ActorState, reason: 'distan
   b.runningAwayFromPartner = false;
 
   if (reason === 'distance') {
-    pulse(sim, '连线断裂，队伍解散！', cx, cy, '#ff6a5a');
+    pulse(sim, '连线拉断，队伍解散！', cx, cy, '#ff6a5a');
     if (a.isPlayer || b.isPlayer) {
       sim.playerDisbands++;
       sim.betrayals = sim.playerDisbands;
@@ -519,7 +535,7 @@ export function formTeam(sim: SimulationState, a: ActorState, b: ActorState): bo
   return true;
 }
 
-/** 发送组队邀请 */
+/** 发送组队邀请（R08 校验单一邀请限制与反向直接同意） */
 export function sendInvite(sim: SimulationState, fromId: number, toId: number): boolean {
   const from = sim.actors[fromId];
   const to = sim.actors[toId];
@@ -545,14 +561,13 @@ export function sendInvite(sim: SimulationState, fromId: number, toId: number): 
     return formTeam(sim, from, to);
   }
 
-  // 避免同方向重复发送
-  const existing = sim.invites.find((inv) => inv.fromId === fromId && inv.toId === toId);
-  if (existing) {
-    return true;
-  }
+  // 严格单一邀请参与约束：发起方或接收方正在处理其他有效邀请时，不覆盖并返回 busy
+  const fromBusy = sim.invites.some((inv) => (inv.fromId === fromId || inv.toId === fromId) && sim.elapsed <= inv.expiresAt);
+  if (fromBusy) return false;
 
-  // 移除发起方此前的旧邀请，建立新邀请
-  sim.invites = sim.invites.filter((inv) => inv.fromId !== fromId);
+  const toBusy = sim.invites.some((inv) => (inv.fromId === toId || inv.toId === toId) && sim.elapsed <= inv.expiresAt);
+  if (toBusy) return false;
+
   sim.invites.push({
     id: sim.nextEntityId++,
     fromId,
@@ -560,7 +575,7 @@ export function sendInvite(sim: SimulationState, fromId: number, toId: number): 
     expiresAt: sim.elapsed + ALLY_INVITE_TTL,
   });
 
-  pulse(sim, `邀请 ${to.name} 组队...`, from.x, from.y, '#ffe27a');
+  pulse(sim, `已向 ${to.name} 发送组队邀请...`, from.x, from.y, '#ffe27a');
   return true;
 }
 
@@ -576,37 +591,74 @@ export function acceptInvite(sim: SimulationState, inviteId: number, recipientId
   return formTeam(sim, from, to);
 }
 
-/** 查询离某角色最近的候选可交互角色 */
+/** 查询离某角色最近的候选可交互角色（R04 过滤屏蔽对象，被忽略的不阻碍选择其他合资格者） */
 export function getNearbyCandidate(sim: SimulationState, actor: ActorState): CandidateInfo | null {
   if (!actor.alive || actor.team >= 0 || sim.finalPhase || sim.gameOver) return null;
 
-  let best: ActorState | null = null;
-  let bestDist = ALLY_INTERACT_DISTANCE;
+  let bestEligible: ActorState | null = null;
+  let bestEligibleDist = ALLY_INTERACT_DISTANCE;
+  let closestIgnored: ActorState | null = null;
+  let closestIgnoredDist = ALLY_INTERACT_DISTANCE;
 
   for (const o of aliveActors(sim)) {
     if (o.id === actor.id || o.team >= 0) continue;
     const d = dist(actor, o);
-    if (d <= bestDist) {
-      bestDist = d;
-      best = o;
+    if (d > ALLY_INTERACT_DISTANCE) continue;
+
+    const ignored = isPairIgnored(sim, actor.id, o.id);
+    if (!ignored) {
+      if (d < bestEligibleDist) {
+        bestEligibleDist = d;
+        bestEligible = o;
+      }
+    } else {
+      if (d < closestIgnoredDist) {
+        closestIgnoredDist = d;
+        closestIgnored = o;
+      }
     }
   }
 
-  if (!best) return null;
+  if (bestEligible) {
+    return {
+      id: bestEligible.id,
+      name: bestEligible.name,
+      distance: Number(bestEligibleDist.toFixed(2)),
+      canInvite: true,
+    };
+  }
 
-  const ignored = isPairIgnored(sim, actor.id, best.id);
-  return {
-    id: best.id,
-    name: best.name,
-    distance: Number(bestDist.toFixed(2)),
-    canInvite: !ignored,
-    reason: ignored ? '被忽略中' : undefined,
-  };
+  if (closestIgnored) {
+    return {
+      id: closestIgnored.id,
+      name: closestIgnored.name,
+      distance: Number(closestIgnoredDist.toFixed(2)),
+      canInvite: false,
+      reason: '被忽略中',
+    };
+  }
+
+  return null;
+}
+
+export function checkGameOver(sim: SimulationState): void {
+  if (sim.gameOver) return;
+  const alive = aliveActors(sim);
+  if (alive.length <= 1 || sim.elapsed >= MATCH_SECONDS) {
+    sim.gameOver = true;
+    sim.winner = alive[0] ?? null;
+    if (sim.winner) {
+      sim.winner.rank = 1;
+    }
+  }
 }
 
 export function eliminate(sim: SimulationState, a: ActorState, reason: string): void {
   if (!a.alive) return;
   a.alive = false;
+  // 记录真实淘汰名次（R02）
+  a.rank = aliveActors(sim).length + 1;
+
   if (a.team >= 0) {
     disbandTeam(sim, a, 'fall');
   }
@@ -615,6 +667,26 @@ export function eliminate(sim: SimulationState, a: ActorState, reason: string): 
   burst(sim, a.x, a.y, a.color, 18);
   pulse(sim, `${a.name} 淘汰`, a.x, a.y, '#ff9a8a');
   void reason;
+
+  checkGameOver(sim);
+}
+
+/** 计算攻击伤害：包含个人财物增益与结盟/宝箱财富加成（R09） */
+export function calculateAttackDamage(sim: SimulationState, attacker: ActorState): number {
+  let damage = 10; // 基础伤害
+  // 个人宝物增益：每个宝物 +0.5 伤害，上限 +10
+  damage += Math.min(10, attacker.treasure * 0.5);
+
+  // 结盟合作增益：有队友时 +3 伤害
+  if (attacker.team >= 0) {
+    damage += 3;
+    // 共享宝箱财富加成：宝箱内每宝物 +0.5 伤害，上限 +5
+    const chest = chestOf(sim, attacker.team);
+    if (chest && (chest.hp > 0 || chest.treasure > 0)) {
+      damage += Math.min(5, chest.treasure * 0.5);
+    }
+  }
+  return Math.round(damage);
 }
 
 export function damageActor(sim: SimulationState, target: ActorState, amount: number, from: ActorState | null): void {
@@ -646,7 +718,7 @@ export function doDash(sim: SimulationState, a: ActorState): void {
   burst(sim, a.x, a.y, '#bfe9ff', 8);
 }
 
-/** 统一队伍距离与断线检测：在所有移动与击退更新后每对只结算一次 */
+/** 统一队伍距离与断线检测：在所有移动与击退位移结算后统一判定 */
 export function checkTeamDistances(sim: SimulationState): void {
   for (const a of sim.actors) {
     if (!a.alive || a.team < 0 || a.id > a.team) continue;
@@ -670,7 +742,6 @@ export function decideAI(sim: SimulationState, a: ActorState): void {
   if (pendingToMe && a.team < 0 && !sim.finalPhase) {
     const fromActor = sim.actors[pendingToMe.fromId];
     if (fromActor && fromActor.alive && dist(a, fromActor) <= ALLY_INTERACT_DISTANCE && !isPairIgnored(sim, a.id, fromActor.id)) {
-      // 按 AI 性格决定接受或忽略
       let acceptProb = 0.8;
       if (a.ai === 'greedy') acceptProb = 0.65;
       else if (a.ai === 'raider') acceptProb = 0.35;
@@ -685,13 +756,19 @@ export function decideAI(sim: SimulationState, a: ActorState): void {
     }
   }
 
-  // 2. 抢自由宝物优先
+  // 2. 抢自由宝物优先（合作状态下受队友距离约束，R05）
   let bestLoot: LootState | null = null;
   let bl = 7;
+  const partner = partnerOf(sim, a);
+
   for (const l of sim.loots) {
     if (!l.value || l.z > 2) continue;
     const d = dist(a, l);
     if (d < bl) {
+      // 若处于正常合作中且未背叛：宝物不能远离队友，否则放弃避免意外拉断
+      if (partner && !a.runningAwayFromPartner && dist(partner, l) > 3.6) {
+        continue;
+      }
       bl = d;
       bestLoot = l;
     }
@@ -710,8 +787,7 @@ export function decideAI(sim: SimulationState, a: ActorState): void {
   }
 
   // 4. 已有队伍状态
-  if (a.team >= 0) {
-    const b = partnerOf(sim, a);
+  if (a.team >= 0 && partner) {
     const c = chestOf(sim, a.team);
 
     // 贪财 AI 在宝箱足够大时产生背叛意图：真实远离队友以触发距离断线
@@ -719,10 +795,9 @@ export function decideAI(sim: SimulationState, a: ActorState): void {
       a.runningAwayFromPartner = true;
     }
 
-    if (b && a.runningAwayFromPartner) {
-      // 背叛移动：朝远离队友方向全速跑开
-      const dx = a.x - b.x || 1;
-      const dy = a.y - b.y || 1;
+    if (a.runningAwayFromPartner) {
+      const dx = a.x - partner.x || 1;
+      const dy = a.y - partner.y || 1;
       const dlen = Math.hypot(dx, dy);
       a.aim = {
         x: clamp(a.x + (dx / dlen) * 4.0, 1.5, GRID_SIZE - 2.5),
@@ -733,7 +808,7 @@ export function decideAI(sim: SimulationState, a: ActorState): void {
 
     if (a.ai === 'raider') {
       const enemyChest = sim.chests
-        .filter((x) => x.hp > 0 && x.a !== a.id && x.b !== a.id && x.treasure >= 3)
+        .filter((x) => (x.hp > 0 || x.treasure > 0) && x.a !== a.id && x.b !== a.id && x.treasure >= 3)
         .sort((p, q) => dist(a, p) - dist(a, q))[0];
       if (enemyChest) {
         a.aim = { x: enemyChest.x, y: enemyChest.y };
@@ -741,14 +816,12 @@ export function decideAI(sim: SimulationState, a: ActorState): void {
       }
     }
 
-    if (b) {
-      // 正常合作：跟随在队友附近（保持 1.5~3.0 距离以内，避免拉断线）
-      a.aim = {
-        x: (a.x + b.x) / 2 + (Math.random() - 0.5) * 2.2,
-        y: (a.y + b.y) / 2 + (Math.random() - 0.5) * 2.2,
-      };
-      return;
-    }
+    // 正常合作：跟随在队友附近（保持 1.5~2.8 距离以内，避免拉断线）
+    a.aim = {
+      x: (a.x + partner.x) / 2 + (Math.random() - 0.5) * 2.0,
+      y: (a.y + partner.y) / 2 + (Math.random() - 0.5) * 2.0,
+    };
+    return;
   } else if (!sim.finalPhase && a.ai !== 'raider') {
     // 5. 单人未组队：寻找附近未组队未屏蔽角色并发送组队邀请
     const candidate = getNearbyCandidate(sim, a);
@@ -794,45 +867,40 @@ export function stepSimulation(
     return;
   }
 
+  // 结局后冻结全部游戏规则（R02）
+  if (sim.gameOver) {
+    return;
+  }
+
   const dt = dtRaw * sim.speed;
   const center = (GRID_SIZE - 1) / 2;
   const player = sim.actors[0]!;
 
-  if (!sim.gameOver) {
-    sim.elapsed += dt;
-    const progress = sim.elapsed / MATCH_SECONDS;
-    sim.shrink = clamp((progress - 0.38) / 0.5, 0, 1);
+  sim.elapsed += dt;
+  const progress = sim.elapsed / MATCH_SECONDS;
+  sim.shrink = clamp((progress - 0.38) / 0.5, 0, 1);
 
-    if (progress >= 0.8 && !sim.finalPhase) {
-      sim.finalPhase = true;
-      for (const a of aliveActors(sim)) {
-        if (a.team >= 0) {
-          disbandTeam(sim, a, 'final');
-        }
-      }
-      sim.invites.length = 0;
-    }
-
-    // 地块崩塌判定
-    const currentRadius = landRadius(sim.shrink);
-    for (const t of sim.tiles) {
-      if (!t.isLand || t.gone) continue;
-      if (t.r > currentRadius) {
-        t.falling += dt;
-        if (t.falling > 0.55) {
-          t.gone = true;
-          if (Math.random() < 0.5) {
-            burst(sim, t.gx, t.gy, '#8b8f86', 4);
-          }
-        }
-      }
-    }
-
-    // 掉出荒岛或缩圈淘汰
+  if (progress >= 0.8 && !sim.finalPhase) {
+    sim.finalPhase = true;
     for (const a of aliveActors(sim)) {
-      const t = tileAt(sim, Math.round(a.x), Math.round(a.y));
-      if (!t || !t.isLand || t.gone || t.r > currentRadius) {
-        eliminate(sim, a, 'fall');
+      if (a.team >= 0) {
+        disbandTeam(sim, a, 'final');
+      }
+    }
+    sim.invites.length = 0;
+  }
+
+  // 地块崩塌判定
+  const currentRadius = landRadius(sim.shrink);
+  for (const t of sim.tiles) {
+    if (!t.isLand || t.gone) continue;
+    if (t.r > currentRadius) {
+      t.falling += dt;
+      if (t.falling > 0.55) {
+        t.gone = true;
+        if (Math.random() < 0.5) {
+          burst(sim, t.gx, t.gy, '#8b8f86', 4);
+        }
       }
     }
   }
@@ -914,20 +982,22 @@ export function stepSimulation(
     a.dashCd = Math.max(0, a.dashCd - dt);
     a.attackCd = Math.max(0, a.attackCd - dt);
     a.hitFlash = Math.max(0, a.hitFlash - dt);
+  }
 
+  // 6. 移动后优先执行本步边缘坠落与淘汰判定（R05：坠落优先于超距断线）
+  for (const a of aliveActors(sim)) {
     const t = tileAt(sim, Math.round(a.x), Math.round(a.y));
-    if (t && t.gone) {
-      a.x = center + (a.x - center) * 0.97;
-      a.y = center + (a.y - center) * 0.97;
+    if (!t || !t.isLand || t.gone || t.r > currentRadius) {
+      eliminate(sim, a, 'fall');
     }
   }
 
-  // 6. 统一队伍距离与断线检测（必须在所有移动与击退位移结算后统一判定）
+  // 7. 统一队伍距离与断线检测（仅对仍存活的队伍对检测）
   checkTeamDistances(sim);
 
-  // 7. 宝箱实时中点跟随与属性刷新
+  // 8. 宝箱实时中点跟随与属性刷新
   for (const c of sim.chests) {
-    if (c.hp <= 0) continue;
+    if (c.hp <= 0 && c.treasure <= 0) continue;
     const a = sim.actors[c.a]!;
     const b = sim.actors[c.b]!;
     if (!a.alive || !b.alive || a.team < 0) {
@@ -941,7 +1011,7 @@ export function stepSimulation(
     c.hitFlash = Math.max(0, c.hitFlash - dt);
   }
 
-  // 8. 自动攻击判断
+  // 9. 自动攻击判断（遵循最近有效敌对目标，包含财物与结盟攻击收益计算，R09）
   for (const a of aliveActors(sim)) {
     if (a.attackCd > 0) continue;
     let targetMonster: MonsterState | null = null;
@@ -954,26 +1024,24 @@ export function stepSimulation(
       if (d < td) {
         td = d;
         targetMonster = m;
+        targetActor = null;
       }
     }
 
-    // 优先击杀怪物积攒宝物；在终局混战或掠夺阶段（elapsed >= 40s）且附近无怪时，才主动攻击其他角色
-    if (!targetMonster) {
-      if (sim.finalPhase || sim.elapsed >= 40) {
-        for (const o of aliveActors(sim)) {
-          if (o === a || a.team === o.id) continue;
-          const d = dist(a, o);
-          if (d < td) {
-            td = d;
-            targetActor = o;
-          }
-        }
+    for (const o of aliveActors(sim)) {
+      if (o === a || a.team === o.id) continue;
+      const d = dist(a, o);
+      if (d < td) {
+        td = d;
+        targetActor = o;
+        targetMonster = null;
       }
     }
 
     if (targetMonster) {
-      a.attackCd = 0.7;
-      targetMonster.hp -= 1;
+      a.attackCd = Math.max(0.55, 0.7 - a.treasure * 0.008);
+      const dmg = Math.round(1 + a.treasure * 0.1);
+      targetMonster.hp -= dmg;
       targetMonster.hitFlash = 0.2;
       burst(sim, targetMonster.x, targetMonster.y, '#c8a2ff', 5);
       if (targetMonster.hp <= 0) {
@@ -990,28 +1058,30 @@ export function stepSimulation(
         scatterLoot(sim, targetMonster.x, targetMonster.y, 1);
       }
     } else if (targetActor) {
-      a.attackCd = 0.7;
+      a.attackCd = Math.max(0.55, 0.7 - a.treasure * 0.008);
+      const dmg = calculateAttackDamage(sim, a);
+
       if (targetActor.team >= 0) {
         const c = chestOf(sim, targetActor.team);
-        if (c && c.hp > 0) {
-          c.hp -= 12;
+        if (c && (c.hp > 0 || c.treasure > 0)) {
+          c.hp -= dmg;
           c.hitFlash = 0.2;
           burst(sim, c.x, c.y, '#ffb45c', 5);
           if (c.hp <= 0) {
-            // 外部打爆宝箱：释放全部战利品，但原队伍双方保持结盟关系！
+            // 外部打爆宝箱：释放全部战利品，但原队伍双方保持结盟关系！（R01 修复）
             destroyChest(sim, c, c.x, c.y);
-            pulse(sim, '宝箱被打爆！', c.x, c.y, '#ff8a6a');
+            pulse(sim, '宝箱被打爆！队伍关系仍保留', c.x, c.y, '#ff8a6a');
           }
         } else {
-          damageActor(sim, targetActor, 10, a);
+          damageActor(sim, targetActor, dmg, a);
         }
       } else {
-        damageActor(sim, targetActor, 10, a);
+        damageActor(sim, targetActor, dmg, a);
       }
     }
   }
 
-  // 9. 怪物重生
+  // 10. 怪物重生
   for (const m of sim.monsters) {
     m.hitFlash = Math.max(0, m.hitFlash - dt);
     if (m.alive) continue;
@@ -1025,7 +1095,7 @@ export function stepSimulation(
     }
   }
 
-  // 10. 自由宝物物理模拟与拾取
+  // 11. 自由宝物物理模拟与拾取
   for (const l of sim.loots) {
     l.life -= dt;
     l.x += l.vx * dt * 2.2;
@@ -1056,7 +1126,7 @@ export function stepSimulation(
     if (sim.loots[i]!.life <= 0) sim.loots.splice(i, 1);
   }
 
-  // 11. 粒子与飘字生命周期
+  // 12. 粒子与飘字生命周期
   for (let i = sim.particles.length - 1; i >= 0; i--) {
     const p = sim.particles[i]!;
     p.x += p.vx * dt * 3.0;
@@ -1077,12 +1147,15 @@ export function stepSimulation(
     if (f.life <= 0) sim.floats.splice(i, 1);
   }
 
-  // 12. 胜负与结局判定
+  // 13. 胜负与结局判定
   if (!sim.gameOver) {
     const alive = aliveActors(sim);
     if (alive.length <= 1 || sim.elapsed >= MATCH_SECONDS) {
       sim.gameOver = true;
       sim.winner = alive[0] ?? null;
+      if (sim.winner) {
+        sim.winner.rank = 1;
+      }
     }
   }
 }

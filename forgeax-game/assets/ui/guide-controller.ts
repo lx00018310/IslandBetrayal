@@ -1,5 +1,5 @@
-// 《荒岛合纵：破箱局》HUD 控制器
-// 驱动顶部仪表盘、组队选择/邀请横幅、触屏摇杆动作、超距预警与结算弹窗
+// 《荒岛分赃》HUD 控制器
+// 驱动顶部仪表盘、组队选择/邀请横幅、触屏摇杆动作、队伍列表动态同步、超距预警与结算弹窗
 
 import type { GameHost } from '@forgeax/engine/app';
 import { mountUi, type UiAsset, type UiInstance } from '@forgeax/engine/ui';
@@ -135,6 +135,11 @@ export async function createGuideUi(
       const thumb = shadow.querySelector<HTMLElement>('[data-ui-part="move-thumb"]');
       if (stick && thumb) {
         let activeId = -1;
+        const resetStick = () => {
+          activeId = -1;
+          thumb.style.transform = 'translate(0px, 0px)';
+          sendTouch({ kind: 'reset' });
+        };
         const onDown = (e: PointerEvent) => {
           if (activeId !== -1) return;
           activeId = e.pointerId;
@@ -157,10 +162,7 @@ export async function createGuideUi(
           sendTouch({ kind: 'move', x: dx, y: dy });
         };
         const onUp = (e: PointerEvent) => {
-          if (e.pointerId !== activeId) return;
-          activeId = -1;
-          thumb.style.transform = 'translate(0px, 0px)';
-          sendTouch({ kind: 'reset' });
+          if (e.pointerId === activeId) resetStick();
         };
         stick.addEventListener('pointerdown', onDown);
         stick.addEventListener('pointermove', (e) => {
@@ -168,6 +170,7 @@ export async function createGuideUi(
         });
         stick.addEventListener('pointerup', onUp);
         stick.addEventListener('pointercancel', onUp);
+        stick.addEventListener('lostpointercapture', resetStick);
       }
 
       // 组队 / 接受主按钮
@@ -233,6 +236,7 @@ export async function createGuideUi(
     const phaseElem = shadow?.querySelector<HTMLElement>('[data-ui-part="match-phase"]');
     const survElem = shadow?.querySelector<HTMLElement>('[data-ui-part="survivors-count"]');
     const treasureElem = shadow?.querySelector<HTMLElement>('[data-ui-part="player-treasure"]');
+    const teamListElem = shadow?.querySelector<HTMLElement>('[data-ui-part="team-list"]');
     const hpFill = shadow?.querySelector<HTMLElement>('[data-ui-part="hp-fill"]');
     const statusHint = shadow?.querySelector<HTMLElement>('[data-ui-part="player-status-hint"]');
     const warningHint = shadow?.querySelector<HTMLElement>(
@@ -259,6 +263,11 @@ export async function createGuideUi(
         if (disposed) return;
         const state = event.data as Record<string, unknown> | undefined;
         if (!state || state.channel !== 'island/hud-state') return;
+
+        // 若重开已重置，隐藏结算弹窗（R03）
+        if (!state.gameOver && resultModal && !resultModal.classList.contains('hidden')) {
+          resultModal.classList.add('hidden');
+        }
 
         const elapsed = typeof state.elapsed === 'number' ? state.elapsed : 0;
         const left = Math.max(0, 300 - elapsed);
@@ -294,14 +303,40 @@ export async function createGuideUi(
           hpFill.style.background = hp > 30 ? '#7ee08a' : '#ff5a4a';
         }
 
+        // 动态同步场上队伍列表（R10）
+        const teams = state.teams as
+          | Array<{ aName: string; bName: string; treasure: number }>
+          | undefined;
+        if (teamListElem) {
+          if (teams && teams.length > 0) {
+            teamListElem.innerHTML = teams
+              .map(
+                (t) =>
+                  `<div class="team-item">● ${t.aName}+${t.bName}  ◆${t.treasure}</div>`,
+              )
+              .join('');
+          } else {
+            teamListElem.innerHTML = '<div class="team-item empty-team">等待结盟中...</div>';
+          }
+        }
+
         const partnerName = state.partnerName as string | null;
         const partnerDist = state.partnerDistance as number | null;
         const isWarning = state.isWarning === true;
+        const ownChest = state.ownChest as
+          | { treasure: number; hp: number; maxHp: number }
+          | null
+          | undefined;
 
         if (statusHint) {
-          statusHint.textContent = partnerName
-            ? `队友 ${partnerName} · 距离 ${partnerDist ?? 0}m`
-            : '单人 · 靠近他人可邀请组队';
+          if (partnerName) {
+            const chestText = ownChest
+              ? ` · 宝箱 ◆${ownChest.treasure} (${ownChest.hp}/${ownChest.maxHp})`
+              : ' · 宝箱已破';
+            statusHint.textContent = `队友 ${partnerName} · 距离 ${partnerDist ?? 0}m${chestText}`;
+          } else {
+            statusHint.textContent = '单人 · 靠近角色可邀请组队';
+          }
         }
 
         if (warningHint) {
@@ -370,26 +405,27 @@ export async function createGuideUi(
           }
         }
 
-        // 胜负结算展示
+        // 胜负结算展示（R02 & R10：准确判断 winnerId 与真实名次）
         if (state.gameOver && resultModal && resultModal.classList.contains('hidden')) {
           resultModal.classList.remove('hidden');
-          const isWinner = state.isAlive === true;
+          const isWinner = state.isWinner === true;
           if (resultTitle) {
             resultTitle.textContent = isWinner
-              ? '胜利！你是最后幸存者'
-              : `${state.winnerName ?? '其他玩家'} 获胜`;
+              ? '你赢了！'
+              : `${state.winnerName ?? '其他角色'} 获胜`;
           }
           if (resultSub) {
             resultSub.textContent = isWinner
-              ? '精彩的生存与合纵决战！'
-              : '荒岛形势瞬息万变，再试一次！';
+              ? '精彩的合作攒宝与断线分赃决战！'
+              : '荒岛形势瞬息万变，换个策略再试一次！';
           }
           if (statTreasure) statTreasure.textContent = String(pTreas);
           if (statBreaks) statBreaks.textContent = String(breaks);
           if (statDisbands) statDisbands.textContent = String(disbands);
           if (statBetrayals) statBetrayals.textContent = String(disbands);
           if (statKills) statKills.textContent = String(state.kills ?? 0);
-          if (statRank) statRank.textContent = `${isWinner ? '1' : Math.max(2, 11 - aliveCount)} / 10`;
+          const rank = typeof state.playerRank === 'number' ? state.playerRank : isWinner ? 1 : Math.max(2, 11 - aliveCount);
+          if (statRank) statRank.textContent = `第 ${rank} 名 / 10`;
         }
       };
       port.addEventListener('message', onHudMessage);
