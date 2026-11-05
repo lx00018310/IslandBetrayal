@@ -1,0 +1,569 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="description" content="ForgeaX SDK v0.1.6 npm and ZIP release updates, verification, and future release workflow" />
+    <title>ForgeaX SDK v0.1.6 · Release Notes</title>
+    <style>
+      :root {
+        color-scheme: light;
+        --bg: #f5f7fb;
+        --surface: #ffffff;
+        --surface-muted: #eef2f8;
+        --text: #172033;
+        --muted: #5f6b7d;
+        --line: #d9e0eb;
+        --brand: #3157d5;
+        --brand-soft: #e8edff;
+        --success: #13795b;
+        --success-soft: #e5f7ef;
+        --warning: #8b5a00;
+        --warning-soft: #fff4d7;
+        --code: #101827;
+        --code-text: #e9efff;
+        --shadow: 0 14px 40px rgba(27, 42, 72, 0.09);
+      }
+
+      * { box-sizing: border-box; }
+      html { scroll-behavior: smooth; }
+      body {
+        margin: 0;
+        background:
+          radial-gradient(circle at 15% 0%, #eaf0ff 0, transparent 34rem),
+          var(--bg);
+        color: var(--text);
+        font: 16px/1.7 -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC",
+          "Hiragino Sans GB", "Microsoft YaHei", sans-serif;
+      }
+      a { color: var(--brand); text-decoration: none; }
+      a:hover { text-decoration: underline; }
+      .shell { width: min(1120px, calc(100% - 32px)); margin: 0 auto; }
+      header { padding: 64px 0 34px; }
+      .eyebrow {
+        color: var(--brand);
+        font-size: 0.82rem;
+        font-weight: 750;
+        letter-spacing: 0.12em;
+        text-transform: uppercase;
+      }
+      h1, h2, h3 { line-height: 1.25; margin: 0 0 14px; }
+      h1 { font-size: clamp(2.15rem, 5vw, 4.2rem); letter-spacing: -0.04em; }
+      h2 { font-size: clamp(1.45rem, 3vw, 2rem); margin-top: 8px; }
+      h3 { font-size: 1.08rem; }
+      .lead { color: var(--muted); font-size: 1.12rem; max-width: 780px; margin: 0; }
+      .meta-grid {
+        display: grid;
+        grid-template-columns: repeat(4, minmax(0, 1fr));
+        gap: 12px;
+        margin: 26px 0 0;
+      }
+      .meta {
+        background: rgba(255, 255, 255, 0.8);
+        border: 1px solid var(--line);
+        border-radius: 14px;
+        padding: 15px 16px;
+      }
+      .meta .label { color: var(--muted); display: block; font-size: 0.78rem; }
+      .meta .value { display: block; font-weight: 750; margin-top: 3px; overflow-wrap: anywhere; }
+      main { padding-bottom: 72px; }
+      section {
+        background: var(--surface);
+        border: 1px solid var(--line);
+        border-radius: 18px;
+        box-shadow: var(--shadow);
+        margin: 18px 0;
+        padding: clamp(20px, 4vw, 34px);
+      }
+      .callout {
+        border-left: 5px solid var(--brand);
+        background: var(--brand-soft);
+        border-radius: 10px;
+        padding: 14px 18px;
+        margin: 16px 0 22px;
+      }
+      .callout.success { border-left-color: var(--success); background: var(--success-soft); }
+      .callout.warning { border-left-color: var(--warning); background: var(--warning-soft); }
+      .callout p { margin: 0; }
+      .table-wrap { overflow-x: auto; }
+      table { border-collapse: collapse; width: 100%; min-width: 640px; }
+      th, td { border-bottom: 1px solid var(--line); padding: 11px 10px; text-align: left; vertical-align: top; }
+      th { background: var(--surface-muted); font-size: 0.86rem; }
+      tbody tr:last-child td { border-bottom: 0; }
+      code {
+        background: var(--surface-muted);
+        border-radius: 5px;
+        padding: 0.12em 0.35em;
+        font: 0.9em ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      }
+      pre {
+        background: var(--code);
+        border: 1px solid #263554;
+        border-radius: 12px;
+        color: var(--code-text);
+        margin: 12px 0 0;
+        overflow: auto;
+        padding: 16px 18px;
+      }
+      pre code { background: transparent; border-radius: 0; color: inherit; padding: 0; }
+      .flow {
+        align-items: stretch;
+        display: grid;
+        gap: 9px;
+        grid-template-columns: repeat(7, minmax(0, 1fr));
+        margin: 22px 0 8px;
+      }
+      .flow-step {
+        align-items: center;
+        background: var(--brand-soft);
+        border: 1px solid #c9d3ff;
+        border-radius: 12px;
+        display: flex;
+        font-size: 0.88rem;
+        font-weight: 700;
+        justify-content: center;
+        min-height: 70px;
+        padding: 10px;
+        position: relative;
+        text-align: center;
+      }
+      .flow-step:not(:last-child)::after {
+        color: var(--brand);
+        content: "→";
+        font-size: 1.4rem;
+        position: absolute;
+        right: -16px;
+        top: 20px;
+        z-index: 1;
+      }
+      .two-col { display: grid; gap: 18px; grid-template-columns: repeat(2, minmax(0, 1fr)); }
+      .card {
+        background: var(--surface-muted);
+        border: 1px solid var(--line);
+        border-radius: 13px;
+        padding: 17px;
+      }
+      .card h3 { margin-bottom: 8px; }
+      ul, ol { margin: 9px 0 0; padding-left: 1.35rem; }
+      li + li { margin-top: 5px; }
+      .checklist { list-style: none; padding-left: 0; }
+      .checklist li { padding-left: 1.65rem; position: relative; }
+      .checklist li::before {
+        color: var(--success);
+        content: "✓";
+        font-weight: 900;
+        left: 0;
+        position: absolute;
+      }
+      details { border-top: 1px solid var(--line); margin-top: 20px; padding-top: 14px; }
+      summary { cursor: pointer; font-weight: 750; }
+      footer { color: var(--muted); font-size: 0.9rem; padding: 4px 0 52px; }
+      @media (max-width: 860px) {
+        .meta-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+        .flow { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+        .flow-step:nth-child(4)::after { display: none; }
+      }
+      @media (max-width: 620px) {
+        .shell { width: min(100% - 20px, 1120px); }
+        header { padding-top: 36px; }
+        .meta-grid, .two-col, .flow { grid-template-columns: 1fr; }
+        .flow-step:not(:last-child)::after {
+          content: "↓";
+          right: auto;
+          top: auto;
+          bottom: -22px;
+          left: calc(50% - 7px);
+        }
+        .flow-step { min-height: 52px; }
+      }
+    </style>
+  </head>
+  <body>
+    <div class="shell">
+      <header>
+        <div class="eyebrow">ForgeaX Engine · Release update · 2026-08-27</div>
+        <h1>SDK v0.1.6</h1>
+        <p class="lead">
+          The npm carrier publication and visibility path has recovered. This record covers delivery status,
+          ZIP/npm user paths, real consumer verification, and gates for the next release.
+        </p>
+        <div class="meta-grid" aria-label="Version summary">
+          <div class="meta"><span class="label">SDK</span><span class="value">0.1.6</span></div>
+          <div class="meta"><span class="label">Engine commit</span><span class="value">e5cddd16fe67…</span></div>
+          <div class="meta"><span class="label">npm latest</span><span class="value">0.1.6</span></div>
+          <div class="meta"><span class="label">Release date</span><span class="value">2026-08-27</span></div>
+        </div>
+      </header>
+
+      <main>
+        <section>
+          <h2>Current status</h2>
+          <div class="callout success">
+            <p>
+              <strong>Completed:</strong> GitHub Release, npm carrier, README, initialization, and external game
+              creation passed real checks; the remote <code>Protect</code> ruleset is active again.
+            </p>
+          </div>
+          <div class="table-wrap">
+            <table>
+              <thead><tr><th>Item</th><th>Evidence</th></tr></thead>
+              <tbody>
+                <tr><td>ZIP build and acceptance</td><td><a href="https://github.com/ForgeaXGame/forgeax-engine/actions/runs/33066171395">Actions 33066171395</a> · success</td></tr>
+                <tr><td>npm carrier recovery</td><td><a href="https://github.com/ForgeaXGame/forgeax-engine/actions/runs/33068823496">Actions 33068823496</a> · success</td></tr>
+                <tr><td>GitHub Release</td><td><a href="https://github.com/ForgeaXGame/forgeax-engine/releases/tag/sdk-v0.1.6">sdk-v0.1.6</a></td></tr>
+                <tr><td>npm package</td><td><a href="https://www.npmjs.com/package/@forgeax/engine-sdk/v/0.1.6"><code>@forgeax/engine-sdk@0.1.6</code></a> · <code>latest=0.1.6</code></td></tr>
+                <tr><td>npm integrity</td><td><code>sha512-j8YlMmmag9uXLSfM2XAngZfw7D0t3UqIyUg1G/0dyUHHwGwqJKUaWeoc9Jq5b0uWybUHeqjlqCsD4OcxE+hrNA==</code></td></tr>
+                <tr><td>Ruleset</td><td><code>Protect=active</code>; 21 direct and effective required contexts</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </section>
+
+        <section>
+          <h2>What this update fixes</h2>
+          <div class="table-wrap">
+            <table>
+              <thead><tr><th>Change</th><th>Impact</th></tr></thead>
+              <tbody>
+                <tr><td>Separate canonical-kit output directory</td><td>Builds no longer rewrite tracked <code>cook-receipt.json</code> in contributor checkouts.</td></tr>
+                <tr><td>Root README in npm carrier</td><td>The npm page exposes installation/development entrypoints instead of <code>No README data found!</code>.</td></tr>
+                <tr><td>Complete carrier metadata</td><td>Includes homepage, repository, keywords, and Node requirements; publishes only <code>README.md</code> and <code>sdk/</code>.</td></tr>
+                <tr><td>Offline store removed from carrier</td><td>Keeps npm size publishable; games install locked Engine dependencies from the registry.</td></tr>
+                <tr><td>README publication gate</td><td><code>sdk:publish:npm</code> fails closed without <code>package/README.md</code>.</td></tr>
+                <tr><td>Carrier recovery workflow</td><td>Rebuilds from the verified Release ZIP and waits for public-registry version and <code>dist.integrity</code> visibility.</td></tr>
+              </tbody>
+            </table>
+          </div>
+          <details>
+            <summary>Why recovery was needed</summary>
+            <p>
+              The main release job reported npm publish success while the public registry briefly still returned 0.1.4;
+              both carrier version and tarball returned 404. Recovery rebuilt the carrier from the Release ZIP
+              that had already passed ZIP verification, without rebuilding Engine, then polled the public registry.
+              This distinguishes a completed publication request from a package users can actually download.
+            </p>
+          </details>
+        </section>
+
+        <section>
+          <h2>New: capability catalog and agent onboarding</h2>
+          <div class="callout success">
+            <p>
+              Initialization now tells agents which files to read first, before selecting focused skills
+              and package contracts for their requirements, instead of leaving them to discover scattered READMEs.
+            </p>
+          </div>
+          <ol>
+            <li>Read SDK-root <code>AGENTS.md</code> for ownership, initialization constraints, structure, and security boundaries.</li>
+            <li>Read <code>skills/forgeax-engine-sdk/SKILL.md</code> for the five-minute tour and requirement → skill → evidence route.</li>
+            <li>Read the catalog's historical <code>sdk-v0.1.4 → sdk-v0.1.6</code> increment, then the complete inventory in <code>skills/forgeax-engine-sdk/references/feature-catalog.md</code>.</li>
+            <li>Choose capabilities, read their focused skills and <code>packages/&lt;name&gt;/README.md</code>, then verify through CLI and real execution evidence.</li>
+          </ol>
+          <pre><code>node ./bin/forgeax.mjs project init --json
+
+// value.onboarding.read
+AGENTS.md
+skills/forgeax-engine-sdk/SKILL.md
+skills/forgeax-engine-sdk/references/feature-catalog.md</code></pre>
+          <div class="table-wrap">
+            <table>
+              <thead><tr><th>Scan fact</th><th>Value</th></tr></thead>
+              <tbody>
+                <tr><td>Capability baseline</td><td><code>e5cddd16fe6796b85559945c9637bd67faffbcc7</code> (<code>sdk-v0.1.6</code>)</td></tr>
+                <tr><td>Completed at</td><td>2026-08-27 20:14:08 UTC+08:00 (12:14:08 UTC)</td></tr>
+                <tr><td>Review range</td><td><code>f58184ad3d3430ee6b27d6cac408b75748f5e5d6..e5cddd16fe6796b85559945c9637bd67faffbcc7</code></td></tr>
+                <tr><td>Next increment</td><td><code>git diff --stat e5cddd16fe6796b85559945c9637bd67faffbcc7..HEAD</code></td></tr>
+              </tbody>
+            </table>
+          </div>
+          <div class="callout">
+            <p>
+              The catalog baseline identifies capability scan scope, not SDK archive identity. The archive
+              remains identified by <code>sdk-manifest.json#engineCommit</code> and SDK semver. Catalog labels
+              Built-in/Opt-in/Build-time/Host-side/Development/Test-experimental distinguish availability from game adoption.
+            </p>
+          </div>
+          <details>
+            <summary>Catalog categories</summary>
+            <p>
+              Rendering pipelines/effects, materials/shaders/geometry, GPU/RHI/VFX, ECS/core architecture,
+              App/input/plugins, physics/audio/networking/intelligence, assets/content production, and AI tools,
+              Preview, Profiler, Remote, RHI Debug, and SDK delivery.
+            </p>
+          </details>
+        </section>
+
+        <section>
+          <h2>0.1.4 → 0.1.6: key Engine increments</h2>
+          <div class="callout warning">
+            <p>
+              Earlier notes provided a capability snapshot but omitted Engine evolution between versions.
+              This increment is reconstructed by SDK tags. Most runtime, asset, and DevKit changes occurred in
+              <code>sdk-v0.1.4..sdk-v0.1.5</code>; <code>sdk-v0.1.5..sdk-v0.1.6</code>
+              primarily fixes delivery and must not be read as new runtime APIs.
+            </p>
+          </div>
+          <div class="table-wrap">
+            <table>
+              <thead><tr><th>SDK tag</th><th>Engine commit</th><th>Time (UTC+08:00)</th><th>Role</th></tr></thead>
+              <tbody>
+                <tr><td><code>sdk-v0.1.4</code></td><td><code>991e857eeb8e5adcaebe147cffa1853264ab3887</code></td><td>2026-08-26 19:29:41</td><td>Increment baseline; existing features are in the capability snapshot.</td></tr>
+                <tr><td><code>sdk-v0.1.5</code></td><td><code>2d24560bf4e6677def8228f04f1f443d1c7d558a</code></td><td>2026-08-27 18:47:06</td><td>Main Engine, rendering, asset, and DevKit changes.</td></tr>
+                <tr><td><code>sdk-v0.1.6</code></td><td><code>e5cddd16fe6796b85559945c9637bd67faffbcc7</code></td><td>2026-08-27 19:09:27</td><td>Canonical-kit, npm-carrier, and release-gate fixes.</td></tr>
+              </tbody>
+            </table>
+          </div>
+          <h3>0.1.4 → 0.1.5: Engine and authoring</h3>
+          <div class="table-wrap">
+            <table>
+              <thead><tr><th>Area</th><th>Key change</th><th>Game-project impact</th><th>Commit</th></tr></thead>
+              <tbody>
+                <tr><td>Render core</td><td>M7 ownership consolidation unifies Standard Pipeline, RenderScene, DeviceScope, extract → prepare → record, and FrameReceipt; removes legacy pipeline registry, broad barrels, and duplicate single-World paths.</td><td>RenderFeatures join the same typed pipeline. Read the Render happy path in <code>packages/render/README.md</code>; do not seek the legacy registry.</td><td><code>6e4f51db6</code></td></tr>
+                <tr><td>Render state</td><td>Owners derive generation-failure stages; public visibility decoding retains health/recovery and LKG receipts.</td><td>Read structured <code>code/detail/hint</code> for black screens/failures and repair the owner; do not infer state from console text.</td><td><code>06ec1fb21</code><br /><code>336e1ed41</code><br /><code>1b5e40900</code></td></tr>
+                <tr><td>App execution</td><td>Serializable execution descriptors carry scoped asset catalogs; Workers no longer capture Host AssetRegistry.</td><td><code>engine-worker</code>/<code>shared</code> builds target-realm Catalogs through <code>execution.assetCatalog</code>; <code>CreateAppOptions.assetCatalog</code> does not cross realms.</td><td><code>ef34c2713</code></td></tr>
+                <tr><td>Pack / Catalog</td><td>Pack runtime binding becomes Catalog SSOT; <code>vite-plugin-pack</code> exposes read-only <code>runtimeBinding()</code> and the sole <code>rebind()</code> seam; ScriptablePack stages external Meta dependencies.</td><td>Dev, preview, Worker, and production share scope/generation; game code must not maintain another URL table.</td><td><code>63d6b71af</code><br /><code>1299fee44</code><br /><code>c9319b002</code></td></tr>
+                <tr><td>Scene</td><td>Adds payload-shaped scene instantiation and projected-payload ownership coverage.</td><td>Build entity hierarchy from Catalog payloads; do not copy GUIDs/Transforms around the scene owner.</td><td><code>254ca4319</code></td></tr>
+                <tr><td>Shader</td><td>Centralizes WGSL portability passes in shader-compiler and normalizes long f32 literals rejected by Safari.</td><td>Custom WGSL uses the build-time compatibility pipeline; no runtime compilation or Safari-specific branches.</td><td><code>7b1f623f</code><br /><code>d6f328597</code></td></tr>
+                <tr><td>VFX</td><td>Renderer owners derive channel-overflow policy.</td><td>VFX source declares effect intent; capacity and overflow recovery follow renderer capabilities.</td><td><code>4053fdd9c</code></td></tr>
+                <tr><td>External assets</td><td>Restores the FBX external-texture resolver contract and assets-runtime custom asset-kind helpers.</td><td>FBX textures use the shared resolver; custom kinds use public registration/recognition helpers. GUID/Meta remains identity SSOT.</td><td><code>51226adc0</code><br /><code>f8d20f276</code></td></tr>
+                <tr><td>Media and debugging</td><td>Video backend kind derives from RHI capabilities; RHI-debug bundles its browser codec.</td><td>Video chooses lanes by capability; browser RHI-debug no longer depends on undeclared external codecs.</td><td><code>a3375408c</code><br /><code>aa4fc5846</code></td></tr>
+                <tr><td>DevKit / diagnostics</td><td>Derives bootstrap roots from BaseHost; CLI/Preview/RHI-debug/GLTF diagnostics retain structured owner/sourceKey/port/build-graph data; benchmark vocabulary derives from reports.</td><td>Read JSON for <code>doctor</code>, <code>preview</code>, <code>asset</code>, and <code>rhi-debug</code> failures; locate owners by root/sourceKey/port.</td><td><code>324161844</code><br /><code>1b5e40900</code><br /><code>6eb1b264b</code></td></tr>
+                <tr><td>Physics and errors</td><td><code>createApp</code> preserves dispatch/Worker terminal errors; Rapier WASM/plugin activation failures normalize before PhysicsWorld creation.</td><td><code>App.lastError</code>/<code>onError</code> is the agent failure entrypoint; failures leave no partially initialized PhysicsWorld.</td><td><code>1b5e40900</code></td></tr>
+                <tr><td>ECS write safety</td><td>Structural component writes and existing-entity updates share numeric preflight. NaN returns closed errors with entity/component/field/index instead of partial column writes.</td><td>Repair <code>component-numeric-value-invalid</code> in generated data; do not probe runtime tolerance with NaN.</td><td><code>1b5e40900</code></td></tr>
+                <tr><td>glTF input contract</td><td>Required-extension admission adds <code>KHR_texture_transform</code>; source-key conflicts include key, sourceIndices, and entry details.</td><td>Check extensions and stable semantic/name keys before import; repair source using <code>detail</code> without sourceIndex fallback.</td><td><code>1b5e40900</code></td></tr>
+              </tbody>
+            </table>
+          </div>
+          <h3>0.1.5 → 0.1.6: delivery</h3>
+          <div class="table-wrap">
+            <table>
+              <thead><tr><th>Change</th><th>User-visible result</th><th>Commit</th></tr></thead>
+              <tbody>
+                <tr><td>Separate canonical-kit output directory</td><td>SDK builds no longer write verification/cooking effects into contributor checkouts.</td><td><code>e5cddd16f</code></td></tr>
+                <tr><td>Root carrier README, metadata, and publish guard</td><td>The <code>@forgeax/engine-sdk@0.1.6</code> npm page exposes entrypoints; missing README or version closure fails closed.</td><td><code>e5cddd16f</code></td></tr>
+                <tr><td>Carrier omits offline store; full ZIP retains <code>store/pnpm/</code></td><td>npm supports online installation and ZIP supports offline creation, sharing one lockfile and bare <code>packages/</code>.</td><td><code>e5cddd16f</code></td></tr>
+              </tbody>
+            </table>
+          </div>
+          <details>
+            <summary>Commits not counted as Engine capabilities</summary>
+            <p>
+              This range also includes Snake M16 reconnection, parity fixtures, required-CI, and Harness
+              changes. These are demo/evidence or delivery infrastructure, not new runtime
+              APIs. For history, inspect <code>4d1fdc8b0</code>, <code>0cbf6dba5</code>, and
+              <code>b820923da</code>.
+            </p>
+          </details>
+          <div class="callout">
+            <p>
+              The complete historical index was recorded in the SDK's
+              <code>skills/forgeax-engine-sdk/references/feature-catalog.md</code>. For the next update, use
+              <code>sdk-v0.1.6</code> as the baseline and first run
+              <code>git log --first-parent --oneline sdk-v0.1.6..HEAD -- packages scripts skills templates</code>,
+              then add changes backed by public owners, exports, and real gates.
+            </p>
+          </div>
+        </section>
+
+        <section>
+          <h2>Standard user path</h2>
+          <div class="flow" aria-label="SDK user workflow">
+            <div class="flow-step">Download ZIP<br />or npm install</div>
+            <div class="flow-step">SDK root<br /><code>forgeax project init</code></div>
+            <div class="flow-step"><code>forgeax project new</code><br />Create game</div>
+            <div class="flow-step">Read<br /><code>AGENTS.md</code></div>
+            <div class="flow-step">doctor<br />test / build</div>
+            <div class="flow-step">dev<br />preview</div>
+            <div class="flow-step"><code>forgeax project package</code><br />Share over HTTPS</div>
+          </div>
+
+          <div class="two-col">
+            <div class="card">
+              <h3>Full ZIP · Offline-capable</h3>
+              <pre><code>unzip forgeax-sdk-v0.1.6.zip
+cd forgeax-sdk
+node ./bin/forgeax.mjs project init
+node ./bin/forgeax.mjs project new ../my-game
+cd ../my-game
+pnpm exec forgeax project check --json
+pnpm test
+pnpm build
+pnpm dev</code></pre>
+              <p>
+                ZIP carries normalized <code>store/pnpm/</code>. Game targets must be outside the SDK root;
+                use sibling directories or other absolute paths for multiple games.
+              </p>
+            </div>
+            <div class="card">
+              <h3>npm carrier · Online</h3>
+              <pre><code>pnpm dlx @forgeax/engine@0.1.6 sdk install "$HOME/ForgeaX/sdk-0.1.6"
+cd "$HOME/ForgeaX/sdk-0.1.6"
+node ./bin/forgeax.mjs project init
+node ./bin/forgeax.mjs project new ../my-game
+cd ../my-game
+pnpm exec forgeax project check --json
+pnpm test
+pnpm build
+pnpm dev</code></pre>
+              <p>
+                <code>@forgeax/engine-sdk</code> is the carrier; the CLI comes from the
+                <code>@forgeax/engine</code> umbrella entrypoint.
+              </p>
+            </div>
+          </div>
+          <div class="callout warning">
+            <p>
+              Do not judge rendering by double-clicking <code>dist/index.html</code> or using <code>file://</code>.
+              Develop with <code>pnpm dev</code>; serve builds with <code>pnpm preview</code> or an
+              HTTPS static site. HTTP 200 proves service liveness, not correct WebGPU rendering.
+            </p>
+          </div>
+        </section>
+
+        <section>
+          <h2>Archive and npm surfaces</h2>
+          <pre><code>forgeax-sdk/
+├── bin/forgeax                 # Standalone CLI
+├── packages/&lt;name&gt;/            # Bare packages, without tgz/package nesting
+├── templates/                  # empty, game-3d
+├── skills/                     # Engine skills
+├── source/engine/              # Public source snapshot
+├── store/pnpm/                 # Full ZIP only
+├── sdk-manifest.json
+└── AGENTS.md</code></pre>
+          <p>
+            The temporary <code>package/</code> layer during npm tarball extraction is standard npm behavior.
+            <code>sdk install</code> copies <code>package/sdk/</code> into the user-selected directory,
+            preserving the flat SDK layout.
+          </p>
+          <div class="table-wrap">
+            <table>
+              <thead><tr><th>Carrier must include</th><th>Carrier must exclude</th></tr></thead>
+              <tbody>
+                <tr><td><code>README.md</code>, <code>package.json</code>, <code>sdk/</code></td><td><code>sdk/store/pnpm/</code></td></tr>
+                <tr><td><code>sdk/bin</code>, <code>sdk/packages</code>, <code>sdk/templates</code>, <code>sdk/skills</code></td><td>Workspace links, private asset submodules, partially initialized directories</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </section>
+
+        <section>
+          <h2>Version checks and upgrade risks</h2>
+          <p>Each <code>forgeax project new</code> reports the current SDK version against the public registry:</p>
+          <pre><code>{
+  "status": "current",
+  "currentVersion": "0.1.6",
+  "latestVersion": "0.1.6"
+}</code></pre>
+          <ol>
+            <li>Read release changes and migration notes when a newer version is available.</li>
+            <li>Existing games retain their versions; dependencies are not rewritten automatically.</li>
+            <li>Create a verification project with the new SDK in a separate branch or copied directory.</li>
+            <li>Migrate after doctor, tests, build, dev/preview, and required browser/RHI evidence pass.</li>
+          </ol>
+          <p>
+            Upgrades can change APIs, asset schemas, plugin Entries, and build tools; existing games require adaptation.
+          </p>
+        </section>
+
+        <section>
+          <h2>0.1.6 acceptance record</h2>
+          <ul class="checklist">
+            <li>ZIP build, reproducibility, and exact archive verification passed.</li>
+            <li>Verification covered <code>new</code>, <code>skill.verify</code>, <code>doctor</code>, <code>test</code>, <code>build</code>, <code>dev</code>, and <code>preview</code>.</li>
+            <li>61 physical npm packages and the SDK carrier passed version, dependency, and integrity checks.</li>
+            <li>The carrier tarball downloaded successfully: about 43 MB, with a 4.3 KB root README.</li>
+            <li>npm-installed SDK <code>init</code> passed using pnpm 11.7.0 registry mode.</li>
+            <li>npm-installed SDK <code>new</code> passed, generating AGENTS, skills, lockfile, .npmrc, and node_modules.</li>
+            <li>Two starter tests and the production build passed.</li>
+            <li>Dev/preview started at <code>http://localhost:5173/</code> and returned HTTP 200.</li>
+            <li><code>Protect</code> was active with 21 direct/effective required contexts.</li>
+          </ul>
+          <details>
+            <summary>21 required contexts</summary>
+            <pre><code>build-artifacts
+primary-pnpm
+coverage-pnpm
+coverage-perf
+vitest-browser
+shared-inputs-browser
+smoke-fleet
+smoke-fleet-0
+smoke-fleet-1
+smoke-fleet-2
+bevy-smoke-fleet
+bevy-smoke-fleet-0
+bevy-smoke-fleet-1
+bevy-smoke-fleet-2
+vitest-dawn
+webkit-fallback
+portability-bun
+metrics-validate-browser
+metrics-validate-runtime
+metrics-validate
+collectathon-boot-e2e</code></pre>
+          </details>
+        </section>
+
+        <section>
+          <h2>Next-release runbook</h2>
+          <div class="flow" aria-label="Release workflow">
+            <div class="flow-step">Clean commit</div>
+            <div class="flow-step"><code>sdk:build</code></div>
+            <div class="flow-step"><code>sdk:verify</code></div>
+            <div class="flow-step"><code>publish:npm</code></div>
+            <div class="flow-step">Registry<br />visibility</div>
+            <div class="flow-step">Release<br />assets</div>
+            <div class="flow-step">External consumer<br />smoke</div>
+          </div>
+          <h3>Local pre-release gates</h3>
+          <pre><code>pnpm sdk:build -- --version 1.2.3
+pnpm sdk:verify -- --archive artifacts/sdk/forgeax-sdk-v1.2.3.zip
+pnpm sdk:publish:npm -- --version 1.2.3 --check-only</code></pre>
+          <h3>Carrier delay or 404</h3>
+          <pre><code>gh workflow run sdk-carrier-republish.yml \
+  --repo ForgeaXGame/forgeax-engine \
+  --ref main \
+  -f version=1.2.3
+
+npm view @forgeax/engine-sdk@1.2.3 version dist-tags readmeFilename homepage engines \
+  --json --registry=https://registry.npmjs.org
+curl -fsSL https://registry.npmjs.org/@forgeax%2fengine-sdk/-/engine-sdk-1.2.3.tgz \
+  -o /tmp/engine-sdk-1.2.3.tgz
+tar -tzf /tmp/engine-sdk-1.2.3.tgz | sed -n '1,20p'</code></pre>
+          <div class="callout">
+            <p>
+              The <code>npm publish</code> exit code alone is insufficient: verify public-registry access to
+              the target version, tarball, <code>dist.integrity</code>, and README.
+            </p>
+          </div>
+          <h3>Pre-release checklist</h3>
+          <ul class="checklist">
+            <li>Build/verification Engine commits match the target commit.</li>
+            <li>Publish ZIP, SHA256SUMS, SPDX, provenance, and verification results together.</li>
+            <li>The npm carrier includes a root README and excludes the store.</li>
+            <li>All internal <code>@forgeax/engine-*</code> dependencies use the same version.</li>
+            <li>Registry version, tarball, README, and integrity are actually visible.</li>
+            <li>The required-ci ruleset is active and exactly matches the repository manifest.</li>
+          </ul>
+        </section>
+
+        <section>
+          <h2>Related entrypoints</h2>
+          <ul>
+            <li><a href="../../.agents/skills/forgeax-engine-sdk/SKILL.md">SDK skill</a></li>
+            <li><a href="../../skills/forgeax-engine-sdk/SDK-README.md">SDK README source</a></li>
+            <li><a href="../../skills/forgeax-engine-sdk/SDK-AGENTS.md">SDK AI entry</a></li>
+            <li><a href="../../skills/forgeax-engine-sdk/references/feature-catalog.md">Feature catalog</a></li>
+            <li><a href="https://forgeax.github.io/download/engine-ai.md">Public download guide</a></li>
+          </ul>
+        </section>
+      </main>
+
+      <footer>
+        This is the 0.1.6 release record. Exact SDK capabilities, file inventory, and project operations
+        remain defined by the installed version's <code>AGENTS.md</code>, <code>SDK-README.md</code>, and <code>sdk-manifest.json</code>.
+      </footer>
+    </div>
+  </body>
+</html>

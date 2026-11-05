@@ -1,0 +1,22 @@
+# Downloaded SDK; the game pins its engine version in package.json and the lockfile.
+/forgeax-sdk-0.4.19/
+
+# Dependencies and generated game files.
+node_modules/
+/forgeax-game/dist/
+/forgeax-game/.forgeax/
+/forgeax-game/.assetlib/
+/forgeax-game/artifacts/
+
+# Local agent history and rebuildable skill discovery links.
+/.workbuddy/
+/forgeax-game/.agents/skills/
+/forgeax-game/.claude/skills/
+/forgeax-game/.codebuddy/skills/
+/forgeax-game/.cursor/skills/
+/forgeax-game/.workbuddy/skills/
+
+# Local environment secrets; keep shareable examples.
+.env
+.env.*
+!.env.example

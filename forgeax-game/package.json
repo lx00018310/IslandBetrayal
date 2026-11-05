@@ -1,0 +1,53 @@
+{
+  "name": "@local/forgeax-game",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "license": "Apache-2.0",
+  "packageManager": "pnpm@12.15.0",
+  "scripts": {
+    "dev": "forgeax dev start",
+    "build": "forgeax project build --json",
+    "package": "forgeax project package",
+    "serve": "forgeax project preview",
+    "preview": "forgeax project preview",
+    "doctor": "forgeax project check",
+    "test": "forgeax project test",
+    "typecheck": "pnpm exec tsc --noEmit"
+  },
+  "forgeax": {
+    "metrics": {
+      "bundle-size": {
+        "enabled": false,
+        "reason": "template bundle is downstream of the SDK verifier host"
+      },
+      "fps": {
+        "enabled": false,
+        "reason": "template has no independent benchmark harness"
+      },
+      "bench": {
+        "enabled": false,
+        "reason": "template scaffold; benchmark ownership stays with engine apps"
+      },
+      "gate": {
+        "enabled": false,
+        "reason": "browser acceptance is owned by the exact SDK verifier"
+      },
+      "spike-report": {
+        "enabled": false,
+        "reason": "not a spike app"
+      }
+    }
+  },
+  "dependencies": {
+    "@forgeax/engine": "0.4.19",
+    "zaohua-platform-sdk": "file:./vendor/zaohua-platform-sdk"
+  },
+  "devDependencies": {
+    "@types/node": "20.19.40",
+    "@webgpu/types": "0.1.71",
+    "tsx": "4.23.1",
+    "typescript": "6.0.3",
+    "vitest": "4.1.12"
+  }
+}
