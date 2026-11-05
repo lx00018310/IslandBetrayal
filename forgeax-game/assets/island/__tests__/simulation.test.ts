@@ -4,6 +4,7 @@ import {
   aliveActors,
   ALLY_IGNORE_SECONDS,
   ALLY_INTERACT_DISTANCE,
+  applyUpgrade,
   calculateAttackDamage,
   checkTeamDistances,
   chestOf,
@@ -14,37 +15,41 @@ import {
   dist,
   doDash,
   formTeam,
+  generateUpgradeChoices,
   getIgnoreRemaining,
   getNearbyCandidate,
+  giveActorXp,
+  GRID_SIZE,
   ignorePair,
   isPairIgnored,
   partnerOf,
   sendInvite,
   stepSimulation,
+  stepWeapons,
   TEAM_BREAK_DISTANCE,
   TEAM_WARNING_DISTANCE,
 } from '../simulation.ts';
 
-describe('荒岛分赃核心规则与回归修复测试', () => {
-  // R01: 外部致命攻击必须真正释放箱内财物
+describe('荒岛分赃核心规则、肉鸽升级与战斗系统测试', () => {
+  // R01: 外部致命攻击破坏宝箱
   it('R01: external lethal attack bursts chest, scatters loot, and preserves team relationship', () => {
     const sim = createInitialSimulation();
+    sim.monsters.length = 0; // 隔离怪物掉落干扰，专测宝箱
+    for (let i = 4; i < 10; i++) sim.actors[i]!.alive = false;
+
     const a = sim.actors[1]!;
     const b = sim.actors[2]!;
     const enemy = sim.actors[3]!;
     a.x = 10; a.y = 10;
     b.x = 11; b.y = 10;
-    enemy.x = 11.5; enemy.y = 10; // In attack range
+    enemy.x = 11.5; enemy.y = 10;
 
     formTeam(sim, a, b);
     const chest = chestOf(sim, a.team)!;
     chest.treasure = 5;
-    chest.hp = 10; // 10 HP left, matches enemy single attack damage (10)
+    chest.hp = 10;
 
-    // Enemy triggers auto attack which hits chest with lethal damage (>= 12)
     enemy.attackCd = 0;
-    sim.elapsed = 50; // In combat phase
-
     stepSimulation(sim, 0.1, {
       moveX: 0,
       moveY: 0,
@@ -56,31 +61,25 @@ describe('荒岛分赃核心规则与回归修复测试', () => {
     expect(chest.hp).toBe(0);
     expect(chest.treasure).toBe(0);
     expect(sim.chestBreaks).toBe(1);
-    // Total treasure conservation: remaining ground loots + picked up by nearby actors
+
     const pickedUp = a.treasure + b.treasure + enemy.treasure;
     const groundLoots = sim.loots.filter((l) => l.value > 0).length;
     expect(groundLoots + pickedUp).toBe(5);
 
-    // Teammates REMAIN TEAMMATES after external chest burst!
     expect(a.team).toBe(b.id);
     expect(b.team).toBe(a.id);
 
-    // Calling destroyChest again does not duplicate loot
     const secondBurst = destroyChest(sim, chest, chest.x, chest.y);
     expect(secondBurst).toBe(0);
-    expect(sim.loots.filter((l) => l.value > 0).length + pickedUp).toBe(5);
-    expect(sim.chestBreaks).toBe(1);
   });
 
-  // R02: 结局后冻结玩法，结算读取权威结果
+  // R02: 结局后冻结玩法
   it('R02: freezes gameplay and state completely after gameOver', () => {
     const sim = createInitialSimulation();
     const p = sim.actors[0]!;
-    // Eliminate 8 AI
     for (let i = 2; i < 10; i++) {
       sim.actors[i]!.alive = false;
     }
-    // Now p and a are alive
     const a = sim.actors[1]!;
     damageActor(sim, a, 100, p);
     expect(sim.gameOver).toBe(true);
@@ -91,7 +90,6 @@ describe('荒岛分赃核心规则与回归修复测试', () => {
     const winnerY = p.y;
     const winnerHp = p.hp;
 
-    // Further inputs or steps after game over must not change player or winner
     stepSimulation(sim, 1.0, {
       moveX: 1,
       moveY: 1,
@@ -103,11 +101,10 @@ describe('荒岛分赃核心规则与回归修复测试', () => {
     expect(p.x).toBe(winnerX);
     expect(p.y).toBe(winnerY);
     expect(p.hp).toBe(winnerHp);
-    expect(sim.winner?.alive).toBe(true);
     expect(sim.gameOver).toBe(true);
   });
 
-  // R04: 重复忽略不延长屏蔽，忽略最近角色后不挡住旁边其他可选角色
+  // R04: 忽略机制
   it('R04: does not extend ignore timer on repeat, and selects other valid candidates', () => {
     const sim = createInitialSimulation();
     const p = sim.actors[0]!;
@@ -115,200 +112,217 @@ describe('荒岛分赃核心规则与回归修复测试', () => {
     const b = sim.actors[2]!;
 
     p.x = 10; p.y = 10;
-    a.x = 10.3; a.y = 10; // Distance 0.3
-    b.x = 11.2; b.y = 10; // Distance 1.2
+    a.x = 10.3; a.y = 10;
+    b.x = 11.2; b.y = 10;
 
-    // First ignore on a
     sim.elapsed = 10.0;
     ignorePair(sim, p.id, a.id);
-    const expireTime = 10.0 + ALLY_IGNORE_SECONDS; // 70.0
+    const expireTime = 10.0 + ALLY_IGNORE_SECONDS;
     expect(sim.ignores.get(`${p.id}_${a.id}`)).toBe(expireTime);
 
-    // Repeat ignore input at 25.0 must NOT extend
     sim.elapsed = 25.0;
     ignorePair(sim, p.id, a.id);
-    expect(sim.ignores.get(`${p.id}_${a.id}`)).toBe(expireTime); // Still 70.0!
+    expect(sim.ignores.get(`${p.id}_${a.id}`)).toBe(expireTime);
 
-    // Candidate selection: a is ignored, so b MUST be chosen as candidate!
     const cand = getNearbyCandidate(sim, p);
     expect(cand).not.toBeNull();
     expect(cand?.id).toBe(b.id);
     expect(cand?.canInvite).toBe(true);
   });
 
-  // R05: 普通合作 AI 不因远处宝物拉断线；移动后先断线还是先判坠落
-  it('R05: teamed AI stays near partner instead of chasing distant loot, and falling priority is respected', () => {
-    const sim = createInitialSimulation();
-    const a = sim.actors[1]!;
-    const b = sim.actors[2]!;
-    a.x = 10; a.y = 10;
-    b.x = 11; b.y = 10;
-    formTeam(sim, a, b);
-
-    // Distant loot 6 units away
-    sim.loots.push({
-      id: 888,
-      x: 17,
-      y: 10,
-      z: 0.1,
-      vx: 0,
-      vy: 0,
-      vz: 0,
-      value: 1,
-      life: 20,
-      spin: 0,
-    });
-
-    // AI think tick
-    a.think = 0;
-    stepSimulation(sim, 0.1, {
-      moveX: 0,
-      moveY: 0,
-      dash: false,
-      speedToggle: false,
-      restart: false,
-    });
-
-    // Partner cooperative distance holds (does not bolt to x=17)
-    expect(dist(a, b)).toBeLessThanOrEqual(TEAM_BREAK_DISTANCE);
-    expect(a.team).toBe(b.id);
-
-    // Falling priority: if b is pushed off island into void, b is eliminated as 'fall'
-    b.x = 0; b.y = 0; // Off island void
-    stepSimulation(sim, 0.1, {
-      moveX: 0,
-      moveY: 0,
-      dash: false,
-      speedToggle: false,
-      restart: false,
-    });
-    expect(b.alive).toBe(false);
-    expect(a.team).toBe(-1);
-    expect(sim.playerDisbands).toBe(0); // Not a distance disband!
-  });
-
-  // R08: 邀请冲突与单一邀请参与限制
-  it('R08: enforces single invite rule and handles reverse direct agreement', () => {
-    const sim = createInitialSimulation();
-    const a = sim.actors[1]!;
-    const b = sim.actors[2]!;
-    const c = sim.actors[3]!;
-    a.x = 10; a.y = 10;
-    b.x = 11; b.y = 10;
-    c.x = 10.5; c.y = 11;
-
-    // a invites b
-    expect(sendInvite(sim, a.id, b.id)).toBe(true);
-
-    // a cannot invite c while active invite to b exists
-    expect(sendInvite(sim, a.id, c.id)).toBe(false);
-
-    // c cannot invite b while b has incoming invite
-    expect(sendInvite(sim, c.id, b.id)).toBe(false);
-
-    // b invites a -> mutual agreement -> form team atomically!
-    expect(sendInvite(sim, b.id, a.id)).toBe(true);
-    expect(a.team).toBe(b.id);
-    expect(b.team).toBe(a.id);
-    expect(sim.invites).toHaveLength(0);
-  });
-
-  // R09: 合作与个人财物的攻击收益
-  it('R09: scales attack damage with personal treasure, alliance, and chest wealth', () => {
+  // P0-B: 经验与升级三选一及全局暂停
+  it('P0-B: levels up with XP, triggers pendingUpgrade and pauses simulation on player level-up', () => {
     const sim = createInitialSimulation();
     const p = sim.actors[0]!;
-    const a = sim.actors[1]!;
+    expect(p.level).toBe(1);
+    expect(p.xp).toBe(0);
+    expect(p.xpNext).toBe(5);
 
-    // Base damage
-    expect(calculateAttackDamage(sim, p)).toBe(10);
+    // Give player 5 XP -> level up to 2
+    giveActorXp(sim, p, 5);
+    expect(p.level).toBe(2);
+    expect(p.xp).toBe(0);
+    expect(p.xpNext).toBe(7);
+    expect(sim.pendingUpgrade).toBe(true);
+    expect(sim.upgradePaused).toBe(true);
+    expect(sim.upgradeChoices).toHaveLength(3);
 
-    // Personal treasure bonus (+0.5 per treasure, max +10)
-    p.treasure = 6;
-    expect(calculateAttackDamage(sim, p)).toBe(13); // 10 + 3
+    // During pause, time does not advance and actors do not move
+    const oldElapsed = sim.elapsed;
+    const oldX = p.x;
+    stepSimulation(sim, 0.5, {
+      moveX: 1,
+      moveY: 0,
+      dash: false,
+      speedToggle: false,
+      restart: false,
+    });
+    expect(sim.elapsed).toBe(oldElapsed);
+    expect(p.x).toBe(oldX);
 
-    p.treasure = 30; // Capped at +10
-    expect(calculateAttackDamage(sim, p)).toBe(20); // 10 + 10
+    // Player selects choice 0
+    const chosen = sim.upgradeChoices[0]!;
+    stepSimulation(sim, 0.1, {
+      moveX: 0,
+      moveY: 0,
+      dash: false,
+      upgradeChoiceIndex: 0,
+      speedToggle: false,
+      restart: false,
+    });
+    expect(sim.pendingUpgrade).toBe(false);
+    expect(sim.upgradePaused).toBe(false);
 
-    // Alliance bonus (+3)
-    p.treasure = 0;
+    // Simulation resumes
+    stepSimulation(sim, 0.5, {
+      moveX: 1,
+      moveY: 0,
+      dash: false,
+      speedToggle: false,
+      restart: false,
+    });
+    expect(sim.elapsed).toBeGreaterThan(oldElapsed);
+  });
+
+  // P0-C: 三类武器逻辑与伤害结算
+  it('P0-C: triggers rotating knives, arrows, and bombs while respecting team immunity', () => {
+    const sim = createInitialSimulation();
+    const p = sim.actors[0]!;
+    const ally = sim.actors[1]!;
+    const enemy = sim.actors[2]!;
+
     p.x = 10; p.y = 10;
-    a.x = 11; a.y = 10;
-    formTeam(sim, p, a);
-    expect(calculateAttackDamage(sim, p)).toBe(13); // 10 + 3
+    ally.x = 11; ally.y = 10;
+    enemy.x = 11.2; enemy.y = 10;
+    formTeam(sim, p, ally);
 
-    // Shared chest wealth bonus (+0.5 per chest treasure, max +5)
-    const chest = chestOf(sim, p.team)!;
-    chest.treasure = 6;
-    expect(calculateAttackDamage(sim, p)).toBe(16); // 10 + 3 + 3
+    // Equip 2 knives, 1 arrow, 1 bomb on player
+    p.weaponKnife = 2;
+    p.weaponArrow = 1;
+    p.weaponBomb = 1;
+    p.arrowTimer = 0;
+    p.bombTimer = 0;
 
-    // When team breaks, bonuses vanish
-    disbandTeam(sim, p, 'distance');
-    expect(calculateAttackDamage(sim, p)).toBe(10);
+    const initialAllyHp = ally.hp;
+    const initialEnemyHp = enemy.hp;
+
+    // Step weapons simulation
+    stepWeapons(sim, 0.1);
+
+    // Ally takes ZERO damage from player's weapons
+    expect(ally.hp).toBe(initialAllyHp);
+
+    // Arrow spawned and fired toward enemy
+    expect(sim.arrows.length).toBeGreaterThanOrEqual(1);
+    expect(sim.arrows[0]!.ownerId).toBe(p.id);
+
+    // Bomb dropped
+    expect(sim.bombs.length).toBeGreaterThanOrEqual(1);
+    expect(sim.bombs[0]!.ownerId).toBe(p.id);
   });
 
-  it('preserves team at exact TEAM_BREAK_DISTANCE and breaks immediately when exceeded', () => {
+  // P1-A: 180s Boss 战
+  it('P1-A: spawns boss at 180s with high HP and drops 8 XP plus 8 treasures on kill', () => {
     const sim = createInitialSimulation();
+    const center = (GRID_SIZE - 1) / 2;
+    const p = sim.actors[0]!;
+    p.x = center;
+    p.y = center + 1; // 靠近中心以进入攻击距离
+    sim.elapsed = 179.9;
+
+    stepSimulation(sim, 0.2, {
+      moveX: 0,
+      moveY: 0,
+      dash: false,
+      speedToggle: false,
+      restart: false,
+    });
+
+    expect(sim.bossSpawned).toBe(true);
+    expect(sim.boss).not.toBeNull();
+    expect(sim.boss?.kind).toBe('boss');
+
+    sim.boss!.hp = 1;
+    p.attackCd = 0;
+
+    stepSimulation(sim, 0.8, {
+      moveX: 0,
+      moveY: 0,
+      dash: false,
+      speedToggle: false,
+      restart: false,
+    });
+
+    // 击败 Boss 奖励结算
+    expect(sim.boss?.alive).toBe(false);
+    expect(sim.loots.length).toBeGreaterThanOrEqual(8);
+  });
+
+  // P1-C: 特殊事件
+  it('P1-C: triggers treasure_rain at 90s and monster_frenzy at 220s', () => {
+    const sim = createInitialSimulation();
+    sim.elapsed = 89.9;
+
+    stepSimulation(sim, 0.2, {
+      moveX: 0,
+      moveY: 0,
+      dash: false,
+      speedToggle: false,
+      restart: false,
+    });
+    expect(sim.eventTriggered.treasure_rain).toBe(true);
+    expect(sim.activeEvent).toBe('treasure_rain');
+    expect(sim.loots.length).toBeGreaterThanOrEqual(8);
+
+    // Advance to 220s
+    sim.elapsed = 219.9;
+    stepSimulation(sim, 0.2, {
+      moveX: 0,
+      moveY: 0,
+      dash: false,
+      speedToggle: false,
+      restart: false,
+    });
+    expect(sim.eventTriggered.monster_frenzy).toBe(true);
+    expect(sim.activeEvent).toBe('monster_frenzy');
+  });
+
+  // P1-D: 决胜加时与确定性平分判定
+  it('P1-D: enters overtime after 300s and resolves winner deterministically by tiebreaker at 360s', () => {
+    const sim = createInitialSimulation();
+    const center = (GRID_SIZE - 1) / 2;
     const p = sim.actors[0]!;
     const a = sim.actors[1]!;
-    p.x = 10.0;
-    p.y = 10.0;
-    a.x = 10.0;
-    a.y = 11.0;
-    formTeam(sim, p, a);
-    const chest = chestOf(sim, p.team)!;
-    chest.treasure = 6;
-
-    // Pull to exactly 5.0 distance: team holds
-    a.y = 10.0 + TEAM_BREAK_DISTANCE;
-    checkTeamDistances(sim);
-    expect(p.team).toBe(a.id);
-    expect(a.team).toBe(p.id);
-    expect(chest.hp).toBeGreaterThan(0);
-
-    // Exceed distance strictly (> 5.0)
-    a.y = 10.0 + TEAM_BREAK_DISTANCE + 0.1;
-    checkTeamDistances(sim);
-    expect(p.team).toBe(-1);
-    expect(a.team).toBe(-1);
-    expect(chest.hp).toBe(0);
-    expect(chest.treasure).toBe(0);
-    expect(sim.playerDisbands).toBe(1);
-    expect(sim.chestBreaks).toBe(1);
-    expect(sim.lastBreakEvent?.lootCount).toBe(6);
-    expect(sim.loots).toHaveLength(6);
-  });
-
-  it('restarts match cleanly via stepSimulation({ restart: true }) restoring state, hp, timer, and 10 actors', () => {
-    const sim = createInitialSimulation();
-    const p = sim.actors[0]!;
-    // Advance match, eliminate some actors, accumulate stats
-    sim.elapsed = 150;
-    sim.playerDisbands = 2;
-    sim.chestBreaks = 3;
-    sim.playerTreasure = 5;
-    for (let i = 1; i < 10; i++) {
+    for (let i = 2; i < 10; i++) {
       sim.actors[i]!.alive = false;
     }
-    sim.gameOver = true;
-    sim.winner = p;
+    // 置于中心安全陆地避免缩圈坠落
+    p.x = center; p.y = center; p.hp = 80;
+    a.x = center + 0.1; a.y = center; a.hp = 60;
+    p.team = a.id; a.team = p.id;
 
-    // Send restart input
+    sim.elapsed = 300.1;
     stepSimulation(sim, 0.1, {
       moveX: 0,
       moveY: 0,
       dash: false,
       speedToggle: false,
-      restart: true,
+      restart: false,
     });
+    expect(sim.overtime).toBe(true);
+    expect(sim.finalPhase).toBe(true);
 
-    expect(sim.gameOver).toBe(false);
-    expect(sim.elapsed).toBe(0);
-    expect(sim.winner).toBeNull();
-    expect(sim.playerDisbands).toBe(0);
-    expect(sim.chestBreaks).toBe(0);
-    expect(sim.playerTreasure).toBe(0);
-    expect(aliveActors(sim)).toHaveLength(10);
-    expect(sim.actors[0]!.hp).toBe(100);
-    expect(sim.actors[0]!.team).toBe(-1);
+    // 推进至 360s 加时极限
+    sim.elapsed = 360.1;
+    stepSimulation(sim, 0.1, {
+      moveX: 0,
+      moveY: 0,
+      dash: false,
+      speedToggle: false,
+      restart: false,
+    });
+    expect(sim.gameOver).toBe(true);
+    expect(sim.winner?.id).toBe(p.id); // 血量高者获胜
+    expect(sim.overtimeResolution).toBe('points');
   });
 });

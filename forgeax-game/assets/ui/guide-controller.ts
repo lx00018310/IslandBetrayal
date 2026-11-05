@@ -1,5 +1,5 @@
 // 《荒岛分赃》HUD 控制器
-// 驱动顶部仪表盘、组队选择/邀请横幅、触屏摇杆动作、队伍列表动态同步、超距预警与结算弹窗
+// 驱动顶部仪表盘、组队选择/邀请横幅、触屏摇杆动作、三选一肉鸽升级面板、Boss全局血条、队伍列表动态同步与结算弹窗
 
 import type { GameHost } from '@forgeax/engine/app';
 import { mountUi, type UiAsset, type UiInstance } from '@forgeax/engine/ui';
@@ -7,6 +7,7 @@ import { bindUiLocalization, createUiLocalization } from '@forgeax/engine/ui/loc
 import { installVaseControls } from './vase-controls.ts';
 import { installPlayerControls } from './player-controls.ts';
 import { ISLAND_CONTROL_CHANNEL, type IslandTouchMessage } from '../island/island.pack.ts';
+import type { UpgradeOption } from '../island/simulation.ts';
 
 export async function createGuideUi(
   asset: UiAsset,
@@ -131,6 +132,7 @@ export async function createGuideUi(
     let activeIncomingInviteId: number | null = null;
     let activeIncomingFromId: number | null = null;
     let activeCandidateId: number | null = null;
+    let activeUpgradePending = false;
 
     // 绑定触屏与交互按键
     if (shadow) {
@@ -224,37 +226,68 @@ export async function createGuideUi(
       if (btnSpeed) {
         btnSpeed.addEventListener('click', () => sendTouch({ kind: 'speed' }));
       }
+
+      // 升级三选一卡片点击处理
+      for (let i = 0; i < 3; i++) {
+        const cardBtn = shadow.querySelector<HTMLElement>(`[data-ui-part="upgrade-card-${i}"]`);
+        if (cardBtn) {
+          cardBtn.addEventListener('click', () => {
+            if (activeUpgradePending) {
+              sendTouch({ kind: 'upgrade', choiceIndex: i });
+            }
+          });
+        }
+      }
+
+      // 键盘 1 / 2 / 3 选择升级
+      const win = shadow?.ownerDocument?.defaultView;
+      const onKeyDown = (e: KeyboardEvent) => {
+        if (activeUpgradePending) {
+          if (e.code === 'Digit1' || e.code === 'Numpad1') {
+            sendTouch({ kind: 'upgrade', choiceIndex: 0 });
+          } else if (e.code === 'Digit2' || e.code === 'Numpad2') {
+            sendTouch({ kind: 'upgrade', choiceIndex: 1 });
+          } else if (e.code === 'Digit3' || e.code === 'Numpad3') {
+            sendTouch({ kind: 'upgrade', choiceIndex: 2 });
+          }
+        }
+      };
+      if (win) {
+        win.addEventListener('keydown', onKeyDown);
+        releases.push(() => win.removeEventListener('keydown', onKeyDown));
+      }
     }
 
     // 接收来自引擎的 HUD 状态更新
     const timerElem = shadow?.querySelector<HTMLElement>('[data-ui-part="match-timer"]');
     const phaseElem = shadow?.querySelector<HTMLElement>('[data-ui-part="match-phase"]');
+    const challengeStatsElem = shadow?.querySelector<HTMLElement>('[data-ui-part="challenge-stats"]');
+    const playerLevelElem = shadow?.querySelector<HTMLElement>('[data-ui-part="player-level"]');
+    const playerXpTextElem = shadow?.querySelector<HTMLElement>('[data-ui-part="player-xp-text"]');
+    const xpFill = shadow?.querySelector<HTMLElement>('[data-ui-part="xp-fill"]');
     const survElem = shadow?.querySelector<HTMLElement>('[data-ui-part="survivors-count"]');
     const treasureElem = shadow?.querySelector<HTMLElement>('[data-ui-part="player-treasure"]');
     const teamListElem = shadow?.querySelector<HTMLElement>('[data-ui-part="team-list"]');
     const hpFill = shadow?.querySelector<HTMLElement>('[data-ui-part="hp-fill"]');
     const statusHint = shadow?.querySelector<HTMLElement>('[data-ui-part="player-status-hint"]');
-    const warningHint = shadow?.querySelector<HTMLElement>(
-      '[data-ui-part="distance-warning-hint"]',
-    );
+    const warningHint = shadow?.querySelector<HTMLElement>('[data-ui-part="distance-warning-hint"]');
     const choiceBanner = shadow?.querySelector<HTMLElement>('[data-ui-part="choice-banner"]');
     const choiceText = shadow?.querySelector<HTMLElement>('[data-ui-part="choice-text"]');
     const btnChoiceMain = shadow?.querySelector<HTMLElement>('[data-ui-part="btn-choice-main"]');
-    const btnChoiceIgnore = shadow?.querySelector<HTMLElement>(
-      '[data-ui-part="btn-choice-ignore"]',
-    );
+    const btnChoiceIgnore = shadow?.querySelector<HTMLElement>('[data-ui-part="btn-choice-ignore"]');
+
+    // Boss 血条
+    const bossHud = shadow?.querySelector<HTMLElement>('[data-ui-part="boss-hud"]');
+    const bossHpText = shadow?.querySelector<HTMLElement>('[data-ui-part="boss-hp-text"]');
+    const bossHpFill = shadow?.querySelector<HTMLElement>('[data-ui-part="boss-hp-fill"]');
+
+    // 升级弹窗与卡片
+    const upgradeModal = shadow?.querySelector<HTMLElement>('[data-ui-part="upgrade-modal"]');
+
+    // 结算弹窗
     const resultModal = shadow?.querySelector<HTMLElement>('[data-ui-part="result-modal"]');
     const btnRestart = shadow?.querySelector<HTMLButtonElement>('[data-ui-part="btn-restart"]');
     const resultTitle = shadow?.querySelector<HTMLElement>('[data-ui-part="result-title"]');
-
-    if (btnRestart) {
-      btnRestart.addEventListener('click', () => {
-        btnRestart.setAttribute('disabled', '');
-        sendTouch({ kind: 'restart' });
-        // 注意：不在此立即强制写 hidden 掩盖状态（避免旧状态闪烁），
-        // 而是由引擎处理 restart 后发出的 gameOver=false 权威 HUD 消息自然关闭弹窗
-      });
-    }
     const resultSub = shadow?.querySelector<HTMLElement>('[data-ui-part="result-subtitle"]');
     const statTreasure = shadow?.querySelector<HTMLElement>('[data-ui-part="stat-treasure"]');
     const statBreaks = shadow?.querySelector<HTMLElement>('[data-ui-part="stat-breaks"]');
@@ -262,6 +295,14 @@ export async function createGuideUi(
     const statBetrayals = shadow?.querySelector<HTMLElement>('[data-ui-part="stat-betrayals"]');
     const statKills = shadow?.querySelector<HTMLElement>('[data-ui-part="stat-kills"]');
     const statRank = shadow?.querySelector<HTMLElement>('[data-ui-part="stat-rank"]');
+    const challengeProgress = shadow?.querySelector<HTMLElement>('[data-ui-part="challenge-progress"]');
+
+    if (btnRestart) {
+      btnRestart.addEventListener('click', () => {
+        btnRestart.setAttribute('disabled', '');
+        sendTouch({ kind: 'restart' });
+      });
+    }
 
     if (port) {
       const onHudMessage = (event: MessageEvent) => {
@@ -269,7 +310,7 @@ export async function createGuideUi(
         const state = event.data as Record<string, unknown> | undefined;
         if (!state || state.channel !== 'island/hud-state') return;
 
-        // 若重开已重置，隐藏结算弹窗并恢复再来一局按钮状态（R03 & 问题01）
+        // 若重开已重置，隐藏结算弹窗并恢复再来一局按钮状态
         if (!state.gameOver) {
           if (resultModal && !resultModal.classList.contains('hidden')) {
             resultModal.classList.add('hidden');
@@ -299,6 +340,66 @@ export async function createGuideUi(
                   : '外部掠夺 · 争夺宝物';
         if (phaseElem) phaseElem.textContent = phase;
 
+        // 连续挑战累计时间统计
+        const challengeElapsed = typeof state.challengeElapsed === 'number' ? state.challengeElapsed : elapsed;
+        const roundsCompleted = typeof state.roundsCompleted === 'number' ? state.roundsCompleted : 1;
+        const cMm = Math.floor(challengeElapsed / 60);
+        const cSs = Math.floor(challengeElapsed % 60);
+        if (challengeStatsElem) {
+          challengeStatsElem.textContent = `挑战 ${cMm.toString().padStart(2, '0')}:${cSs.toString().padStart(2, '0')} · 第 ${roundsCompleted} 局`;
+        }
+
+        // 经验条与等级同步
+        const lvl = typeof state.playerLevel === 'number' ? state.playerLevel : 1;
+        const xp = typeof state.playerXp === 'number' ? state.playerXp : 0;
+        const xpNext = typeof state.playerXpNext === 'number' ? state.playerXpNext : 5;
+        if (playerLevelElem) playerLevelElem.textContent = `LV.${lvl}`;
+        if (playerXpTextElem) playerXpTextElem.textContent = `${xp} / ${xpNext} XP`;
+        if (xpFill) {
+          const xpPct = Math.min(100, Math.round((xp / xpNext) * 100));
+          xpFill.style.width = `${xpPct}%`;
+        }
+
+        // 升级三选一面板弹窗同步
+        const isUpgradePending = state.pendingUpgrade === true;
+        activeUpgradePending = isUpgradePending;
+        const choices = state.upgradeChoices as UpgradeOption[] | undefined;
+
+        if (upgradeModal) {
+          if (isUpgradePending && choices && choices.length >= 3) {
+            upgradeModal.classList.remove('hidden');
+            for (let i = 0; i < 3; i++) {
+              const c = choices[i]!;
+              const badge = shadow?.querySelector<HTMLElement>(`[data-ui-part="card-badge-${i}"]`);
+              const title = shadow?.querySelector<HTMLElement>(`[data-ui-part="card-title-${i}"]`);
+              const desc = shadow?.querySelector<HTMLElement>(`[data-ui-part="card-desc-${i}"]`);
+              const preview = shadow?.querySelector<HTMLElement>(`[data-ui-part="card-preview-${i}"]`);
+
+              if (badge) badge.textContent = c.type === 'weapon' ? '技能' : '属性';
+              if (title) title.textContent = c.title;
+              if (desc) desc.textContent = c.description;
+              if (preview) preview.textContent = `${c.currentValue} → ${c.nextValue}`;
+            }
+          } else {
+            upgradeModal.classList.add('hidden');
+          }
+        }
+
+        // Boss 全局血条同步
+        const boss = state.boss as { alive: boolean; hp: number; maxHp: number } | null | undefined;
+        if (bossHud) {
+          if (boss && boss.alive) {
+            bossHud.classList.remove('hidden');
+            if (bossHpText) bossHpText.textContent = `${Math.max(0, boss.hp)} / ${boss.maxHp} HP`;
+            if (bossHpFill) {
+              const pct = Math.min(100, Math.max(0, Math.round((boss.hp / boss.maxHp) * 100)));
+              bossHpFill.style.width = `${pct}%`;
+            }
+          } else {
+            bossHud.classList.add('hidden');
+          }
+        }
+
         const aliveCount = typeof state.aliveCount === 'number' ? state.aliveCount : 10;
         if (survElem) survElem.textContent = `存活 ${aliveCount}/10`;
 
@@ -313,7 +414,7 @@ export async function createGuideUi(
           hpFill.style.background = hp > 30 ? '#7ee08a' : '#ff5a4a';
         }
 
-        // 动态同步场上队伍列表（R10）
+        // 动态同步场上队伍列表
         const teams = state.teams as
           | Array<{ aName: string; bName: string; treasure: number }>
           | undefined;
@@ -415,7 +516,7 @@ export async function createGuideUi(
           }
         }
 
-        // 胜负结算展示（R02 & R10：准确判断 winnerId 与真实名次）
+        // 胜负结算展示
         if (state.gameOver && resultModal && resultModal.classList.contains('hidden')) {
           resultModal.classList.remove('hidden');
           const isWinner = state.isWinner === true;
@@ -436,6 +537,10 @@ export async function createGuideUi(
           if (statKills) statKills.textContent = String(state.kills ?? 0);
           const rank = typeof state.playerRank === 'number' ? state.playerRank : isWinner ? 1 : Math.max(2, 11 - aliveCount);
           if (statRank) statRank.textContent = `第 ${rank} 名 / 10`;
+
+          if (challengeProgress) {
+            challengeProgress.textContent = `${cMm.toString().padStart(2, '0')}:${cSs.toString().padStart(2, '0')} / 15:00 (共 ${roundsCompleted} 局)`;
+          }
         }
       };
       port.addEventListener('message', onHudMessage);

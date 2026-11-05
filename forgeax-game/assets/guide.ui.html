@@ -2,12 +2,22 @@
 <header class="island-hud" data-ui-part="island-hud">
   <div class="hud-col hud-title-col">
     <strong class="game-title">荒岛分赃</strong>
-    <span class="game-subtitle">合伙攒宝，断线开抢</span>
+    <span class="game-subtitle" data-ui-part="challenge-stats">合伙攒宝 · 断线开抢</span>
   </div>
 
   <div class="hud-col hud-center-col">
     <div class="match-timer" data-ui-part="match-timer">05:00</div>
     <div class="match-phase" data-ui-part="match-phase">寻找队友 · 合作打怪</div>
+  </div>
+
+  <div class="hud-col hud-xp-col">
+    <div class="xp-level-row">
+      <span class="xp-level-badge" data-ui-part="player-level">LV.1</span>
+      <span class="xp-text" data-ui-part="player-xp-text">0 / 5 XP</span>
+    </div>
+    <div class="xp-bar">
+      <div class="xp-fill" data-ui-part="xp-fill"></div>
+    </div>
   </div>
 
   <div class="hud-col hud-stats-col">
@@ -16,10 +26,21 @@
   </div>
 
   <div class="hud-col hud-speed-col">
-    <button type="button" class="btn-speed" data-ui-part="btn-speed">点击加速 ×4 / Q</button>
-    <div class="shortcut-tip">WASD move · E 组队/接受 · X 忽略 · 空格冲撞</div>
+    <button type="button" class="btn-speed" data-ui-part="btn-speed">加速 ×4 / Q</button>
+    <div class="shortcut-tip">WASD move · E 组队 · X 忽略 · Space 冲撞</div>
   </div>
 </header>
+
+<!-- Boss 巨兽全局血条 -->
+<section class="boss-hud hidden" data-ui-part="boss-hud">
+  <div class="boss-info-row">
+    <span class="boss-title">⚠️ 混沌体素巨兽</span>
+    <span class="boss-hp-text" data-ui-part="boss-hp-text">75 / 75 HP</span>
+  </div>
+  <div class="boss-hp-bar">
+    <div class="boss-hp-fill" data-ui-part="boss-hp-fill"></div>
+  </div>
+</section>
 
 <!-- 队伍与宝箱微型浮窗 -->
 <aside class="team-sidebar" data-ui-part="team-sidebar">
@@ -49,11 +70,39 @@
   <div class="player-hp-bar">
     <div class="hp-fill" data-ui-part="hp-fill"></div>
   </div>
-  <div class="player-status-hint" data-ui-part="player-status-hint">单人 · 靠近他人可邀请组队</div>
+  <div class="player-status-hint" data-ui-part="player-status-hint">单人 · 靠近角色可邀请组队</div>
   <div class="distance-warning-hint hidden" data-ui-part="distance-warning-hint">⚠️ 距离过远！超 5.0m 断线爆箱！</div>
 </aside>
 
-<!-- 触屏虚拟摇杆与动作按钮（触屏显示，桌面按键可用） -->
+<!-- 肉鸽升级三选一弹窗 -->
+<div class="upgrade-modal hidden" data-ui-part="upgrade-modal">
+  <div class="upgrade-dialog">
+    <h2 class="upgrade-dialog-title">等级提升 · 选择强化</h2>
+    <p class="upgrade-dialog-sub">选择一项能力强化你的战力（按 1 / 2 / 3 键快捷选择）</p>
+    <div class="upgrade-cards" data-ui-part="upgrade-cards">
+      <button type="button" class="upgrade-card" data-ui-action="upgrade-0" data-card-index="0" data-ui-part="upgrade-card-0">
+        <span class="card-badge" data-ui-part="card-badge-0">新技能</span>
+        <strong class="card-title" data-ui-part="card-title-0">环绕飞刀</strong>
+        <p class="card-desc" data-ui-part="card-desc-0">飞刀在身边持续旋转切割触碰的敌人</p>
+        <span class="card-preview" data-ui-part="card-preview-0">未习得 → LV.1</span>
+      </button>
+      <button type="button" class="upgrade-card" data-ui-action="upgrade-1" data-card-index="1" data-ui-part="upgrade-card-1">
+        <span class="card-badge" data-ui-part="card-badge-1">强化</span>
+        <strong class="card-title" data-ui-part="card-title-1">穿透箭矢</strong>
+        <p class="card-desc" data-ui-part="card-desc-1">周期性射出穿透箭矢攻击敌对目标</p>
+        <span class="card-preview" data-ui-part="card-preview-1">未习得 → LV.1</span>
+      </button>
+      <button type="button" class="upgrade-card" data-ui-action="upgrade-2" data-card-index="2" data-ui-part="upgrade-card-2">
+        <span class="card-badge" data-ui-part="card-badge-2">属性</span>
+        <strong class="card-title" data-ui-part="card-title-2">锋芒毕露</strong>
+        <p class="card-desc" data-ui-part="card-desc-2">所有攻击基础伤害提升 15%</p>
+        <span class="card-preview" data-ui-part="card-preview-2">+0% → +15%</span>
+      </button>
+    </div>
+  </div>
+</div>
+
+<!-- 触屏虚拟摇杆与动作按钮 -->
 <section class="touch-controls" data-ui-part="touch-controls" aria-label="Touch game controls">
   <div class="move-stick" data-ui-part="move-stick" role="group" aria-label="Movement joystick">
     <span class="move-thumb" data-ui-part="move-thumb" aria-hidden="true"></span>
@@ -87,12 +136,13 @@
       <div class="stat-row"><span>断线解散次数</span><strong data-ui-part="stat-disbands">0</strong></div>
       <div class="stat-row"><span>淘汰人数</span><strong data-ui-part="stat-kills">0</strong></div>
       <div class="stat-row"><span>最终名次</span><strong data-ui-part="stat-rank">1 / 10</strong></div>
+      <div class="stat-row challenge-row"><span>连续挑战进度</span><strong data-ui-part="challenge-progress">00:00 / 15:00</strong></div>
     </div>
-    <button type="button" class="btn-restart" data-ui-part="btn-restart">再来一局</button>
+    <button type="button" class="btn-restart" data-ui-part="btn-restart">再来一局 / 下一局挑战</button>
   </div>
 </div>
 
-<!-- 保持原测试兼容插槽（视觉隐藏，确保已有契约测试完全绿灯） -->
+<!-- 保持原测试兼容插槽 -->
 <div class="hidden" aria-hidden="true">
   <span data-ui-slot="lock"></span>
   <form data-ui-part="vase-controls"><button type="button"></button></form>

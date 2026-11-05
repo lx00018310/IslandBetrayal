@@ -1,6 +1,7 @@
 // 《荒岛分赃》核心规则与模拟状态模块
 // 纯 TypeScript 逻辑，无 DOM、Canvas 或外部运行时依赖。
 // 规则：靠近选择 -> 双方同意组队 -> 连线与共享宝箱 -> 拉开距离断线 -> 中点爆箱 -> 争抢
+// P0/P1 肉鸽割草拓展：怪潮波次、经验升级三选一、三类武器（飞刀/箭矢/炸弹）、Boss战、特殊事件、终局加时决胜
 
 export interface Vec2 {
   x: number;
@@ -9,6 +10,7 @@ export interface Vec2 {
 
 export const GRID_SIZE = 23;
 export const MATCH_SECONDS = 300;
+export const OVERTIME_SECONDS = 60; // 300s ~ 360s 决胜加时
 
 export const ALLY_INTERACT_DISTANCE = 2.4;
 export const ALLY_INVITE_TTL = 5.0;
@@ -26,6 +28,9 @@ export const PLAYER_NAMES = [
 ] as const;
 
 export type AiPersonality = 'honest' | 'greedy' | 'raider';
+export type MonsterKind = 'chaser' | 'tank' | 'dasher' | 'boss';
+export type WeaponKind = 'knife' | 'arrow' | 'bomb';
+export type MatchEventKind = 'none' | 'treasure_rain' | 'monster_frenzy';
 
 export interface TileState {
   readonly gx: number;
@@ -52,6 +57,7 @@ export interface ActorState {
   vx: number;
   vy: number;
   hp: number;
+  maxHp: number;
   alive: boolean;
   team: number;
   treasure: number;
@@ -65,17 +71,38 @@ export interface ActorState {
   facing: number;
   rank: number | null;
   runningAwayFromPartner?: boolean;
+
+  // 肉鸽经验与技能等级
+  level: number;
+  xp: number;
+  xpNext: number;
+  weaponKnife: number; // 0..3 环绕飞刀
+  weaponArrow: number; // 0..3 穿透箭矢
+  weaponBomb: number;  // 0..3 范围炸弹
+  statDamageBonus: number; // 百分比增益 e.g. 0.15
+  statSpeedBonus: number;
+  statAttackSpeedBonus: number;
+  statAreaBonus: number;
+
+  knifeAngle: number;
+  arrowTimer: number;
+  bombTimer: number;
 }
 
 export interface MonsterState {
   readonly id: number;
+  kind: MonsterKind;
   x: number;
   y: number;
   hp: number;
+  maxHp: number;
   alive: boolean;
   respawn: number;
   wobble: number;
   hitFlash: number;
+  speed: number;
+  damage: number;
+  attackCd: number;
 }
 
 export interface ChestState {
@@ -151,6 +178,41 @@ export interface CandidateInfo {
   reason?: string;
 }
 
+export interface UpgradeOption {
+  [key: string]: string;
+  id: string;
+  type: 'weapon' | 'stat';
+  title: string;
+  description: string;
+  currentValue: string;
+  nextValue: string;
+}
+
+export interface ArrowState {
+  id: number;
+  ownerId: number;
+  x: number;
+  y: number;
+  vx: number;
+  vy: number;
+  life: number;
+  pierceLeft: number;
+  hitMonsterIds: number[];
+  hitActorIds: number[];
+}
+
+export interface BombState {
+  id: number;
+  ownerId: number;
+  x: number;
+  y: number;
+  timer: number;
+  radius: number;
+  damage: number;
+  exploded: boolean;
+  fxTimer: number;
+}
+
 export interface PlayerInputIntent {
   moveX: number;
   moveY: number;
@@ -158,6 +220,7 @@ export interface PlayerInputIntent {
   inviteTargetId?: number | null;
   acceptInviteId?: number | null;
   ignoreTargetId?: number | null;
+  upgradeChoiceIndex?: number | null;
   speedToggle: boolean;
   restart: boolean;
 }
@@ -184,7 +247,25 @@ export interface SimulationState {
   playerTreasure: number;
   shrink: number;
   finalPhase: boolean;
+  overtime: boolean;
+  overtimeResolution: string | null;
   nextEntityId: number;
+
+  // 肉鸽扩展状态
+  pendingUpgrade: boolean;
+  upgradePaused: boolean;
+  upgradeChoices: UpgradeOption[];
+  arrows: ArrowState[];
+  bombs: BombState[];
+  activeEvent: MatchEventKind;
+  eventTimeLeft: number;
+  eventTriggered: {
+    treasure_rain: boolean;
+    monster_frenzy: boolean;
+  };
+  bossSpawned: boolean;
+  boss: MonsterState | null;
+  maxMonsters: number;
 }
 
 export function hash(a: number, b: number, seed = 0): number {
@@ -224,20 +305,17 @@ export function getIgnoreRemaining(sim: SimulationState, a: number, b: number): 
   return Math.max(0, until - sim.elapsed);
 }
 
-/** 建立双方 60 秒双向屏蔽，已有活跃屏蔽不重复延长 */
 export function ignorePair(sim: SimulationState, a: number, b: number): boolean {
   if (a === b) return false;
   const fromActor = sim.actors[a];
   const toActor = sim.actors[b];
   if (!fromActor || !toActor || !fromActor.alive || !toActor.alive || sim.gameOver) return false;
 
-  // 已有活跃屏蔽不重复刷新时长（R04）
   if (isPairIgnored(sim, a, b)) return false;
 
   const key = getPairKey(a, b);
   sim.ignores.set(key, sim.elapsed + ALLY_IGNORE_SECONDS);
 
-  // 清除涉及该对的待处理邀请
   sim.invites = sim.invites.filter(
     (inv) =>
       !(
@@ -316,6 +394,7 @@ export function createInitialSimulation(): SimulationState {
       vx: 0,
       vy: 0,
       hp: 100,
+      maxHp: 100,
       alive: true,
       team: -1,
       treasure: 0,
@@ -330,21 +409,47 @@ export function createInitialSimulation(): SimulationState {
       hitFlash: 0,
       facing: 0,
       rank: null,
+
+      level: 1,
+      xp: 0,
+      xpNext: 5,
+      weaponKnife: 0,
+      weaponArrow: 0,
+      weaponBomb: 0,
+      statDamageBonus: 0,
+      statSpeedBonus: 0,
+      statAttackSpeedBonus: 0,
+      statAreaBonus: 0,
+      knifeAngle: i * 0.6,
+      arrowTimer: 0.5 + i * 0.2,
+      bombTimer: 1.0 + i * 0.3,
     });
   }
 
+  // 初始生成 12 只基础怪物，随波次逐步扩容至 40 只
   const monsters: MonsterState[] = [];
-  for (let i = 0; i < 6; i++) {
-    const a = (i / 6) * Math.PI * 2 + 0.3;
+  for (let i = 0; i < 40; i++) {
+    const a = (i / 12) * Math.PI * 2 + 0.3;
+    const isInitial = i < 12;
+    const kind: MonsterKind = i % 5 === 0 ? 'tank' : i % 3 === 0 ? 'dasher' : 'chaser';
+    const hp = kind === 'tank' ? 8 : kind === 'dasher' ? 4 : 3;
+    const speed = kind === 'tank' ? 0.9 : kind === 'dasher' ? 2.2 : 1.7;
+    const damage = kind === 'tank' ? 10 : kind === 'dasher' ? 8 : 5;
+
     monsters.push({
       id: i,
-      x: center + Math.cos(a) * (5 + (i % 2)),
-      y: center + Math.sin(a) * (5 + (i % 2)),
-      hp: 3,
-      alive: true,
-      respawn: 0,
+      kind,
+      x: center + Math.cos(a) * (4.5 + (i % 3) * 1.5),
+      y: center + Math.sin(a) * (4.5 + (i % 3) * 1.5),
+      hp,
+      maxHp: hp,
+      alive: isInitial,
+      respawn: isInitial ? 0 : 4 + (i % 5) * 2,
       wobble: i,
       hitFlash: 0,
+      speed,
+      damage,
+      attackCd: 0,
     });
   }
 
@@ -370,7 +475,24 @@ export function createInitialSimulation(): SimulationState {
     playerTreasure: 0,
     shrink: 0,
     finalPhase: false,
+    overtime: false,
+    overtimeResolution: null,
     nextEntityId: 100,
+
+    pendingUpgrade: false,
+    upgradePaused: false,
+    upgradeChoices: [],
+    arrows: [],
+    bombs: [],
+    activeEvent: 'none',
+    eventTimeLeft: 0,
+    eventTriggered: {
+      treasure_rain: false,
+      monster_frenzy: false,
+    },
+    bossSpawned: false,
+    boss: null,
+    maxMonsters: 16,
   };
 }
 
@@ -440,7 +562,6 @@ export function scatterLoot(sim: SimulationState, x: number, y: number, count: n
   burst(sim, x, y, '#ffd257', Math.min(24, 6 + count * 2));
 }
 
-/** 破坏有效宝箱（R01 修复）：释放全部所含财物并置为无效，单次生效，不解除队伍关系 */
 export function destroyChest(sim: SimulationState, chest: ChestState, originX: number, originY: number): number {
   if (chest.hp <= 0 && chest.treasure <= 0) return 0;
   const count = chest.treasure;
@@ -454,7 +575,6 @@ export function destroyChest(sim: SimulationState, chest: ChestState, originX: n
   return count;
 }
 
-/** 原子解除两人队伍关系。若是超距触发，在两当时位置中点引爆共享宝箱（如有） */
 export function disbandTeam(sim: SimulationState, a: ActorState, reason: 'distance' | 'final' | 'fall'): void {
   const b = partnerOf(sim, a);
   if (!b) return;
@@ -493,7 +613,6 @@ export function disbandTeam(sim: SimulationState, a: ActorState, reason: 'distan
   }
 }
 
-/** 双方同意成队：建立互指关系与初始共享宝箱 */
 export function formTeam(sim: SimulationState, a: ActorState, b: ActorState): boolean {
   if (
     !a.alive ||
@@ -528,14 +647,12 @@ export function formTeam(sim: SimulationState, a: ActorState, b: ActorState): bo
     hitFlash: 0,
   });
 
-  // 成队后清除两人相关的待处理邀请
   sim.invites = sim.invites.filter((inv) => inv.fromId !== a.id && inv.toId !== a.id && inv.fromId !== b.id && inv.toId !== b.id);
 
   pulse(sim, '结盟成功！', cx, cy, '#8ef0a8');
   return true;
 }
 
-/** 发送组队邀请（R08 校验单一邀请限制与反向直接同意） */
 export function sendInvite(sim: SimulationState, fromId: number, toId: number): boolean {
   const from = sim.actors[fromId];
   const to = sim.actors[toId];
@@ -555,13 +672,11 @@ export function sendInvite(sim: SimulationState, fromId: number, toId: number): 
     return false;
   }
 
-  // 若对方此前已经向我发送过有效邀请：双向同时同意，直接原子成队
   const reverse = sim.invites.find((inv) => inv.fromId === toId && inv.toId === fromId && sim.elapsed <= inv.expiresAt);
   if (reverse) {
     return formTeam(sim, from, to);
   }
 
-  // 严格单一邀请参与约束：发起方或接收方正在处理其他有效邀请时，不覆盖并返回 busy
   const fromBusy = sim.invites.some((inv) => (inv.fromId === fromId || inv.toId === fromId) && sim.elapsed <= inv.expiresAt);
   if (fromBusy) return false;
 
@@ -579,7 +694,6 @@ export function sendInvite(sim: SimulationState, fromId: number, toId: number): 
   return true;
 }
 
-/** 接受组队邀请 */
 export function acceptInvite(sim: SimulationState, inviteId: number, recipientId: number): boolean {
   const inv = sim.invites.find((i) => i.id === inviteId && i.toId === recipientId && sim.elapsed <= i.expiresAt);
   if (!inv) return false;
@@ -591,7 +705,6 @@ export function acceptInvite(sim: SimulationState, inviteId: number, recipientId
   return formTeam(sim, from, to);
 }
 
-/** 查询离某角色最近的候选可交互角色（R04 过滤屏蔽对象，被忽略的不阻碍选择其他合资格者） */
 export function getNearbyCandidate(sim: SimulationState, actor: ActorState): CandidateInfo | null {
   if (!actor.alive || actor.team >= 0 || sim.finalPhase || sim.gameOver) return null;
 
@@ -644,7 +757,7 @@ export function getNearbyCandidate(sim: SimulationState, actor: ActorState): Can
 export function checkGameOver(sim: SimulationState): void {
   if (sim.gameOver) return;
   const alive = aliveActors(sim);
-  if (alive.length <= 1 || sim.elapsed >= MATCH_SECONDS) {
+  if (alive.length <= 1) {
     sim.gameOver = true;
     sim.winner = alive[0] ?? null;
     if (sim.winner) {
@@ -656,13 +769,11 @@ export function checkGameOver(sim: SimulationState): void {
 export function eliminate(sim: SimulationState, a: ActorState, reason: string): void {
   if (!a.alive) return;
   a.alive = false;
-  // 记录真实淘汰名次（R02）
   a.rank = aliveActors(sim).length + 1;
 
   if (a.team >= 0) {
     disbandTeam(sim, a, 'fall');
   }
-  // 清理涉及淘汰角色的邀请
   sim.invites = sim.invites.filter((inv) => inv.fromId !== a.id && inv.toId !== a.id);
   burst(sim, a.x, a.y, a.color, 18);
   pulse(sim, `${a.name} 淘汰`, a.x, a.y, '#ff9a8a');
@@ -671,21 +782,156 @@ export function eliminate(sim: SimulationState, a: ActorState, reason: string): 
   checkGameOver(sim);
 }
 
+/** 生成三选一升级候选项 */
+export function generateUpgradeChoices(actor: ActorState): UpgradeOption[] {
+  const pool: UpgradeOption[] = [];
+
+  // 1. 武器选项（未满 3 级）
+  if (actor.weaponKnife < 3) {
+    const nextLvl = actor.weaponKnife + 1;
+    pool.push({
+      id: 'weapon_knife',
+      type: 'weapon',
+      title: '环绕飞刀',
+      description: `召唤 ${nextLvl} 把灵能飞刀在身边持续旋转切割触碰的敌人`,
+      currentValue: actor.weaponKnife === 0 ? '未习得' : `LV.${actor.weaponKnife} (${actor.weaponKnife}把)`,
+      nextValue: `LV.${nextLvl} (${nextLvl}把飞刀)`,
+    });
+  }
+
+  if (actor.weaponArrow < 3) {
+    const nextLvl = actor.weaponArrow + 1;
+    pool.push({
+      id: 'weapon_arrow',
+      type: 'weapon',
+      title: '穿透箭矢',
+      description: `周期性向最近敌对目标射出穿透箭，穿透 ${nextLvl + 1} 个目标`,
+      currentValue: actor.weaponArrow === 0 ? '未习得' : `LV.${actor.weaponArrow} (穿透${actor.weaponArrow + 1}人)`,
+      nextValue: `LV.${nextLvl} (穿透${nextLvl + 1}人)`,
+    });
+  }
+
+  if (actor.weaponBomb < 3) {
+    const nextLvl = actor.weaponBomb + 1;
+    pool.push({
+      id: 'weapon_bomb',
+      type: 'weapon',
+      title: '范围爆轰',
+      description: `周期性向敌群投掷高爆体素地雷，造成大范围群体爆破`,
+      currentValue: actor.weaponBomb === 0 ? '未习得' : `LV.${actor.weaponBomb} (半径${(1.6 + actor.weaponBomb * 0.4).toFixed(1)}m)`,
+      nextValue: `LV.${nextLvl} (半径${(1.6 + nextLvl * 0.4).toFixed(1)}m)`,
+    });
+  }
+
+  // 2. 通用属性选项（始终提供）
+  pool.push({
+    id: 'stat_damage',
+    type: 'stat',
+    title: '锋芒毕露',
+    description: '全武器与攻击基础伤害提升 15%',
+    currentValue: `+${Math.round(actor.statDamageBonus * 100)}%`,
+    nextValue: `+${Math.round((actor.statDamageBonus + 0.15) * 100)}%`,
+  });
+
+  pool.push({
+    id: 'stat_speed',
+    type: 'stat',
+    title: '疾风步伐',
+    description: '角色移动速度提升 8%',
+    currentValue: `+${Math.round(actor.statSpeedBonus * 100)}%`,
+    nextValue: `+${Math.round((actor.statSpeedBonus + 0.08) * 100)}%`,
+  });
+
+  pool.push({
+    id: 'stat_attack_speed',
+    type: 'stat',
+    title: '极速连击',
+    description: '基础攻击与武器技能触发间隔缩短 10%',
+    currentValue: `+${Math.round(actor.statAttackSpeedBonus * 100)}%`,
+    nextValue: `+${Math.round((actor.statAttackSpeedBonus + 0.10) * 100)}%`,
+  });
+
+  pool.push({
+    id: 'stat_area',
+    type: 'stat',
+    title: '威能扩散',
+    description: '技能打击范围与爆炸波及半径扩大 15%',
+    currentValue: `+${Math.round(actor.statAreaBonus * 100)}%`,
+    nextValue: `+${Math.round((actor.statAreaBonus + 0.15) * 100)}%`,
+  });
+
+  // 随机抽取 3 个不重复项
+  const shuffled = [...pool].sort(() => Math.random() - 0.5);
+  return shuffled.slice(0, 3);
+}
+
+/** 应用升级项 */
+export function applyUpgrade(actor: ActorState, upgrade: UpgradeOption): void {
+  switch (upgrade.id) {
+    case 'weapon_knife':
+      actor.weaponKnife = Math.min(3, actor.weaponKnife + 1);
+      break;
+    case 'weapon_arrow':
+      actor.weaponArrow = Math.min(3, actor.weaponArrow + 1);
+      break;
+    case 'weapon_bomb':
+      actor.weaponBomb = Math.min(3, actor.weaponBomb + 1);
+      break;
+    case 'stat_damage':
+      actor.statDamageBonus += 0.15;
+      break;
+    case 'stat_speed':
+      actor.statSpeedBonus += 0.08;
+      break;
+    case 'stat_attack_speed':
+      actor.statAttackSpeedBonus += 0.10;
+      break;
+    case 'stat_area':
+      actor.statAreaBonus += 0.15;
+      break;
+  }
+}
+
+/** 赋予角色经验并在满足时升级 */
+export function giveActorXp(sim: SimulationState, actor: ActorState, amount: number): void {
+  if (!actor.alive) return;
+  actor.xp += amount;
+  burst(sim, actor.x, actor.y, '#65d5b0', 4);
+
+  while (actor.xp >= actor.xpNext) {
+    actor.xp -= actor.xpNext;
+    actor.level++;
+    actor.xpNext = 3 + actor.level * 2;
+    pulse(sim, `升级！LV.${actor.level}`, actor.x, actor.y, '#65d5b0');
+
+    if (actor.isPlayer) {
+      sim.pendingUpgrade = true;
+      sim.upgradePaused = true; // 玩家升级：全局模拟暂停！
+      sim.upgradeChoices = generateUpgradeChoices(actor);
+      break;
+    } else {
+      // AI 升级：依权重自动选卡并应用
+      const choices = generateUpgradeChoices(actor);
+      const chosen = choices[Math.floor(Math.random() * choices.length)]!;
+      applyUpgrade(actor, chosen);
+    }
+  }
+}
+
 /** 计算攻击伤害：包含个人财物增益与结盟/宝箱财富加成（R09） */
 export function calculateAttackDamage(sim: SimulationState, attacker: ActorState): number {
-  let damage = 10; // 基础伤害
-  // 个人宝物增益：每个宝物 +0.5 伤害，上限 +10
+  let damage = 10;
   damage += Math.min(10, attacker.treasure * 0.5);
 
-  // 结盟合作增益：有队友时 +3 伤害
   if (attacker.team >= 0) {
     damage += 3;
-    // 共享宝箱财富加成：宝箱内每宝物 +0.5 伤害，上限 +5
     const chest = chestOf(sim, attacker.team);
     if (chest && (chest.hp > 0 || chest.treasure > 0)) {
       damage += Math.min(5, chest.treasure * 0.5);
     }
   }
+
+  damage *= 1 + attacker.statDamageBonus;
   return Math.round(damage);
 }
 
@@ -695,7 +941,42 @@ export function damageActor(sim: SimulationState, target: ActorState, amount: nu
   burst(sim, target.x, target.y, '#ff8a8a', 4);
   if (target.hp <= 0) {
     eliminate(sim, target, 'hp');
-    if (from) from.kills++;
+    if (from) {
+      from.kills++;
+      giveActorXp(sim, from, 3);
+    }
+  }
+}
+
+export function damageMonster(sim: SimulationState, monster: MonsterState, amount: number, from: ActorState | null): void {
+  if (!monster.alive) return;
+  monster.hp -= amount;
+  monster.hitFlash = 0.2;
+  burst(sim, monster.x, monster.y, '#c8a2ff', 4);
+
+  if (monster.hp <= 0) {
+    monster.alive = false;
+    monster.respawn = monster.kind === 'boss' ? 9999 : 8;
+
+    if (from) {
+      const isBoss = monster.kind === 'boss';
+      giveActorXp(sim, from, isBoss ? 8 : 1);
+
+      if (isBoss) {
+        pulse(sim, '🏆 混沌巨兽被击败！大量宝物掉落！', monster.x, monster.y, '#ffd700');
+        scatterLoot(sim, monster.x, monster.y, 8);
+      } else {
+        const c = from.team >= 0 ? chestOf(sim, from.team) : null;
+        if (c && c.hp > 0) {
+          c.treasure += 2;
+          pulse(sim, '+2 宝物', c.x, c.y, '#ffe27a');
+        } else {
+          from.treasure += 2;
+          if (from.isPlayer) sim.playerTreasure += 2;
+        }
+        scatterLoot(sim, monster.x, monster.y, 1);
+      }
+    }
   }
 }
 
@@ -718,7 +999,6 @@ export function doDash(sim: SimulationState, a: ActorState): void {
   burst(sim, a.x, a.y, '#bfe9ff', 8);
 }
 
-/** 统一队伍距离与断线检测：在所有移动与击退位移结算后统一判定 */
 export function checkTeamDistances(sim: SimulationState): void {
   for (const a of sim.actors) {
     if (!a.alive || a.team < 0 || a.id > a.team) continue;
@@ -730,6 +1010,203 @@ export function checkTeamDistances(sim: SimulationState): void {
     const d = dist(a, b);
     if (d > TEAM_BREAK_DISTANCE) {
       disbandTeam(sim, a, 'distance');
+    }
+  }
+}
+
+/** 模拟附加武器：飞刀、穿透箭、范围炸弹 */
+export function stepWeapons(sim: SimulationState, dt: number): void {
+  const center = (GRID_SIZE - 1) / 2;
+
+  // 1. 环绕飞刀
+  for (const a of aliveActors(sim)) {
+    if (a.weaponKnife > 0) {
+      a.knifeAngle += dt * 3.6;
+      const count = a.weaponKnife;
+      const radius = 1.6 * (1 + a.statAreaBonus);
+      const knifeDmg = Math.round(calculateAttackDamage(sim, a) * 0.65);
+
+      for (let k = 0; k < count; k++) {
+        const ang = a.knifeAngle + (k * Math.PI * 2) / count;
+        const kx = a.x + Math.cos(ang) * radius;
+        const ky = a.y + Math.sin(ang) * radius;
+        const knifePos = { x: kx, y: ky };
+
+        // 碰触怪物
+        for (const m of sim.monsters) {
+          if (m.alive && dist(knifePos, m) < 0.9) {
+            damageMonster(sim, m, knifeDmg, a);
+          }
+        }
+
+        // 碰触敌方角色与宝箱（遵守队友免伤）
+        for (const o of aliveActors(sim)) {
+          if (o === a || a.team === o.id) continue;
+          if (dist(knifePos, o) < 0.9) {
+            if (o.team >= 0) {
+              const c = chestOf(sim, o.team);
+              if (c && (c.hp > 0 || c.treasure > 0)) {
+                c.hp -= knifeDmg;
+                if (c.hp <= 0) {
+                  destroyChest(sim, c, c.x, c.y);
+                }
+              } else {
+                damageActor(sim, o, knifeDmg, a);
+              }
+            } else {
+              damageActor(sim, o, knifeDmg, a);
+            }
+          }
+        }
+      }
+    }
+
+    // 2. 穿透箭矢发射计时
+    if (a.weaponArrow > 0) {
+      a.arrowTimer -= dt;
+      if (a.arrowTimer <= 0) {
+        a.arrowTimer = (1.6 - a.weaponArrow * 0.25) / (1 + a.statAttackSpeedBonus);
+
+        // 寻找最近敌对目标
+        let targetPos: Vec2 | null = null;
+        let minD = 8.5;
+        for (const m of sim.monsters) {
+          if (m.alive && dist(a, m) < minD) {
+            minD = dist(a, m);
+            targetPos = m;
+          }
+        }
+        for (const o of aliveActors(sim)) {
+          if (o !== a && a.team !== o.id && dist(a, o) < minD) {
+            minD = dist(a, o);
+            targetPos = o;
+          }
+        }
+
+        if (targetPos) {
+          const dx = targetPos.x - a.x;
+          const dy = targetPos.y - a.y;
+          const len = Math.hypot(dx, dy) || 1;
+          sim.arrows.push({
+            id: sim.nextEntityId++,
+            ownerId: a.id,
+            x: a.x,
+            y: a.y,
+            vx: (dx / len) * 7.5,
+            vy: (dy / len) * 7.5,
+            life: 1.4,
+            pierceLeft: a.weaponArrow + 1,
+            hitMonsterIds: [],
+            hitActorIds: [],
+          });
+        }
+      }
+    }
+
+    // 3. 范围炸弹投放计时
+    if (a.weaponBomb > 0) {
+      a.bombTimer -= dt;
+      if (a.bombTimer <= 0) {
+        a.bombTimer = (2.8 - a.weaponBomb * 0.35) / (1 + a.statAttackSpeedBonus);
+        const radius = (1.8 + a.weaponBomb * 0.45) * (1 + a.statAreaBonus);
+        const bombDmg = Math.round(calculateAttackDamage(sim, a) * 1.3);
+
+        // 投掷在自身或敌群密集方向
+        sim.bombs.push({
+          id: sim.nextEntityId++,
+          ownerId: a.id,
+          x: a.x + a.vx * 1.5,
+          y: a.y + a.vy * 1.5,
+          timer: 0.9,
+          radius,
+          damage: bombDmg,
+          exploded: false,
+          fxTimer: 0.5,
+        });
+      }
+    }
+  }
+
+  // 更新箭矢飞行与穿透命中
+  for (let i = sim.arrows.length - 1; i >= 0; i--) {
+    const arr = sim.arrows[i]!;
+    arr.life -= dt;
+    arr.x += arr.vx * dt;
+    arr.y += arr.vy * dt;
+    const owner = sim.actors[arr.ownerId];
+
+    if (owner && arr.pierceLeft > 0) {
+      const arrDmg = Math.round(calculateAttackDamage(sim, owner) * 0.85);
+      // 命中怪物
+      for (const m of sim.monsters) {
+        if (m.alive && !arr.hitMonsterIds.includes(m.id) && dist(arr, m) < 0.75) {
+          arr.hitMonsterIds.push(m.id);
+          arr.pierceLeft--;
+          damageMonster(sim, m, arrDmg, owner);
+          if (arr.pierceLeft <= 0) break;
+        }
+      }
+      // 命中敌方角色
+      if (arr.pierceLeft > 0) {
+        for (const o of aliveActors(sim)) {
+          if (o.id !== arr.ownerId && owner.team !== o.id && !arr.hitActorIds.includes(o.id) && dist(arr, o) < 0.75) {
+            arr.hitActorIds.push(o.id);
+            arr.pierceLeft--;
+            damageActor(sim, o, arrDmg, owner);
+            if (arr.pierceLeft <= 0) break;
+          }
+        }
+      }
+    }
+
+    if (arr.life <= 0 || arr.pierceLeft <= 0) {
+      sim.arrows.splice(i, 1);
+    }
+  }
+
+  // 更新炸弹倒计时与爆炸波及
+  for (let i = sim.bombs.length - 1; i >= 0; i--) {
+    const b = sim.bombs[i]!;
+    if (!b.exploded) {
+      b.timer -= dt;
+      if (b.timer <= 0) {
+        b.exploded = true;
+        const owner = sim.actors[b.ownerId];
+        burst(sim, b.x, b.y, '#f59e0b', 20);
+        pulse(sim, '💥 轰！', b.x, b.y, '#f59e0b');
+
+        if (owner) {
+          // 对半径内怪物造成 AOE 伤害
+          for (const m of sim.monsters) {
+            if (m.alive && dist(b, m) <= b.radius) {
+              damageMonster(sim, m, b.damage, owner);
+            }
+          }
+          // 对半径内敌方角色与宝箱造成伤害
+          for (const o of aliveActors(sim)) {
+            if (o.id !== b.ownerId && owner.team !== o.id && dist(b, o) <= b.radius) {
+              if (o.team >= 0) {
+                const chest = chestOf(sim, o.team);
+                if (chest && (chest.hp > 0 || chest.treasure > 0)) {
+                  chest.hp -= b.damage;
+                  if (chest.hp <= 0) {
+                    destroyChest(sim, chest, chest.x, chest.y);
+                  }
+                } else {
+                  damageActor(sim, o, b.damage, owner);
+                }
+              } else {
+                damageActor(sim, o, b.damage, owner);
+              }
+            }
+          }
+        }
+      }
+    } else {
+      b.fxTimer -= dt;
+      if (b.fxTimer <= 0) {
+        sim.bombs.splice(i, 1);
+      }
     }
   }
 }
@@ -756,7 +1233,7 @@ export function decideAI(sim: SimulationState, a: ActorState): void {
     }
   }
 
-  // 2. 抢自由宝物优先（合作状态下受队友距离约束，R05）
+  // 2. 抢自由宝物（合作状态受距离约束）
   let bestLoot: LootState | null = null;
   let bl = 7;
   const partner = partnerOf(sim, a);
@@ -765,7 +1242,6 @@ export function decideAI(sim: SimulationState, a: ActorState): void {
     if (!l.value || l.z > 2) continue;
     const d = dist(a, l);
     if (d < bl) {
-      // 若处于正常合作中且未背叛：宝物不能远离队友，否则放弃避免意外拉断
       if (partner && !a.runningAwayFromPartner && dist(partner, l) > 3.6) {
         continue;
       }
@@ -790,7 +1266,6 @@ export function decideAI(sim: SimulationState, a: ActorState): void {
   if (a.team >= 0 && partner) {
     const c = chestOf(sim, a.team);
 
-    // 贪财 AI 在宝箱足够大时产生背叛意图：真实远离队友以触发距离断线
     if (a.ai === 'greedy' && c && c.treasure >= 6 && Math.random() < 0.25) {
       a.runningAwayFromPartner = true;
     }
@@ -816,14 +1291,13 @@ export function decideAI(sim: SimulationState, a: ActorState): void {
       }
     }
 
-    // 正常合作：跟随在队友附近（保持 1.5~2.8 距离以内，避免拉断线）
     a.aim = {
       x: (a.x + partner.x) / 2 + (Math.random() - 0.5) * 2.0,
       y: (a.y + partner.y) / 2 + (Math.random() - 0.5) * 2.0,
     };
     return;
   } else if (!sim.finalPhase && a.ai !== 'raider') {
-    // 5. 单人未组队：寻找附近未组队未屏蔽角色并发送组队邀请
+    // 5. 单人未组队：寻找附近未组队未屏蔽角色
     const candidate = getNearbyCandidate(sim, a);
     if (candidate && candidate.canInvite) {
       sendInvite(sim, a.id, candidate.id);
@@ -831,7 +1305,15 @@ export function decideAI(sim: SimulationState, a: ActorState): void {
     }
   }
 
-  // 6. 攻击附近怪物
+  // 6. 优先攻击 Boss 或附近怪物
+  if (sim.boss && sim.boss.alive) {
+    a.aim = {
+      x: sim.boss.x + (Math.random() - 0.5) * 2,
+      y: sim.boss.y + (Math.random() - 0.5) * 2,
+    };
+    return;
+  }
+
   const monster = sim.monsters
     .filter((m) => m.alive)
     .sort((p, q) => dist(a, p) - dist(a, q))[0];
@@ -872,15 +1354,34 @@ export function stepSimulation(
     return;
   }
 
+  // 升级三选一选择输入处理（选卡后恢复模拟暂停）
+  const player = sim.actors[0]!;
+  if (sim.pendingUpgrade && input.upgradeChoiceIndex !== undefined && input.upgradeChoiceIndex !== null) {
+    const choice = sim.upgradeChoices[input.upgradeChoiceIndex];
+    if (choice) {
+      applyUpgrade(player, choice);
+      sim.pendingUpgrade = false;
+      sim.upgradePaused = false;
+      pulse(sim, `强化获得：${choice.title}`, player.x, player.y, '#65d5b0');
+    }
+  }
+
+  // 全局升级暂停：暂停时所有战斗、移动与倒计时静止
+  if (sim.upgradePaused) {
+    return;
+  }
+
   const dt = dtRaw * sim.speed;
   const center = (GRID_SIZE - 1) / 2;
-  const player = sim.actors[0]!;
 
   sim.elapsed += dt;
+
+  // 缩圈进度推进
   const progress = sim.elapsed / MATCH_SECONDS;
   sim.shrink = clamp((progress - 0.38) / 0.5, 0, 1);
 
-  if (progress >= 0.8 && !sim.finalPhase) {
+  // 终局混战阶段（80% 进度 或 超过 300s 进入加时决胜）
+  if ((progress >= 0.8 || sim.elapsed >= MATCH_SECONDS) && !sim.finalPhase) {
     sim.finalPhase = true;
     for (const a of aliveActors(sim)) {
       if (a.team >= 0) {
@@ -889,6 +1390,101 @@ export function stepSimulation(
     }
     sim.invites.length = 0;
   }
+
+  // P1-D: 决胜加时与判定修复（300s 仍有多人存活进入 overtime 加速决胜）
+  if (sim.elapsed >= MATCH_SECONDS && !sim.gameOver) {
+    sim.overtime = true;
+    sim.shrink = clamp(0.75 + ((sim.elapsed - MATCH_SECONDS) / OVERTIME_SECONDS) * 0.25, 0, 1);
+
+    // 达到 360s 加时极限仍有多人存活：按明确平分规则决胜（HP > Kills > Treasure > ID）
+    if (sim.elapsed >= MATCH_SECONDS + OVERTIME_SECONDS) {
+      const alive = aliveActors(sim);
+      if (alive.length > 0) {
+        const winner = alive.sort((p, q) => {
+          if (q.hp !== p.hp) return q.hp - p.hp;
+          if (q.kills !== p.kills) return q.kills - p.kills;
+          if (q.treasure !== p.treasure) return q.treasure - p.treasure;
+          return p.id - q.id;
+        })[0]!;
+        sim.gameOver = true;
+        sim.winner = winner;
+        sim.overtimeResolution = 'points';
+        winner.rank = 1;
+        pulse(sim, `加时积分决胜：${winner.name} 获胜！`, center, center, '#ffe27a');
+      }
+    }
+  }
+
+  // P1-C: 特殊事件触发
+  // 1. 宝物雨（90s 触发）
+  if (sim.elapsed >= 90 && !sim.eventTriggered.treasure_rain) {
+    sim.eventTriggered.treasure_rain = true;
+    sim.activeEvent = 'treasure_rain';
+    sim.eventTimeLeft = 14;
+    pulse(sim, '🌟 宝物雨降临！荒岛空投大量战利品！', center, center, '#ffd700');
+    // 在安全陆地生成 8 个金色宝物
+    for (let i = 0; i < 8; i++) {
+      const a = (i / 8) * Math.PI * 2;
+      const rx = center + Math.cos(a) * (2.5 + (i % 2) * 1.5);
+      const ry = center + Math.sin(a) * (2.5 + (i % 2) * 1.5);
+      sim.loots.push({
+        id: sim.nextEntityId++,
+        x: rx,
+        y: ry,
+        z: 3.5,
+        vx: (Math.random() - 0.5) * 1.2,
+        vy: (Math.random() - 0.5) * 1.2,
+        vz: 3.0,
+        value: 1,
+        life: 25,
+        spin: Math.random() * 6,
+      });
+    }
+  }
+
+  // 2. 怪物暴走（220s 触发）
+  if (sim.elapsed >= 220 && !sim.eventTriggered.monster_frenzy) {
+    sim.eventTriggered.monster_frenzy = true;
+    sim.activeEvent = 'monster_frenzy';
+    sim.eventTimeLeft = 18;
+    pulse(sim, '⚡ 怪物狂暴！全岛怪潮暴走！', center, center, '#ef4444');
+  }
+
+  if (sim.eventTimeLeft > 0) {
+    sim.eventTimeLeft -= dt;
+    if (sim.eventTimeLeft <= 0) {
+      if (sim.activeEvent === 'monster_frenzy') {
+        pulse(sim, '狂暴消退，怪潮恢复平静', center, center, '#65d5b0');
+      }
+      sim.activeEvent = 'none';
+    }
+  }
+
+  // P1-A: 180s Boss 登场
+  if (sim.elapsed >= 180 && !sim.bossSpawned) {
+    sim.bossSpawned = true;
+    const bossMonster: MonsterState = {
+      id: 999,
+      kind: 'boss',
+      x: center,
+      y: center,
+      hp: 75,
+      maxHp: 75,
+      alive: true,
+      respawn: 9999,
+      wobble: 0,
+      hitFlash: 0,
+      speed: 1.25,
+      damage: 18,
+      attackCd: 0,
+    };
+    sim.monsters.push(bossMonster);
+    sim.boss = bossMonster;
+    pulse(sim, '⚠️ 混沌体素巨兽登场！击败将掉落大量战利品！', center, center, '#ff4d4f');
+  }
+
+  // 怪潮容量随时间扩展 (16 -> 24 -> 34 -> 40)
+  sim.maxMonsters = sim.elapsed < 60 ? 16 : sim.elapsed < 140 ? 24 : sim.elapsed < 230 ? 34 : 40;
 
   // 地块崩塌判定
   const currentRadius = landRadius(sim.shrink);
@@ -936,7 +1532,7 @@ export function stepSimulation(
     }
   }
 
-  // 3. 玩家位移输入
+  // 3. 玩家位移输入（包含敏捷增益）
   let mx = input.moveX;
   let my = input.moveY;
   const ml = Math.hypot(mx, my);
@@ -964,7 +1560,7 @@ export function stepSimulation(
     }
   }
 
-  // 5. 移动物理位移与阻尼
+  // 5. 角色移动物理位移与阻尼
   for (const a of aliveActors(sim)) {
     if (!a.isPlayer) {
       const dl = Math.hypot(a.aim.x - a.x, a.aim.y - a.y);
@@ -975,7 +1571,7 @@ export function stepSimulation(
       }
     }
     const slow = a.slow > 0 ? 0.55 : 1;
-    const sp = 3.1 * slow * dt;
+    const sp = 3.1 * (1 + a.statSpeedBonus) * slow * dt;
     a.x = clamp(a.x + a.vx * sp, 0.5, GRID_SIZE - 1.5);
     a.y = clamp(a.y + a.vy * sp, 0.5, GRID_SIZE - 1.5);
     a.slow = Math.max(0, a.slow - dt);
@@ -984,7 +1580,7 @@ export function stepSimulation(
     a.hitFlash = Math.max(0, a.hitFlash - dt);
   }
 
-  // 6. 移动后优先执行本步边缘坠落与淘汰判定（R05：坠落优先于超距断线）
+  // 6. 移动后优先执行本步边缘坠落与淘汰判定（R05）
   for (const a of aliveActors(sim)) {
     const t = tileAt(sim, Math.round(a.x), Math.round(a.y));
     if (!t || !t.isLand || t.gone || t.r > currentRadius) {
@@ -992,10 +1588,69 @@ export function stepSimulation(
     }
   }
 
-  // 7. 统一队伍距离与断线检测（仅对仍存活的队伍对检测）
+  // 7. 统一队伍距离与断线检测
   checkTeamDistances(sim);
 
-  // 8. 宝箱实时中点跟随与属性刷新
+  // 8. 怪物追踪移动与攻击
+  const frenzyMultiplier = sim.activeEvent === 'monster_frenzy' ? 1.35 : 1.0;
+  for (const m of sim.monsters) {
+    if (!m.alive) continue;
+    m.hitFlash = Math.max(0, m.hitFlash - dt);
+    m.attackCd = Math.max(0, m.attackCd - dt);
+
+    // 寻找最近的存活角色追逐
+    let closestActor: ActorState | null = null;
+    let minD = 12.0;
+    for (const a of aliveActors(sim)) {
+      const d = dist(m, a);
+      if (d < minD) {
+        minD = d;
+        closestActor = a;
+      }
+    }
+
+    if (closestActor) {
+      const dx = closestActor.x - m.x;
+      const dy = closestActor.y - m.y;
+      const dlen = Math.hypot(dx, dy) || 1;
+      const msp = m.speed * frenzyMultiplier * dt;
+      m.x += (dx / dlen) * msp;
+      m.y += (dy / dlen) * msp;
+
+      // 触碰攻击角色
+      if (minD < 0.85 && m.attackCd <= 0) {
+        m.attackCd = 1.0;
+        damageActor(sim, closestActor, m.damage, null);
+      }
+    }
+  }
+
+  // 9. 怪物波次动态刷新（仅在当前安全陆地生成）
+  const activeMonsters = sim.monsters.filter((m) => m.alive && m.kind !== 'boss');
+  if (activeMonsters.length < sim.maxMonsters) {
+    const deadMonster = sim.monsters.find((m) => !m.alive && m.kind !== 'boss');
+    if (deadMonster) {
+      deadMonster.respawn -= dt * (sim.activeEvent === 'monster_frenzy' ? 2.2 : 1.0);
+      if (deadMonster.respawn <= 0) {
+        // 寻找一个安全未崩塌陆地网格
+        for (let tries = 0; tries < 15; tries++) {
+          const gx = Math.floor(center + (Math.random() - 0.5) * 16);
+          const gy = Math.floor(center + (Math.random() - 0.5) * 16);
+          const t = tileAt(sim, gx, gy);
+          if (t && t.isLand && !t.gone && t.r <= currentRadius - 0.1) {
+            deadMonster.x = gx + (Math.random() - 0.5) * 0.8;
+            deadMonster.y = gy + (Math.random() - 0.5) * 0.8;
+            deadMonster.hp = deadMonster.maxHp;
+            deadMonster.alive = true;
+            deadMonster.respawn = 0;
+            break;
+          }
+        }
+      }
+    }
+  }
+
+  // 10. 宝箱实时中点跟随与属性刷新
   for (const c of sim.chests) {
     if (c.hp <= 0 && c.treasure <= 0) continue;
     const a = sim.actors[c.a]!;
@@ -1011,12 +1666,12 @@ export function stepSimulation(
     c.hitFlash = Math.max(0, c.hitFlash - dt);
   }
 
-  // 9. 自动攻击判断（遵循最近有效敌对目标，包含财物与结盟攻击收益计算，R09）
+  // 11. 基础自动攻击判定（遵循最近有效敌对目标）
   for (const a of aliveActors(sim)) {
     if (a.attackCd > 0) continue;
     let targetMonster: MonsterState | null = null;
     let targetActor: ActorState | null = null;
-    let td = 2.7;
+    let td = 2.7 * (1 + a.statAreaBonus);
 
     for (const m of sim.monsters) {
       if (!m.alive) continue;
@@ -1039,26 +1694,11 @@ export function stepSimulation(
     }
 
     if (targetMonster) {
-      a.attackCd = Math.max(0.55, 0.7 - a.treasure * 0.008);
-      const dmg = Math.round(1 + a.treasure * 0.1);
-      targetMonster.hp -= dmg;
-      targetMonster.hitFlash = 0.2;
-      burst(sim, targetMonster.x, targetMonster.y, '#c8a2ff', 5);
-      if (targetMonster.hp <= 0) {
-        targetMonster.alive = false;
-        targetMonster.respawn = 9;
-        const c = a.team >= 0 ? chestOf(sim, a.team) : null;
-        if (c && c.hp > 0) {
-          c.treasure += 2;
-          pulse(sim, '+2 宝物', c.x, c.y, '#ffe27a');
-        } else {
-          a.treasure += 2;
-          if (a.isPlayer) sim.playerTreasure += 2;
-        }
-        scatterLoot(sim, targetMonster.x, targetMonster.y, 1);
-      }
+      a.attackCd = Math.max(0.45, (0.7 - a.treasure * 0.008) / (1 + a.statAttackSpeedBonus));
+      const dmg = calculateAttackDamage(sim, a);
+      damageMonster(sim, targetMonster, dmg, a);
     } else if (targetActor) {
-      a.attackCd = Math.max(0.55, 0.7 - a.treasure * 0.008);
+      a.attackCd = Math.max(0.45, (0.7 - a.treasure * 0.008) / (1 + a.statAttackSpeedBonus));
       const dmg = calculateAttackDamage(sim, a);
 
       if (targetActor.team >= 0) {
@@ -1068,7 +1708,6 @@ export function stepSimulation(
           c.hitFlash = 0.2;
           burst(sim, c.x, c.y, '#ffb45c', 5);
           if (c.hp <= 0) {
-            // 外部打爆宝箱：释放全部战利品，但原队伍双方保持结盟关系！（R01 修复）
             destroyChest(sim, c, c.x, c.y);
             pulse(sim, '宝箱被打爆！队伍关系仍保留', c.x, c.y, '#ff8a6a');
           }
@@ -1081,21 +1720,10 @@ export function stepSimulation(
     }
   }
 
-  // 10. 怪物重生
-  for (const m of sim.monsters) {
-    m.hitFlash = Math.max(0, m.hitFlash - dt);
-    if (m.alive) continue;
-    m.respawn -= dt;
-    if (m.respawn <= 0) {
-      const a = Math.random() * Math.PI * 2;
-      m.x = center + Math.cos(a) * (3 + Math.random() * 4);
-      m.y = center + Math.sin(a) * (3 + Math.random() * 4);
-      m.hp = 3;
-      m.alive = true;
-    }
-  }
+  // 12. 附加武器步进（飞刀/穿透箭/范围爆轰）
+  stepWeapons(sim, dt);
 
-  // 11. 自由宝物物理模拟与拾取
+  // 13. 自由宝物物理模拟与拾取
   for (const l of sim.loots) {
     l.life -= dt;
     l.x += l.vx * dt * 2.2;
@@ -1126,7 +1754,7 @@ export function stepSimulation(
     if (sim.loots[i]!.life <= 0) sim.loots.splice(i, 1);
   }
 
-  // 12. 粒子与飘字生命周期
+  // 14. 粒子与飘字生命周期
   for (let i = sim.particles.length - 1; i >= 0; i--) {
     const p = sim.particles[i]!;
     p.x += p.vx * dt * 3.0;
@@ -1147,15 +1775,6 @@ export function stepSimulation(
     if (f.life <= 0) sim.floats.splice(i, 1);
   }
 
-  // 13. 胜负与结局判定
-  if (!sim.gameOver) {
-    const alive = aliveActors(sim);
-    if (alive.length <= 1 || sim.elapsed >= MATCH_SECONDS) {
-      sim.gameOver = true;
-      sim.winner = alive[0] ?? null;
-      if (sim.winner) {
-        sim.winner.rank = 1;
-      }
-    }
-  }
+  // 15. 胜负结局检查
+  checkGameOver(sim);
 }

@@ -1,5 +1,5 @@
 // 《荒岛分赃》端到端玩法验收与多状态截图断言
-// 验证：靠近选择 -> 双方同意组队 -> 连线与共享宝箱 -> 拉开距离断线 -> 中点爆箱 -> 争抢
+// 验证：靠近选择 -> 双方同意组队 -> 连线与共享宝箱 -> 拉开距离断线 -> 中点爆箱 -> 争抢 -> 升级三选一 -> Boss/事件 -> 缩圈加时 -> 结算 -> 真实重开
 // 运行: pnpm exec forgeax project play scripts/playthrough.mjs --json
 
 async function moveToward(play, targetX, targetY, stopDist = 2.0) {
@@ -90,7 +90,6 @@ export default async function playthrough(play) {
 
   // 6. 验证向其他未屏蔽角色发邀请并成功组队 (team-invite & team-linked)
   await play.step('team-invite-and-linked', async () => {
-    // 移向另一位角色
     const s1 = await play.state('island.match');
     if (s1.nearestActor && !s1.partner) {
       await moveToward(play, s1.nearestActor.x, s1.nearestActor.y, 2.0);
@@ -99,12 +98,10 @@ export default async function playthrough(play) {
     await play.keyboard.press('KeyE');
     await play.screenshot('team-invite');
 
-    // 等待队友确认组队（或对方同时发起的邀请）
     await play.waitFor((s) => s.partner !== null, {
       read: 'island.match',
       timeoutMs: 5000,
     }).catch(async () => {
-      // 若尚未成队，再按一次 E 确认或接受收到的邀请
       await play.keyboard.press('KeyE');
       await play.waitFor((s) => s.partner !== null, {
         read: 'island.match',
@@ -119,13 +116,10 @@ export default async function playthrough(play) {
   await play.step('team-warning', async () => {
     const s = await play.state('island.match');
     if (s.partner) {
-      const curPartner = s.partner;
-      // 故意背向队友跑开，直到距离 >= 4.0
       for (let step = 0; step < 8; step++) {
         const cur = await play.state('island.match');
         if (!cur.partner) break;
         if (cur.partner.distance >= 4.0) break;
-        // 远离队友方向
         const key = cur.partner.distance < 4.0 ? 'KeyW' : 'KeyS';
         await play.keyboard.hold(key, (c) => !c.partner || c.partner.distance >= 4.0, {
           read: 'island.match',
@@ -140,7 +134,6 @@ export default async function playthrough(play) {
   await play.step('team-break-burst', async () => {
     const s = await play.state('island.match');
     if (s.partner) {
-      // 继续全速拉开距离超过 5.0m
       await play.keyboard.hold('KeyW', (cur) => cur.partner === null || cur.playerDisbands > 0, {
         read: 'island.match',
         timeoutMs: 4000,
@@ -158,7 +151,22 @@ export default async function playthrough(play) {
     await play.screenshot('team-loot-scramble');
   });
 
-  // 10. 缩圈阶段
+  // 10. 验证肉鸽经验升级与三选一卡片选择
+  await play.step('roguelike-upgrade', async () => {
+    // 若尚未触发升级，先击杀怪物获取经验
+    const s = await play.state('island.match');
+    if (s.pendingUpgrade) {
+      await play.screenshot('upgrade-choices');
+      // 按键盘 1 选卡
+      await play.keyboard.press('Digit1');
+      await play.waitFor((cur) => cur.pendingUpgrade === false, {
+        read: 'island.match',
+        timeoutMs: 3000,
+      }).catch(() => {});
+    }
+  });
+
+  // 11. 缩圈阶段
   await play.step('shrink', async () => {
     if (typeof play.advance === 'function') {
       await play.advance(110);
@@ -166,7 +174,7 @@ export default async function playthrough(play) {
     await play.screenshot('07-shrink');
   });
 
-  // 11. 终局混战与胜负结算
+  // 12. 终局混战与胜负结算
   await play.step('final-result', async () => {
     if (typeof play.advance === 'function') {
       await play.advance(160);
@@ -174,16 +182,13 @@ export default async function playthrough(play) {
     await play.screenshot('08-result');
   });
 
-  // 12. 验证点击“再来一局”按钮真实重开对局（问题 01 验收）
+  // 13. 验证点击“再来一局”按钮真实重开对局
   await play.step('restart-button', async () => {
-    // 真实点击 Shadow DOM 中的结算弹窗“再来一局”按钮
     const btn = play.page.locator('[data-ui-part="btn-restart"]');
     await btn.click({ timeout: 5000 }).catch(async () => {
-      // 容错：通过键盘 R 重开
       await play.keyboard.press('KeyR');
     });
 
-    // 权威断言：模拟状态真正重开（gameOver=false，对局时钟复位，玩家满血存活）
     await play.waitFor(
       (s) => s.gameOver === false && s.elapsed < 15 && s.player.alive === true && s.player.hp === 100,
       { read: 'island.match', timeoutMs: 8000 },

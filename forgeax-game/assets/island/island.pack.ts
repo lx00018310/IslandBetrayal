@@ -1,5 +1,6 @@
 // 《荒岛分赃》原生游戏 Plugin 与生命周期管理
 // 挂载原生场景、推进核心玩法模拟、更新呈现、注册只读投影
+// 包含连续挑战会话（累计有效时长 >= 900s 与局数管理）
 
 import { Time, Update } from '@forgeax/engine/ecs';
 import { INPUT_SNAPSHOT_RESOURCE_KEY, type InputSnapshot } from '@forgeax/engine/input';
@@ -33,11 +34,12 @@ export const ISLAND_CONTROL_CHANNEL = 'island/controls';
 
 export interface IslandTouchMessage {
   channel: typeof ISLAND_CONTROL_CHANNEL;
-  kind: 'move' | 'dash' | 'invite' | 'accept' | 'ignore' | 'speed' | 'restart' | 'reset';
+  kind: 'move' | 'dash' | 'invite' | 'accept' | 'ignore' | 'upgrade' | 'speed' | 'restart' | 'reset';
   x?: number;
   y?: number;
   targetId?: number;
   inviteId?: number;
+  choiceIndex?: number;
 }
 
 export const islandPlugin: Plugin = {
@@ -68,6 +70,11 @@ export const islandPlugin: Plugin = {
       const presentation = setupPresentation(world, root, sim);
       yield () => presentation.dispose();
 
+      // 连续挑战会话状态（累计有效操作时间与完成局数，局间重开保留，退出清空）
+      let sessionChallengeElapsed = 0;
+      let sessionRoundsCompleted = 1;
+      let roundFinishedLogged = false;
+
       // 前端控制输入意图
       let touchMoveX = 0;
       let touchMoveY = 0;
@@ -75,10 +82,11 @@ export const islandPlugin: Plugin = {
       let touchInviteTargetId: number | null = null;
       let touchAcceptInviteId: number | null = null;
       let touchIgnoreTargetId: number | null = null;
+      let touchUpgradeChoiceIndex: number | null = null;
       let touchSpeedToggle = false;
       let touchRestart = false;
 
-      // 监听来自前端 UI 的控制消息（Engine 源端使用 host.port，显式调用 start() 启动消息队列）
+      // 监听来自前端 UI 的控制消息
       const port = host?.port;
       if (port) {
         port.start?.();
@@ -101,6 +109,9 @@ export const islandPlugin: Plugin = {
               break;
             case 'ignore':
               if (typeof data.targetId === 'number') touchIgnoreTargetId = data.targetId;
+              break;
+            case 'upgrade':
+              if (typeof data.choiceIndex === 'number') touchUpgradeChoiceIndex = data.choiceIndex;
               break;
             case 'speed':
               touchSpeedToggle = true;
@@ -156,6 +167,8 @@ export const islandPlugin: Plugin = {
             phase: sim.finalPhase ? 'final' : sim.shrink > 0 ? 'shrink' : 'normal',
             shrink: Number(sim.shrink.toFixed(3)),
             landRadius: Number(landRadius(sim.shrink).toFixed(3)),
+            overtime: sim.overtime,
+            overtimeResolution: sim.overtimeResolution,
             gameOver: sim.gameOver,
             winnerId: sim.winner ? sim.winner.id : -1,
             winnerName: sim.winner ? sim.winner.name : null,
@@ -174,6 +187,12 @@ export const islandPlugin: Plugin = {
               kills: p.kills,
               dashCd: Number(p.dashCd.toFixed(2)),
               grounded: p.alive,
+              level: p.level,
+              xp: p.xp,
+              xpNext: p.xpNext,
+              weaponKnife: p.weaponKnife,
+              weaponArrow: p.weaponArrow,
+              weaponBomb: p.weaponBomb,
             },
             partner: partner
               ? {
@@ -224,6 +243,19 @@ export const islandPlugin: Plugin = {
                   maxHp: ownChest.maxHp,
                 }
               : null,
+            pendingUpgrade: sim.pendingUpgrade,
+            upgradeChoices: sim.upgradeChoices,
+            activeEvent: sim.activeEvent,
+            eventTimeLeft: Number(Math.max(0, sim.eventTimeLeft).toFixed(1)),
+            boss: sim.boss && sim.boss.alive
+              ? {
+                  id: sim.boss.id,
+                  hp: sim.boss.hp,
+                  maxHp: sim.boss.maxHp,
+                  x: Number(sim.boss.x.toFixed(2)),
+                  y: Number(sim.boss.y.toFixed(2)),
+                }
+              : null,
             chestsCount: sim.chests.filter((c) => c.hp > 0 || c.treasure > 0).length,
             monstersCount: sim.monsters.filter((m) => m.alive).length,
             lootsCount: sim.loots.filter((l) => l.value > 0).length,
@@ -231,6 +263,11 @@ export const islandPlugin: Plugin = {
             betrayals: sim.playerDisbands,
             chestBreaks: sim.chestBreaks,
             playerTreasure: sim.playerTreasure,
+            session: {
+              challengeElapsed: Number(sessionChallengeElapsed.toFixed(1)),
+              roundsCompleted: sessionRoundsCompleted,
+              isChallengeTargetReached: sessionChallengeElapsed >= 900,
+            },
             lastBreakEvent: sim.lastBreakEvent
               ? {
                   seq: sim.lastBreakEvent.seq,
@@ -261,6 +298,7 @@ export const islandPlugin: Plugin = {
             let inviteTargetId = touchInviteTargetId;
             let acceptInviteId = touchAcceptInviteId;
             let ignoreTargetId = touchIgnoreTargetId;
+            let upgradeChoiceIndex = touchUpgradeChoiceIndex;
             let speedToggle = touchSpeedToggle;
             let restart = touchRestart;
 
@@ -269,6 +307,7 @@ export const islandPlugin: Plugin = {
             touchInviteTargetId = null;
             touchAcceptInviteId = null;
             touchIgnoreTargetId = null;
+            touchUpgradeChoiceIndex = null;
             touchSpeedToggle = false;
             touchRestart = false;
 
@@ -291,7 +330,14 @@ export const islandPlugin: Plugin = {
 
               if (kb.justPressedCode('Space')) dash = true;
 
-              // E 键：有收到的邀请则接受；否则若有附近候选角色则发送邀请
+              // 升级选项快捷键
+              if (sim.pendingUpgrade) {
+                if (kb.justPressedCode('Digit1') || kb.justPressedCode('Numpad1')) upgradeChoiceIndex = 0;
+                else if (kb.justPressedCode('Digit2') || kb.justPressedCode('Numpad2')) upgradeChoiceIndex = 1;
+                else if (kb.justPressedCode('Digit3') || kb.justPressedCode('Numpad3')) upgradeChoiceIndex = 2;
+              }
+
+              // E 键组队/接受
               if (kb.justPressedCode('KeyE')) {
                 const incoming = sim.invites.find(
                   (i) => i.toId === sim.actors[0]!.id && sim.elapsed <= i.expiresAt,
@@ -306,7 +352,7 @@ export const islandPlugin: Plugin = {
                 }
               }
 
-              // X 键：忽略附近候选角色或发邀请者 60 秒
+              // X 键忽略
               if (kb.justPressedCode('KeyX')) {
                 const incoming = sim.invites.find(
                   (i) => i.toId === sim.actors[0]!.id && sim.elapsed <= i.expiresAt,
@@ -332,11 +378,25 @@ export const islandPlugin: Plugin = {
               inviteTargetId,
               acceptInviteId,
               ignoreTargetId,
+              upgradeChoiceIndex,
               speedToggle,
               restart,
             };
 
+            // 推进连续挑战累计有效时间（仅在活跃互动且未暂停、未加速且未结束时累计）
+            if (!sim.gameOver && !sim.upgradePaused && sim.speed === 1) {
+              sessionChallengeElapsed += dt;
+            }
+            if (sim.gameOver && !roundFinishedLogged) {
+              roundFinishedLogged = true;
+              sessionRoundsCompleted++;
+            }
+            if (!sim.gameOver && roundFinishedLogged) {
+              roundFinishedLogged = false;
+            }
+
             stepSimulation(sim, dt, inputIntent);
+
             if (inputIntent.restart) {
               presentation.reset(sim);
               touchMoveX = 0;
@@ -345,6 +405,7 @@ export const islandPlugin: Plugin = {
               touchInviteTargetId = null;
               touchAcceptInviteId = null;
               touchIgnoreTargetId = null;
+              touchUpgradeChoiceIndex = null;
             } else {
               presentation.update(sim, dt);
             }
@@ -360,7 +421,6 @@ export const islandPlugin: Plugin = {
               const outgoing = sim.invites.find((i) => i.fromId === p.id && sim.elapsed <= i.expiresAt);
               const ownChest = p.team >= 0 ? chestOf(sim, p.team) : null;
 
-              // 场上队伍列表
               const activeTeams: Array<{ aName: string; bName: string; treasure: number }> = [];
               for (const a of sim.actors) {
                 if (a.alive && a.team >= 0 && a.id < a.team) {
@@ -397,6 +457,20 @@ export const islandPlugin: Plugin = {
                 partnerName: partner?.name ?? null,
                 partnerDistance: partnerDist !== null ? Number(partnerDist.toFixed(1)) : null,
                 isWarning: (partnerDist ?? 0) >= TEAM_WARNING_DISTANCE,
+                playerLevel: p.level,
+                playerXp: p.xp,
+                playerXpNext: p.xpNext,
+                pendingUpgrade: sim.pendingUpgrade,
+                upgradeChoices: sim.upgradeChoices,
+                boss: sim.boss && sim.boss.alive
+                  ? {
+                      alive: true,
+                      hp: sim.boss.hp,
+                      maxHp: sim.boss.maxHp,
+                    }
+                  : null,
+                challengeElapsed: Number(sessionChallengeElapsed.toFixed(1)),
+                roundsCompleted: sessionRoundsCompleted,
                 ownChest: ownChest
                   ? {
                       treasure: ownChest.treasure,
