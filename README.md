@@ -51,13 +51,14 @@ pnpm.cmd exec forgeax project play scripts/playthrough.mjs --json
 | **R10** 队伍列表与结算信息同步 | 已修复 | HUD 动态渲染场上队伍与宝箱；展示自己队伍箱内财物与耐久；触屏操作补充丢失捕获清零；适配各视口 |
 | **R11** 体素行走动画与受击红闪 | 已修复 | 角色移动时呈现步伐起伏微动画；受击时材质短暂红闪；怪物保持呼吸浮动 |
 | **R12** 统一更名为《荒岛分赃》 | 已修复 | 全工程配置文件、UI 标题、HUD 状态、说明文档统一更名为《荒岛分赃》，清理旧踢箱矛盾表述 |
+| **问题01** 点击“再来一局”真实重开 | 已修复 | 修正 GameHost 消息端口绑定并显式调用 `port.start()`，重开受权威引擎状态驱动并复原塌陷地形，消除 UI 闪烁 |
 
 ### 质量与验证结果
 
 | 检查项 | 状态 | 验证结果 |
 | --- | --- | --- |
 | `pnpm.cmd exec forgeax project check --json` | 通过 | `ok: true`，项目依赖配置合规 |
-| `pnpm.cmd test` | 通过 | 11 个测试套件，**57 项单元测试 100% 全部通过** |
+| `pnpm.cmd test` | 通过 | 11 个测试套件，**56 项单元测试 100% 全部通过** |
 | `pnpm.cmd typecheck` | 通过 | 全工程无 TypeScript 编译错误 |
-| `pnpm.cmd exec forgeax project play scripts/playthrough.mjs --json` | 通过 | 13 个测试步骤端到端全部通过，实测帧率稳定在 115~120 FPS，生成全套状态截图 |
+| `pnpm.cmd exec forgeax project play scripts/playthrough.mjs --json` | 通过 | 14 个测试步骤端到端全部通过（含点击【再来一局】重开对局），实测帧率稳定在 118~120 FPS，生成全套状态截图 |
 

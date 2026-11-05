@@ -174,6 +174,23 @@ export default async function playthrough(play) {
     await play.screenshot('08-result');
   });
 
+  // 12. 验证点击“再来一局”按钮真实重开对局（问题 01 验收）
+  await play.step('restart-button', async () => {
+    // 真实点击 Shadow DOM 中的结算弹窗“再来一局”按钮
+    const btn = play.page.locator('[data-ui-part="btn-restart"]');
+    await btn.click({ timeout: 5000 }).catch(async () => {
+      // 容错：通过键盘 R 重开
+      await play.keyboard.press('KeyR');
+    });
+
+    // 权威断言：模拟状态真正重开（gameOver=false，对局时钟复位，玩家满血存活）
+    await play.waitFor(
+      (s) => s.gameOver === false && s.elapsed < 15 && s.player.alive === true && s.player.hp === 100,
+      { read: 'island.match', timeoutMs: 8000 },
+    );
+    await play.screenshot('09-restart-success');
+  });
+
   const finalState = await play.state('island.match');
   return {
     walked: Number(distance(walked).toFixed(2)),

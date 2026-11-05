@@ -45,6 +45,9 @@ export async function createGuideUi(
   try {
     const shadow = ui.host.shadowRoot;
     const port = host.presentationPort ?? host.port;
+    if (port) {
+      port.start?.();
+    }
 
     // 兼顾原有契约测试的控制器桩
     const playerControls = port && shadow ? installPlayerControls(shadow, port) : undefined;
@@ -221,14 +224,6 @@ export async function createGuideUi(
       if (btnSpeed) {
         btnSpeed.addEventListener('click', () => sendTouch({ kind: 'speed' }));
       }
-      const btnRestart = shadow.querySelector<HTMLElement>('[data-ui-part="btn-restart"]');
-      if (btnRestart) {
-        btnRestart.addEventListener('click', () => {
-          sendTouch({ kind: 'restart' });
-          const modal = shadow.querySelector<HTMLElement>('[data-ui-part="result-modal"]');
-          if (modal) modal.classList.add('hidden');
-        });
-      }
     }
 
     // 接收来自引擎的 HUD 状态更新
@@ -249,7 +244,17 @@ export async function createGuideUi(
       '[data-ui-part="btn-choice-ignore"]',
     );
     const resultModal = shadow?.querySelector<HTMLElement>('[data-ui-part="result-modal"]');
+    const btnRestart = shadow?.querySelector<HTMLButtonElement>('[data-ui-part="btn-restart"]');
     const resultTitle = shadow?.querySelector<HTMLElement>('[data-ui-part="result-title"]');
+
+    if (btnRestart) {
+      btnRestart.addEventListener('click', () => {
+        btnRestart.setAttribute('disabled', '');
+        sendTouch({ kind: 'restart' });
+        // 注意：不在此立即强制写 hidden 掩盖状态（避免旧状态闪烁），
+        // 而是由引擎处理 restart 后发出的 gameOver=false 权威 HUD 消息自然关闭弹窗
+      });
+    }
     const resultSub = shadow?.querySelector<HTMLElement>('[data-ui-part="result-subtitle"]');
     const statTreasure = shadow?.querySelector<HTMLElement>('[data-ui-part="stat-treasure"]');
     const statBreaks = shadow?.querySelector<HTMLElement>('[data-ui-part="stat-breaks"]');
@@ -264,9 +269,14 @@ export async function createGuideUi(
         const state = event.data as Record<string, unknown> | undefined;
         if (!state || state.channel !== 'island/hud-state') return;
 
-        // 若重开已重置，隐藏结算弹窗（R03）
-        if (!state.gameOver && resultModal && !resultModal.classList.contains('hidden')) {
-          resultModal.classList.add('hidden');
+        // 若重开已重置，隐藏结算弹窗并恢复再来一局按钮状态（R03 & 问题01）
+        if (!state.gameOver) {
+          if (resultModal && !resultModal.classList.contains('hidden')) {
+            resultModal.classList.add('hidden');
+          }
+          if (btnRestart) {
+            btnRestart.removeAttribute('disabled');
+          }
         }
 
         const elapsed = typeof state.elapsed === 'number' ? state.elapsed : 0;

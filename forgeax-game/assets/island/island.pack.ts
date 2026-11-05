@@ -78,9 +78,10 @@ export const islandPlugin: Plugin = {
       let touchSpeedToggle = false;
       let touchRestart = false;
 
-      // 监听来自前端 UI 的消息
-      const port = host?.presentationPort ?? host?.port;
+      // 监听来自前端 UI 的控制消息（Engine 源端使用 host.port，显式调用 start() 启动消息队列）
+      const port = host?.port;
       if (port) {
+        port.start?.();
         const onMessage = (event: MessageEvent) => {
           const data = event.data as IslandTouchMessage | undefined;
           if (!data || data.channel !== ISLAND_CONTROL_CHANNEL) return;
@@ -336,7 +337,17 @@ export const islandPlugin: Plugin = {
             };
 
             stepSimulation(sim, dt, inputIntent);
-            presentation.update(sim, dt);
+            if (inputIntent.restart) {
+              presentation.reset(sim);
+              touchMoveX = 0;
+              touchMoveY = 0;
+              touchDash = false;
+              touchInviteTargetId = null;
+              touchAcceptInviteId = null;
+              touchIgnoreTargetId = null;
+            } else {
+              presentation.update(sim, dt);
+            }
 
             // 每 4 帧向前端 UI 推送一次轻量 HUD 状态
             hudSyncCounter++;

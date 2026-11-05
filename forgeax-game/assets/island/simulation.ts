@@ -305,7 +305,7 @@ export function createInitialSimulation(): SimulationState {
   const personalities: AiPersonality[] = ['honest', 'greedy', 'raider'];
   for (let i = 0; i < 10; i++) {
     const a = 0.42 + (i / 10) * Math.PI * 2;
-    const rad = 3.2 + (i % 3) * 1.4;
+    const rad = 6.0 + (i % 3) * 1.2;
     actors.push({
       id: i,
       name: PLAYER_NAMES[i] ?? `角色${i}`,
@@ -862,7 +862,7 @@ export function stepSimulation(
   if (input.speedToggle) {
     sim.speed = sim.speed === 1 ? 4 : 1;
   }
-  if (sim.gameOver && input.restart) {
+  if (input.restart) {
     restartSimulation(sim);
     return;
   }

@@ -229,7 +229,7 @@ export default definePack({
     // 10 名体素角色（阴影 + 根节点 + 躯干 + 双臂 + 腰带 + 头部 + 头发 + 眼睛 + 腿部 + 鞋子）
     for (let i = 0; i < 10; i++) {
       const a = 0.42 + (i / 10) * Math.PI * 2;
-      const rad = 3.2 + (i % 3) * 1.4;
+      const rad = 6.0 + (i % 3) * 1.2;
       const initX = center + Math.cos(a) * rad;
       const initZ = center + Math.sin(a) * rad;
 

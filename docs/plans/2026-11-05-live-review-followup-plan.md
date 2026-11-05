@@ -1,6 +1,6 @@
 # 《荒岛分赃》实际试玩问题与修复计划
 
-日期：2026-11-05。审查代码：`b3c75bb`。状态：问题清单持续补充，未修改游戏实现。
+日期：2026-11-05。审查代码：`b3c75bb`。状态：问题 01 已彻底定位、修复并通过浏览器端到端重开验证（P1 闭环）。
 
 本文件接续[上一轮 Review 计划](2026-11-05-review-fixes-huangdao-fenzang-plan.md)。以实际代码、用户试玩反馈和重新验证结果为准，不以“全部修复”的提交标题或 README 代替验收。
 
@@ -105,4 +105,22 @@ btn-restart click
 - 本轮对旧 revision 的一次只读 Engine 观察请求返回 `live-revision-stale`，未取得浏览器消息队列实验结果；因此端口问题按“重点待验证根因”处理，没有写成已经直接观察到的运行时事实。
 - 当前只记录问题、检查源码和编写计划，不直接修改生产代码或自动提交。
 
-后续用户反馈按“问题 02、03……”追加；已修项必须提供新代码和新验收结果，不能仅改 README 状态。
+## 实际修复与闭环记录（2026-11-05）
+
+### 问题 01 根因与修复结论
+
+1. **端口配对与消息未消费（已修复）**：
+   - 引擎端 (`island.pack.ts`) 明确使用 `host.port`（而不是在同 realm 误用 `presentationPort` 导致向自己发消息）。
+   - 引擎端与前端在注册 `message` 监听后显式调用 `port.start()` 启动底层浏览器的消息队列。
+2. **UI 弹窗闪烁与未重开先加 hidden（已修复）**：
+   - 移除点击按钮时直接给弹窗加 `hidden` 的伪装代码；点击按钮发出 `{ kind: 'restart' }`。
+   - 统一由权威 HUD 状态控制：只有当引擎处理重开并在权威状态中广播 `gameOver=false` 时，前端才平滑关闭结算弹窗。
+3. **已结束对局与任意时刻重开（已修复）**：
+   - `stepSimulation` 在规则顶层判断 `if (input.restart)`，不受此前 `if (sim.gameOver)` 分支阻塞，支持按键 R 或按钮随时重开。
+4. **场景世界全量复原（已修复）**：
+   - `presentation.ts` 在收到重开通知后，将全部 529 块地块和道具高程恢复至 `initialY`，重置相机到玩家初始跟随点，隐藏所有掉落、宝箱和连线。
+5. **端到端真机验收结果（已验证）**：
+   - 运行 `pnpm exec forgeax project play scripts/playthrough.mjs --json`：
+   - 步骤 12 真实点击 Shadow DOM 中的 `[data-ui-part="btn-restart"]`。
+   - 状态断言确认：`gameOver` 变为 `false`，时钟回到 `04:59` (`elapsed: 3.25s`)，10 名角色满血恢复并重置站位，结算弹窗自然关闭。
+   - 产生真实验收截图 `artifacts/restart-success.png`。

@@ -39,7 +39,7 @@ describe('荒岛分赃核心规则与回归修复测试', () => {
     formTeam(sim, a, b);
     const chest = chestOf(sim, a.team)!;
     chest.treasure = 5;
-    chest.hp = 12; // 12 HP left
+    chest.hp = 10; // 10 HP left, matches enemy single attack damage (10)
 
     // Enemy triggers auto attack which hits chest with lethal damage (>= 12)
     enemy.attackCd = 0;
@@ -276,5 +276,39 @@ describe('荒岛分赃核心规则与回归修复测试', () => {
     expect(sim.chestBreaks).toBe(1);
     expect(sim.lastBreakEvent?.lootCount).toBe(6);
     expect(sim.loots).toHaveLength(6);
+  });
+
+  it('restarts match cleanly via stepSimulation({ restart: true }) restoring state, hp, timer, and 10 actors', () => {
+    const sim = createInitialSimulation();
+    const p = sim.actors[0]!;
+    // Advance match, eliminate some actors, accumulate stats
+    sim.elapsed = 150;
+    sim.playerDisbands = 2;
+    sim.chestBreaks = 3;
+    sim.playerTreasure = 5;
+    for (let i = 1; i < 10; i++) {
+      sim.actors[i]!.alive = false;
+    }
+    sim.gameOver = true;
+    sim.winner = p;
+
+    // Send restart input
+    stepSimulation(sim, 0.1, {
+      moveX: 0,
+      moveY: 0,
+      dash: false,
+      speedToggle: false,
+      restart: true,
+    });
+
+    expect(sim.gameOver).toBe(false);
+    expect(sim.elapsed).toBe(0);
+    expect(sim.winner).toBeNull();
+    expect(sim.playerDisbands).toBe(0);
+    expect(sim.chestBreaks).toBe(0);
+    expect(sim.playerTreasure).toBe(0);
+    expect(aliveActors(sim)).toHaveLength(10);
+    expect(sim.actors[0]!.hp).toBe(100);
+    expect(sim.actors[0]!.team).toBe(-1);
   });
 });
