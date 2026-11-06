@@ -3,6 +3,19 @@
 // 规则：靠近选择 -> 双方同意组队 -> 连线与共享宝箱 -> 拉开距离断线 -> 中点爆箱 -> 争抢
 // P0/P1 肉鸽割草拓展：怪潮波次、经验升级三选一、三类武器（飞刀/箭矢/炸弹）、Boss战、特殊事件、终局加时决胜
 
+import {
+  calculateEffectiveAttackSpeed,
+  calculateEffectiveCrit,
+  calculateEffectiveDamage,
+  calculateEffectiveMaxHp,
+  calculateEffectiveMoveSpeed,
+  computeEffectiveMultipliers,
+  resolveHitDamage,
+  type CarryRelic,
+  type EffectiveMultipliers,
+  type WorldMultipliers,
+} from './stats.ts';
+
 export interface Vec2 {
   x: number;
   y: number;
@@ -216,13 +229,14 @@ export interface BombState {
 export interface PlayerInputIntent {
   moveX: number;
   moveY: number;
-  dash: boolean;
+  teamAction?: boolean;
+  dash?: boolean;
   inviteTargetId?: number | null;
   acceptInviteId?: number | null;
   ignoreTargetId?: number | null;
   upgradeChoiceIndex?: number | null;
-  speedToggle: boolean;
-  restart: boolean;
+  speedToggle?: boolean;
+  restart?: boolean;
 }
 
 export interface SimulationState {
@@ -250,6 +264,12 @@ export interface SimulationState {
   overtime: boolean;
   overtimeResolution: string | null;
   nextEntityId: number;
+
+  // 统一数值与世界修正
+  worldMultipliers: WorldMultipliers;
+  effectiveMultipliers: EffectiveMultipliers;
+  knifeHits: Map<string, number>;
+  rng?: () => number;
 
   // 肉鸽扩展状态
   pendingUpgrade: boolean;
@@ -328,9 +348,24 @@ export function ignorePair(sim: SimulationState, a: number, b: number): boolean 
   return true;
 }
 
-export function createInitialSimulation(): SimulationState {
+export function createInitialSimulation(options?: {
+  worldMultipliers?: WorldMultipliers;
+  carryRelics?: Map<number, CarryRelic>;
+  rng?: () => number;
+}): SimulationState {
   const center = (GRID_SIZE - 1) / 2;
   const tiles: TileState[] = [];
+
+  const worldMultipliers: WorldMultipliers = options?.worldMultipliers ?? {
+    maxHp: 1.0,
+    damage: 1.0,
+    moveSpeed: 1.0,
+    attackSpeed: 1.0,
+    critChance: 1.0,
+  };
+  const effectiveMultipliers = computeEffectiveMultipliers(worldMultipliers);
+  const knifeHits = new Map<string, number>();
+  const initialMaxHp = calculateEffectiveMaxHp(100, 0, 0, effectiveMultipliers.maxHp);
 
   for (let gy = 0; gy < GRID_SIZE; gy++) {
     for (let gx = 0; gx < GRID_SIZE; gx++) {
@@ -393,8 +428,8 @@ export function createInitialSimulation(): SimulationState {
       y: center + Math.sin(a) * rad,
       vx: 0,
       vy: 0,
-      hp: 100,
-      maxHp: 100,
+      hp: initialMaxHp,
+      maxHp: initialMaxHp,
       alive: true,
       team: -1,
       treasure: 0,
@@ -426,6 +461,19 @@ export function createInitialSimulation(): SimulationState {
     });
   }
 
+  // 若携带宝物跨局，继承该件宝物等级（其他武器与财富全部清零）
+  if (options?.carryRelics) {
+    for (const actor of actors) {
+      const relic = options.carryRelics.get(actor.id);
+      if (relic) {
+        const lvl = Math.min(3, Math.max(1, relic.level));
+        if (relic.kind === 'knife') actor.weaponKnife = lvl;
+        else if (relic.kind === 'arrow') actor.weaponArrow = lvl;
+        else if (relic.kind === 'bomb') actor.weaponBomb = lvl;
+      }
+    }
+  }
+
   // 初始生成 12 只基础怪物，随波次逐步扩容至 40 只
   const monsters: MonsterState[] = [];
   for (let i = 0; i < 40; i++) {
@@ -434,7 +482,7 @@ export function createInitialSimulation(): SimulationState {
     const kind: MonsterKind = i % 5 === 0 ? 'tank' : i % 3 === 0 ? 'dasher' : 'chaser';
     const hp = kind === 'tank' ? 8 : kind === 'dasher' ? 4 : 3;
     const speed = kind === 'tank' ? 0.9 : kind === 'dasher' ? 2.2 : 1.7;
-    const damage = kind === 'tank' ? 10 : kind === 'dasher' ? 8 : 5;
+    const damage = kind === 'tank' ? 4 : kind === 'dasher' ? 1 : 2;
 
     monsters.push({
       id: i,
@@ -478,6 +526,11 @@ export function createInitialSimulation(): SimulationState {
     overtime: false,
     overtimeResolution: null,
     nextEntityId: 100,
+
+    worldMultipliers,
+    effectiveMultipliers,
+    knifeHits,
+    rng: options?.rng,
 
     pendingUpgrade: false,
     upgradePaused: false,
@@ -902,6 +955,7 @@ export function giveActorXp(sim: SimulationState, actor: ActorState, amount: num
     actor.xp -= actor.xpNext;
     actor.level++;
     actor.xpNext = 3 + actor.level * 2;
+    actor.hp = Math.min(actor.maxHp, actor.hp + 25);
     pulse(sim, `升级！LV.${actor.level}`, actor.x, actor.y, '#65d5b0');
 
     if (actor.isPlayer) {
@@ -918,24 +972,75 @@ export function giveActorXp(sim: SimulationState, actor: ActorState, amount: num
   }
 }
 
-/** 计算攻击伤害：包含个人财物增益与结盟/宝箱财富加成（R09） */
+/** 计算攻击伤害：包含个人财物增益与结盟/宝箱财富加成，并通过 stats.ts 纯函数计算有效伤害（R07） */
 export function calculateAttackDamage(sim: SimulationState, attacker: ActorState): number {
-  let damage = 10;
-  damage += Math.min(10, attacker.treasure * 0.5);
+  let baseDamage = 10;
+  baseDamage += Math.min(10, attacker.treasure * 0.5);
 
   if (attacker.team >= 0) {
-    damage += 3;
+    baseDamage += 3;
     const chest = chestOf(sim, attacker.team);
     if (chest && (chest.hp > 0 || chest.treasure > 0)) {
-      damage += Math.min(5, chest.treasure * 0.5);
+      baseDamage += Math.min(5, chest.treasure * 0.5);
     }
   }
 
-  damage *= 1 + attacker.statDamageBonus;
-  return Math.round(damage);
+  return calculateEffectiveDamage(
+    baseDamage,
+    attacker.statDamageBonus,
+    sim.effectiveMultipliers.damage,
+  );
+}
+
+/** 统一敌对命中入口（R02）：基础普攻/飞刀/箭矢/炸弹统一入口，队友免伤，敌队宝箱先承伤，外部破箱不散队 */
+export function resolveHostileHit(
+  sim: SimulationState,
+  target: ActorState,
+  baseDamage: number,
+  attacker: ActorState | null,
+): void {
+  if (!target.alive) return;
+  // 队友免伤（R02）
+  if (attacker && attacker.team >= 0 && attacker.team === target.id) {
+    return;
+  }
+
+  // 暴击判定（R07）
+  const crit = calculateEffectiveCrit(sim.effectiveMultipliers.critChance);
+  const hit = resolveHitDamage(
+    baseDamage,
+    crit.critChance,
+    crit.critMultiplier,
+    sim.rng ?? Math.random,
+  );
+  if (hit.isCrit) {
+    pulse(sim, '⚡暴击!', target.x, target.y - 0.5, '#ff4757');
+  }
+
+  // 敌队宝箱先承伤（R02）
+  if (target.team >= 0) {
+    const c = chestOf(sim, target.team);
+    if (c && (c.hp > 0 || c.treasure > 0)) {
+      c.hp -= hit.damage;
+      c.hitFlash = 0.2;
+      burst(sim, c.x, c.y, '#ffb45c', 5);
+      if (c.hp <= 0) {
+        destroyChest(sim, c, c.x, c.y);
+        pulse(sim, '宝箱被打爆！队伍关系仍保留', c.x, c.y, '#ff8a6a');
+      }
+      return;
+    }
+  }
+
+  // 敌对角色直接承伤
+  damageActor(sim, target, hit.damage, attacker);
 }
 
 export function damageActor(sim: SimulationState, target: ActorState, amount: number, from: ActorState | null): void {
+  // 开局 12 秒内为玩家出生加载保护期，免受加载期无操作意外暴毙
+  if (target.isPlayer && sim.elapsed < 12.0) {
+    return;
+  }
   target.hp -= amount;
   target.hitFlash = 0.2;
   burst(sim, target.x, target.y, '#ff8a8a', 4);
@@ -1032,29 +1137,34 @@ export function stepWeapons(sim: SimulationState, dt: number): void {
         const ky = a.y + Math.sin(ang) * radius;
         const knifePos = { x: kx, y: ky };
 
-        // 碰触怪物
+        // 碰触怪物（带 0.4s 命中冷却 R01）
         for (const m of sim.monsters) {
           if (m.alive && dist(knifePos, m) < 0.9) {
-            damageMonster(sim, m, knifeDmg, a);
+            const mKey = `${a.id}:m:${m.id}`;
+            const nextHit = sim.knifeHits.get(mKey) ?? 0;
+            if (sim.elapsed >= nextHit) {
+              sim.knifeHits.set(mKey, sim.elapsed + 0.4);
+              const crit = calculateEffectiveCrit(sim.effectiveMultipliers.critChance);
+              const hit = resolveHitDamage(
+                knifeDmg,
+                crit.critChance,
+                crit.critMultiplier,
+                sim.rng ?? Math.random,
+              );
+              damageMonster(sim, m, hit.damage, a);
+            }
           }
         }
 
-        // 碰触敌方角色与宝箱（遵守队友免伤）
+        // 碰触敌方角色与宝箱（遵守队友免伤与敌队宝箱先承伤统一入口 R01 & R02）
         for (const o of aliveActors(sim)) {
-          if (o === a || a.team === o.id) continue;
+          if (o === a || (a.team >= 0 && a.team === o.id)) continue;
           if (dist(knifePos, o) < 0.9) {
-            if (o.team >= 0) {
-              const c = chestOf(sim, o.team);
-              if (c && (c.hp > 0 || c.treasure > 0)) {
-                c.hp -= knifeDmg;
-                if (c.hp <= 0) {
-                  destroyChest(sim, c, c.x, c.y);
-                }
-              } else {
-                damageActor(sim, o, knifeDmg, a);
-              }
-            } else {
-              damageActor(sim, o, knifeDmg, a);
+            const aKey = `${a.id}:a:${o.id}`;
+            const nextHit = sim.knifeHits.get(aKey) ?? 0;
+            if (sim.elapsed >= nextHit) {
+              sim.knifeHits.set(aKey, sim.elapsed + 0.4);
+              resolveHostileHit(sim, o, knifeDmg, a);
             }
           }
         }
@@ -1065,7 +1175,11 @@ export function stepWeapons(sim: SimulationState, dt: number): void {
     if (a.weaponArrow > 0) {
       a.arrowTimer -= dt;
       if (a.arrowTimer <= 0) {
-        a.arrowTimer = (1.6 - a.weaponArrow * 0.25) / (1 + a.statAttackSpeedBonus);
+        const effAtkSpd = calculateEffectiveAttackSpeed(
+          a.statAttackSpeedBonus,
+          sim.effectiveMultipliers.attackSpeed,
+        );
+        a.arrowTimer = Math.max(0.3, (1.6 - a.weaponArrow * 0.25) / effAtkSpd);
 
         // 寻找最近敌对目标
         let targetPos: Vec2 | null = null;
@@ -1107,7 +1221,11 @@ export function stepWeapons(sim: SimulationState, dt: number): void {
     if (a.weaponBomb > 0) {
       a.bombTimer -= dt;
       if (a.bombTimer <= 0) {
-        a.bombTimer = (2.8 - a.weaponBomb * 0.35) / (1 + a.statAttackSpeedBonus);
+        const effAtkSpd = calculateEffectiveAttackSpeed(
+          a.statAttackSpeedBonus,
+          sim.effectiveMultipliers.attackSpeed,
+        );
+        a.bombTimer = Math.max(0.5, (2.8 - a.weaponBomb * 0.35) / effAtkSpd);
         const radius = (1.8 + a.weaponBomb * 0.45) * (1 + a.statAreaBonus);
         const bombDmg = Math.round(calculateAttackDamage(sim, a) * 1.3);
 
@@ -1142,17 +1260,29 @@ export function stepWeapons(sim: SimulationState, dt: number): void {
         if (m.alive && !arr.hitMonsterIds.includes(m.id) && dist(arr, m) < 0.75) {
           arr.hitMonsterIds.push(m.id);
           arr.pierceLeft--;
-          damageMonster(sim, m, arrDmg, owner);
+          const crit = calculateEffectiveCrit(sim.effectiveMultipliers.critChance);
+          const hit = resolveHitDamage(
+            arrDmg,
+            crit.critChance,
+            crit.critMultiplier,
+            sim.rng ?? Math.random,
+          );
+          damageMonster(sim, m, hit.damage, owner);
           if (arr.pierceLeft <= 0) break;
         }
       }
-      // 命中敌方角色
+      // 命中敌方角色（统一入口 R02）
       if (arr.pierceLeft > 0) {
         for (const o of aliveActors(sim)) {
-          if (o.id !== arr.ownerId && owner.team !== o.id && !arr.hitActorIds.includes(o.id) && dist(arr, o) < 0.75) {
+          if (
+            o.id !== arr.ownerId &&
+            !(owner.team >= 0 && owner.team === o.id) &&
+            !arr.hitActorIds.includes(o.id) &&
+            dist(arr, o) < 0.75
+          ) {
             arr.hitActorIds.push(o.id);
             arr.pierceLeft--;
-            damageActor(sim, o, arrDmg, owner);
+            resolveHostileHit(sim, o, arrDmg, owner);
             if (arr.pierceLeft <= 0) break;
           }
         }
@@ -1179,25 +1309,20 @@ export function stepWeapons(sim: SimulationState, dt: number): void {
           // 对半径内怪物造成 AOE 伤害
           for (const m of sim.monsters) {
             if (m.alive && dist(b, m) <= b.radius) {
-              damageMonster(sim, m, b.damage, owner);
+              const crit = calculateEffectiveCrit(sim.effectiveMultipliers.critChance);
+              const hit = resolveHitDamage(
+                b.damage,
+                crit.critChance,
+                crit.critMultiplier,
+                sim.rng ?? Math.random,
+              );
+              damageMonster(sim, m, hit.damage, owner);
             }
           }
-          // 对半径内敌方角色与宝箱造成伤害
+          // 对半径内敌方角色与宝箱造成伤害（统一入口 R02）
           for (const o of aliveActors(sim)) {
-            if (o.id !== b.ownerId && owner.team !== o.id && dist(b, o) <= b.radius) {
-              if (o.team >= 0) {
-                const chest = chestOf(sim, o.team);
-                if (chest && (chest.hp > 0 || chest.treasure > 0)) {
-                  chest.hp -= b.damage;
-                  if (chest.hp <= 0) {
-                    destroyChest(sim, chest, chest.x, chest.y);
-                  }
-                } else {
-                  damageActor(sim, o, b.damage, owner);
-                }
-              } else {
-                damageActor(sim, o, b.damage, owner);
-              }
+            if (o.id !== b.ownerId && !(owner.team >= 0 && owner.team === o.id) && dist(b, o) <= b.radius) {
+              resolveHostileHit(sim, o, b.damage, owner);
             }
           }
         }
@@ -1233,13 +1358,17 @@ export function decideAI(sim: SimulationState, a: ActorState): void {
     }
   }
 
-  // 2. 抢自由宝物（合作状态受距离约束）
+  // 2. 抢自由宝物（合作状态受距离约束，且不追逐落入水域边缘的宝物）
   let bestLoot: LootState | null = null;
   let bl = 7;
   const partner = partnerOf(sim, a);
+  const currentRadius = landRadius(sim.shrink);
 
   for (const l of sim.loots) {
     if (!l.value || l.z > 2) continue;
+    const lt = tileAt(sim, Math.round(l.x), Math.round(l.y));
+    if (!lt || !lt.isLand || lt.gone || lt.r > currentRadius - 0.05) continue;
+
     const d = dist(a, l);
     if (d < bl) {
       if (partner && !a.runningAwayFromPartner && dist(partner, l) > 3.6) {
@@ -1331,8 +1460,15 @@ export function decideAI(sim: SimulationState, a: ActorState): void {
   };
 }
 
-export function restartSimulation(sim: SimulationState): void {
-  const initial = createInitialSimulation();
+export function restartSimulation(
+  sim: SimulationState,
+  options?: {
+    worldMultipliers?: WorldMultipliers;
+    carryRelics?: Map<number, CarryRelic>;
+    rng?: () => number;
+  },
+): void {
+  const initial = createInitialSimulation(options);
   Object.assign(sim, initial);
 }
 
@@ -1501,7 +1637,22 @@ export function stepSimulation(
     }
   }
 
-  // 1. 处理玩家目标邀请与忽略输入
+  // 1. 处理玩家队伍交互（唯一战斗按键 Space / 组队按钮触发 teamAction，R03）
+  if (input.teamAction) {
+    const incoming = sim.invites.find(
+      (i) => i.toId === player.id && sim.elapsed <= i.expiresAt,
+    );
+    if (incoming) {
+      acceptInvite(sim, incoming.id, player.id);
+    } else if (player.team < 0) {
+      const candidate = getNearbyCandidate(sim, player);
+      if (candidate && candidate.canInvite) {
+        sendInvite(sim, player.id, candidate.id);
+      }
+    }
+  }
+
+  // 处理玩家目标邀请与忽略输入（保留兼容代码）
   if (input.ignoreTargetId !== undefined && input.ignoreTargetId !== null) {
     ignorePair(sim, player.id, input.ignoreTargetId);
   }
@@ -1570,8 +1721,24 @@ export function stepSimulation(
         a.facing = Math.atan2(a.vy, a.vx);
       }
     }
-    const slow = a.slow > 0 ? 0.55 : 1;
-    const sp = 3.1 * (1 + a.statSpeedBonus) * slow * dt;
+    const isSlowed = a.slow > 0;
+    const sp =
+      calculateEffectiveMoveSpeed(
+        3.1,
+        a.statSpeedBonus,
+        sim.effectiveMultipliers.moveSpeed,
+        isSlowed,
+      ) * dt;
+    const nx = a.x + a.vx * sp;
+    const ny = a.y + a.vy * sp;
+    if (!a.isPlayer && !sim.finalPhase && sim.shrink <= 0.2) {
+      const nt = tileAt(sim, Math.round(nx), Math.round(ny));
+      if (!nt || !nt.isLand || nt.gone || nt.r > currentRadius - 0.04) {
+        a.aim = { x: center, y: center };
+        a.vx = ((center - a.x) / (Math.hypot(center - a.x, center - a.y) || 1)) * 0.5;
+        a.vy = ((center - a.y) / (Math.hypot(center - a.x, center - a.y) || 1)) * 0.5;
+      }
+    }
     a.x = clamp(a.x + a.vx * sp, 0.5, GRID_SIZE - 1.5);
     a.y = clamp(a.y + a.vy * sp, 0.5, GRID_SIZE - 1.5);
     a.slow = Math.max(0, a.slow - dt);
@@ -1617,8 +1784,8 @@ export function stepSimulation(
       m.x += (dx / dlen) * msp;
       m.y += (dy / dlen) * msp;
 
-      // 触碰攻击角色
-      if (minD < 0.85 && m.attackCd <= 0) {
+      // 触碰攻击角色（带 0.2s 受击硬直无敌防瞬间多怪秒杀）
+      if (minD < 0.85 && m.attackCd <= 0 && closestActor.hitFlash <= 0) {
         m.attackCd = 1.0;
         damageActor(sim, closestActor, m.damage, null);
       }
@@ -1683,40 +1850,43 @@ export function stepSimulation(
       }
     }
 
-    for (const o of aliveActors(sim)) {
-      if (o === a || a.team === o.id) continue;
-      const d = dist(a, o);
-      if (d < td) {
-        td = d;
-        targetActor = o;
-        targetMonster = null;
+    // 优先击杀怪物积攒宝物；附近无怪时，攻击敌对队伍宝箱（外部掠夺）或在掠夺阶段（elapsed >= 60s / finalPhase）攻击单人
+    if (!targetMonster) {
+      for (const o of aliveActors(sim)) {
+        if (o === a || (a.team >= 0 && a.team === o.id)) continue;
+        // 开局结盟期（< 60s）单人与单人之间不互打普攻，保留结盟合伙空间
+        if (a.team < 0 && o.team < 0 && sim.elapsed < 60 && !sim.finalPhase) continue;
+        const d = dist(a, o);
+        if (d < td) {
+          td = d;
+          targetActor = o;
+        }
       }
     }
 
     if (targetMonster) {
-      a.attackCd = Math.max(0.45, (0.7 - a.treasure * 0.008) / (1 + a.statAttackSpeedBonus));
+      const effAtkSpd = calculateEffectiveAttackSpeed(
+        a.statAttackSpeedBonus,
+        sim.effectiveMultipliers.attackSpeed,
+      );
+      a.attackCd = Math.max(0.45, (0.7 - a.treasure * 0.008) / effAtkSpd);
       const dmg = calculateAttackDamage(sim, a);
-      damageMonster(sim, targetMonster, dmg, a);
+      const crit = calculateEffectiveCrit(sim.effectiveMultipliers.critChance);
+      const hit = resolveHitDamage(
+        dmg,
+        crit.critChance,
+        crit.critMultiplier,
+        sim.rng ?? Math.random,
+      );
+      damageMonster(sim, targetMonster, hit.damage, a);
     } else if (targetActor) {
-      a.attackCd = Math.max(0.45, (0.7 - a.treasure * 0.008) / (1 + a.statAttackSpeedBonus));
+      const effAtkSpd = calculateEffectiveAttackSpeed(
+        a.statAttackSpeedBonus,
+        sim.effectiveMultipliers.attackSpeed,
+      );
+      a.attackCd = Math.max(0.45, (0.7 - a.treasure * 0.008) / effAtkSpd);
       const dmg = calculateAttackDamage(sim, a);
-
-      if (targetActor.team >= 0) {
-        const c = chestOf(sim, targetActor.team);
-        if (c && (c.hp > 0 || c.treasure > 0)) {
-          c.hp -= dmg;
-          c.hitFlash = 0.2;
-          burst(sim, c.x, c.y, '#ffb45c', 5);
-          if (c.hp <= 0) {
-            destroyChest(sim, c, c.x, c.y);
-            pulse(sim, '宝箱被打爆！队伍关系仍保留', c.x, c.y, '#ff8a6a');
-          }
-        } else {
-          damageActor(sim, targetActor, dmg, a);
-        }
-      } else {
-        damageActor(sim, targetActor, dmg, a);
-      }
+      resolveHostileHit(sim, targetActor, dmg, a);
     }
   }
 

@@ -325,4 +325,173 @@ describe('荒岛分赃核心规则、肉鸽升级与战斗系统测试', () => {
     expect(sim.winner?.id).toBe(p.id); // 血量高者获胜
     expect(sim.overtimeResolution).toBe('points');
   });
+
+  // R01: 飞刀命中冷却机制（0.4s CD，高帧率不产生重复多次伤害）
+  it('R01: knife hit cooldown prevents multi-hit on high FPS / multiple steps within cooldown', () => {
+    const sim = createInitialSimulation();
+    sim.monsters.length = 0; // 清除普通怪
+    const p = sim.actors[0]!;
+    p.weaponKnife = 3;
+    p.knifeAngle = 0;
+    p.x = 10;
+    p.y = 10;
+
+    // 创建一只近身怪物
+    const targetMonster = {
+      id: 500,
+      kind: 'tank' as const,
+      x: 10 + 1.6, // 正好处于飞刀旋转半径
+      y: 10,
+      hp: 100,
+      maxHp: 100,
+      alive: true,
+      respawn: 9999,
+      wobble: 0,
+      hitFlash: 0,
+      speed: 0,
+      damage: 0,
+      attackCd: 99,
+    };
+    sim.monsters.push(targetMonster);
+
+    // 第一帧命中
+    stepWeapons(sim, 0.016);
+    const hpAfterFirstHit = targetMonster.hp;
+    expect(hpAfterFirstHit).toBeLessThan(100);
+
+    // 接下来 10 帧 (0.16s 累计，仍在 0.4s 冷却期内)
+    for (let f = 0; f < 10; f++) {
+      sim.elapsed += 0.016;
+      stepWeapons(sim, 0.016);
+    }
+    // HP 应当保持不变，没有被多刀或高帧率重复伤害
+    expect(targetMonster.hp).toBe(hpAfterFirstHit);
+
+    // 跨过 0.4s 冷却后，飞刀继续旋转碰触目标，再次触发伤害
+    sim.elapsed += 0.45;
+    for (let f = 0; f < 30; f++) {
+      sim.elapsed += 0.04;
+      stepWeapons(sim, 0.04);
+      if (targetMonster.hp < hpAfterFirstHit) break;
+    }
+    expect(targetMonster.hp).toBeLessThan(hpAfterFirstHit);
+  });
+
+  // R02: 箭矢/炸弹/普攻/飞刀统一 resolveHostileHit，敌队宝箱先承伤，外部破箱不散队
+  it('R02: hostile arrow, bomb, knife and attack hit team chest first, and breaking chest preserves team', () => {
+    const sim = createInitialSimulation();
+    sim.monsters.length = 0;
+
+    const a = sim.actors[1]!;
+    const b = sim.actors[2]!;
+    const enemy = sim.actors[3]!;
+    a.x = 10; a.y = 10;
+    b.x = 10.5; b.y = 10;
+    enemy.x = 12; enemy.y = 10;
+
+    formTeam(sim, a, b);
+    const chest = chestOf(sim, a.team)!;
+    chest.hp = 50;
+    chest.treasure = 10;
+
+    const initialAHp = a.hp;
+
+    // 1. 穿透箭射向 a，应该由宝箱吸收伤害
+    sim.arrows.push({
+      id: sim.nextEntityId++,
+      ownerId: enemy.id,
+      x: a.x,
+      y: a.y,
+      vx: 0,
+      vy: 0,
+      life: 1.0,
+      pierceLeft: 1,
+      hitMonsterIds: [],
+      hitActorIds: [],
+    });
+    stepWeapons(sim, 0.016);
+
+    // 角色 a 完好，宝箱掉血
+    expect(a.hp).toBe(initialAHp);
+    expect(chest.hp).toBeLessThan(50);
+
+    // 2. 外部炸弹将宝箱彻底炸爆
+    chest.hp = 1;
+    sim.bombs.push({
+      id: sim.nextEntityId++,
+      ownerId: enemy.id,
+      x: a.x,
+      y: a.y,
+      timer: 0.01,
+      radius: 3.0,
+      damage: 20,
+      exploded: false,
+      fxTimer: 0.5,
+    });
+    stepWeapons(sim, 0.02);
+
+    expect(chest.hp).toBe(0);
+    // 队伍关系仍然保留！
+    expect(a.team).toBe(b.id);
+    expect(b.team).toBe(a.id);
+  });
+
+  // R03: 单一 Space 键 / teamAction 组队交互逻辑
+  it('R03: teamAction accepts incoming invite or sends invite to nearest candidate', () => {
+    const sim = createInitialSimulation();
+    const p = sim.actors[0]!;
+    const a = sim.actors[1]!;
+    p.x = 10; p.y = 10;
+    a.x = 11; a.y = 10;
+
+    // 靠近候选角色，按 Space / teamAction 发送邀请
+    stepSimulation(sim, 0.1, {
+      moveX: 0,
+      moveY: 0,
+      teamAction: true,
+      dash: false,
+      speedToggle: false,
+      restart: false,
+    });
+    const outgoing = sim.invites.find((i) => i.fromId === p.id && i.toId === a.id);
+    expect(outgoing).toBeDefined();
+
+    // 对方接受组队
+    acceptInvite(sim, outgoing!.id, a.id);
+    expect(p.team).toBe(a.id);
+    expect(a.team).toBe(p.id);
+  });
+
+  // R04 & M4: 跨局携带宝物（等级保留）与世界规则乘数
+  it('R04 & M4: carryRelic retains level into next round while resetting other weapons, xp and treasure', () => {
+    const carryRelics = new Map();
+    carryRelics.set(0, { kind: 'knife', level: 3 });
+
+    const worldMultipliers = {
+      maxHp: 1.2,
+      damage: 1.1,
+      moveSpeed: 1.0,
+      attackSpeed: 1.0,
+      critChance: 1.0,
+    };
+
+    const nextSim = createInitialSimulation({
+      carryRelics,
+      worldMultipliers,
+    });
+
+    const p = nextSim.actors[0]!;
+    // 携带宝物保留 3 级飞刀
+    expect(p.weaponKnife).toBe(3);
+    // 另外两件武器重置为 0
+    expect(p.weaponArrow).toBe(0);
+    expect(p.weaponBomb).toBe(0);
+    // 财富与经验重置
+    expect(p.treasure).toBe(0);
+    expect(p.xp).toBe(0);
+    expect(p.level).toBe(1);
+    // 世界血量加成生效 100 * 1.2 = 120
+    expect(p.maxHp).toBe(120);
+    expect(p.hp).toBe(120);
+  });
 });

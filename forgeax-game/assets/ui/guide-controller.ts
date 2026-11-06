@@ -8,6 +8,14 @@ import { installVaseControls } from './vase-controls.ts';
 import { installPlayerControls } from './player-controls.ts';
 import { ISLAND_CONTROL_CHANNEL, type IslandTouchMessage } from '../island/island.pack.ts';
 import type { UpgradeOption } from '../island/simulation.ts';
+import {
+  STAT_FACTORS,
+  STAT_NAMES,
+  STAT_TARGETS,
+  type CarryRelic,
+  type StatFactor,
+  type StatTarget,
+} from '../island/stats.ts';
 
 export async function createGuideUi(
   asset: UiAsset,
@@ -178,12 +186,14 @@ export async function createGuideUi(
         stick.addEventListener('lostpointercapture', resetStick);
       }
 
-      // 组队 / 接受主按钮
+      // 组队 / 接受主按钮（唯一操作按键 Space / 组队触控按钮，R03）
       const triggerMainChoice = () => {
         if (activeIncomingInviteId !== null) {
           sendTouch({ kind: 'accept', inviteId: activeIncomingInviteId });
         } else if (activeCandidateId !== null) {
           sendTouch({ kind: 'invite', targetId: activeCandidateId });
+        } else {
+          sendTouch({ kind: 'team' });
         }
       };
 
@@ -196,31 +206,10 @@ export async function createGuideUi(
         btnAllyTouch.addEventListener('click', triggerMainChoice);
       }
 
-      // 忽略按钮
-      const triggerIgnore = () => {
-        if (activeIncomingFromId !== null) {
-          sendTouch({ kind: 'ignore', targetId: activeIncomingFromId });
-        } else if (activeCandidateId !== null) {
-          sendTouch({ kind: 'ignore', targetId: activeCandidateId });
-        }
-      };
-
-      const btnChoiceIgnore = shadow.querySelector<HTMLElement>(
-        '[data-ui-part="btn-choice-ignore"]',
-      );
-      if (btnChoiceIgnore) {
-        btnChoiceIgnore.addEventListener('click', triggerIgnore);
-      }
-      const btnIgnoreTouch = shadow.querySelector<HTMLElement>(
-        '[data-ui-part="btn-ignore-touch"]',
-      );
-      if (btnIgnoreTouch) {
-        btnIgnoreTouch.addEventListener('click', triggerIgnore);
-      }
-
+      // 兼容性保留隐藏插槽绑定
       const btnDash = shadow.querySelector<HTMLElement>('[data-ui-part="btn-dash"]');
       if (btnDash) {
-        btnDash.addEventListener('click', () => sendTouch({ kind: 'dash' }));
+        btnDash.addEventListener('click', triggerMainChoice);
       }
       const btnSpeed = shadow.querySelector<HTMLElement>('[data-ui-part="btn-speed"]');
       if (btnSpeed) {
@@ -238,25 +227,85 @@ export async function createGuideUi(
           });
         }
       }
+    }
 
-      // 键盘 1 / 2 / 3 选择升级
-      const win = shadow?.ownerDocument?.defaultView;
-      const onKeyDown = (e: KeyboardEvent) => {
-        if (activeUpgradePending) {
-          if (e.code === 'Digit1' || e.code === 'Numpad1') {
-            sendTouch({ kind: 'upgrade', choiceIndex: 0 });
-          } else if (e.code === 'Digit2' || e.code === 'Numpad2') {
-            sendTouch({ kind: 'upgrade', choiceIndex: 1 });
-          } else if (e.code === 'Digit3' || e.code === 'Numpad3') {
-            sendTouch({ kind: 'upgrade', choiceIndex: 2 });
-          }
+    // 无限模式秘策与宝物选择状态
+    let selectedStatIndex = 0;
+    let selectedFactorIndex = 0;
+    let selectedRelicIndex = 0;
+    let cachedOwnedRelics: CarryRelic[] = [];
+
+    // 无限模式选择弹窗元素
+    const ruleModal = shadow?.querySelector<HTMLElement>('[data-ui-part="endless-rule-modal"]');
+    const relicModal = shadow?.querySelector<HTMLElement>('[data-ui-part="endless-relic-modal"]');
+    const relicCardsContainer = shadow?.querySelector<HTMLElement>('[data-ui-part="relic-cards"]');
+    const btnConfirmRule = shadow?.querySelector<HTMLButtonElement>('[data-ui-part="btn-confirm-rule"]');
+    const btnConfirmRelic = shadow?.querySelector<HTMLButtonElement>('[data-ui-part="btn-confirm-relic"]');
+    const btnResetEndless = shadow?.querySelector<HTMLButtonElement>('[data-ui-part="btn-reset-endless"]');
+    const worldBanner = shadow?.querySelector<HTMLElement>('[data-ui-part="world-banner"]');
+    const worldBannerText = shadow?.querySelector<HTMLElement>('[data-ui-part="world-banner-text"]');
+    const modeBadge = shadow?.querySelector<HTMLElement>('[data-ui-part="mode-badge"]');
+
+    if (shadow) {
+      // 秘策属性卡片点击
+      for (let s = 0; s < 5; s++) {
+        const card = shadow.querySelector<HTMLElement>(`[data-ui-part="rule-card-${s}"]`);
+        if (card) {
+          card.addEventListener('click', () => {
+            selectedStatIndex = s;
+            updateRuleModalSelection();
+          });
         }
-      };
-      if (win) {
-        win.addEventListener('keydown', onKeyDown);
-        releases.push(() => win.removeEventListener('keydown', onKeyDown));
+      }
+
+      // 修正倍率胶囊点击
+      for (let f = 0; f < 4; f++) {
+        const pill = shadow.querySelector<HTMLElement>(`[data-ui-part="factor-pill-${f}"]`);
+        if (pill) {
+          pill.addEventListener('click', () => {
+            selectedFactorIndex = f;
+            updateRuleModalSelection();
+          });
+        }
+      }
+
+      if (btnConfirmRule) {
+        btnConfirmRule.addEventListener('click', () => {
+          const stat = STAT_TARGETS[selectedStatIndex] ?? 'damage';
+          const factor = STAT_FACTORS[selectedFactorIndex] ?? 1.2;
+          sendTouch({ kind: 'rule_select', stat, factor });
+        });
+      }
+
+      if (btnConfirmRelic) {
+        btnConfirmRelic.addEventListener('click', () => {
+          const chosen = cachedOwnedRelics[selectedRelicIndex] ?? null;
+          sendTouch({
+            kind: 'relic_select',
+            relicKind: chosen?.kind ?? null,
+            relicLevel: chosen?.level ?? 1,
+          });
+        });
+      }
+
+      if (btnResetEndless) {
+        btnResetEndless.addEventListener('click', () => {
+          sendTouch({ kind: 'restart' });
+        });
       }
     }
+
+    const updateRuleModalSelection = () => {
+      if (!shadow) return;
+      for (let s = 0; s < 5; s++) {
+        const card = shadow.querySelector<HTMLElement>(`[data-ui-part="rule-card-${s}"]`);
+        if (card) card.classList.toggle('selected', s === selectedStatIndex);
+      }
+      for (let f = 0; f < 4; f++) {
+        const pill = shadow.querySelector<HTMLElement>(`[data-ui-part="factor-pill-${f}"]`);
+        if (pill) pill.classList.toggle('selected', f === selectedFactorIndex);
+      }
+    };
 
     // 接收来自引擎的 HUD 状态更新
     const timerElem = shadow?.querySelector<HTMLElement>('[data-ui-part="match-timer"]');
@@ -300,7 +349,7 @@ export async function createGuideUi(
     if (btnRestart) {
       btnRestart.addEventListener('click', () => {
         btnRestart.setAttribute('disabled', '');
-        sendTouch({ kind: 'restart' });
+        sendTouch({ kind: 'next_round' });
       });
     }
 
@@ -310,7 +359,7 @@ export async function createGuideUi(
         const state = event.data as Record<string, unknown> | undefined;
         if (!state || state.channel !== 'island/hud-state') return;
 
-        // 若重开已重置，隐藏结算弹窗并恢复再来一局按钮状态
+        // 若重开已重置或不在结算展示阶段，隐藏结算弹窗并恢复再来一局按钮状态
         if (!state.gameOver) {
           if (resultModal && !resultModal.classList.contains('hidden')) {
             resultModal.classList.add('hidden');
@@ -477,34 +526,29 @@ export async function createGuideUi(
           activeIncomingInviteId = incoming.id;
           activeIncomingFromId = incoming.fromId;
           activeCandidateId = null;
-          if (choiceBanner && choiceText && btnChoiceMain && btnChoiceIgnore) {
+          if (choiceBanner && choiceText && btnChoiceMain) {
             choiceText.textContent = `${incoming.fromName} 邀请与你组队 (${incoming.timeLeft}s)`;
-            btnChoiceMain.textContent = '接受 (E)';
+            btnChoiceMain.textContent = '接受 (Space)';
             btnChoiceMain.style.display = 'inline-block';
-            btnChoiceIgnore.textContent = '忽略 60s (X)';
-            btnChoiceIgnore.style.display = 'inline-block';
             choiceBanner.classList.remove('hidden');
           }
         } else if (outgoing) {
           activeIncomingInviteId = null;
           activeIncomingFromId = null;
           activeCandidateId = null;
-          if (choiceBanner && choiceText && btnChoiceMain && btnChoiceIgnore) {
+          if (choiceBanner && choiceText && btnChoiceMain) {
             choiceText.textContent = `已向 ${outgoing.toName} 发送邀请... 等待回应 (${outgoing.timeLeft}s)`;
             btnChoiceMain.style.display = 'none';
-            btnChoiceIgnore.style.display = 'none';
             choiceBanner.classList.remove('hidden');
           }
         } else if (candidate && candidate.canInvite && !partnerName) {
           activeIncomingInviteId = null;
           activeIncomingFromId = null;
           activeCandidateId = candidate.id;
-          if (choiceBanner && choiceText && btnChoiceMain && btnChoiceIgnore) {
+          if (choiceBanner && choiceText && btnChoiceMain) {
             choiceText.textContent = `附近发现 ${candidate.name} (${candidate.distance}m)`;
-            btnChoiceMain.textContent = '组队 (E)';
+            btnChoiceMain.textContent = '组队 (Space)';
             btnChoiceMain.style.display = 'inline-block';
-            btnChoiceIgnore.textContent = '忽略 60s (X)';
-            btnChoiceIgnore.style.display = 'inline-block';
             choiceBanner.classList.remove('hidden');
           }
         } else {
@@ -516,30 +560,140 @@ export async function createGuideUi(
           }
         }
 
-        // 胜负结算展示
-        if (state.gameOver && resultModal && resultModal.classList.contains('hidden')) {
-          resultModal.classList.remove('hidden');
-          const isWinner = state.isWinner === true;
-          if (resultTitle) {
-            resultTitle.textContent = isWinner
-              ? '你赢了！'
-              : `${state.winnerName ?? '其他角色'} 获胜`;
-          }
-          if (resultSub) {
-            resultSub.textContent = isWinner
-              ? '精彩的合作攒宝与断线分赃决战！'
-              : '荒岛形势瞬息万变，换个策略再试一次！';
-          }
-          if (statTreasure) statTreasure.textContent = String(pTreas);
-          if (statBreaks) statBreaks.textContent = String(breaks);
-          if (statDisbands) statDisbands.textContent = String(disbands);
-          if (statBetrayals) statBetrayals.textContent = String(disbands);
-          if (statKills) statKills.textContent = String(state.kills ?? 0);
-          const rank = typeof state.playerRank === 'number' ? state.playerRank : isWinner ? 1 : Math.max(2, 11 - aliveCount);
-          if (statRank) statRank.textContent = `第 ${rank} 名 / 10`;
+        // 无限模式阶段弹窗同步（rule-pick / relic-pick / round-result）
+        const endlessState = state.endless as
+          | {
+              mode: 'normal' | 'endless';
+              roundIndex: number;
+              phase: 'playing' | 'round-result' | 'rule-pick' | 'relic-pick';
+              ruleAnnouncement: string | null;
+              upgradeHighlight?: number;
+              ruleStatIndex?: number;
+              ruleFactorIndex?: number;
+              relicHighlight?: number;
+              ownedRelics?: CarryRelic[];
+            }
+          | undefined;
 
-          if (challengeProgress) {
-            challengeProgress.textContent = `${cMm.toString().padStart(2, '0')}:${cSs.toString().padStart(2, '0')} / 15:00 (共 ${roundsCompleted} 局)`;
+        if (endlessState) {
+          if (modeBadge) {
+            modeBadge.textContent =
+              endlessState.mode === 'endless'
+                ? `无限挑战 · 第 ${endlessState.roundIndex} 局`
+                : '普通单局';
+          }
+
+          // 秘策弹窗控制
+          if (ruleModal) {
+            if (endlessState.phase === 'rule-pick') {
+              ruleModal.classList.remove('hidden');
+              if (typeof endlessState.ruleStatIndex === 'number') {
+                selectedStatIndex = endlessState.ruleStatIndex;
+              }
+              if (typeof endlessState.ruleFactorIndex === 'number') {
+                selectedFactorIndex = endlessState.ruleFactorIndex;
+              }
+              updateRuleModalSelection();
+            } else {
+              ruleModal.classList.add('hidden');
+            }
+          }
+
+          // 宝物选择弹窗控制
+          if (relicModal) {
+            if (endlessState.phase === 'relic-pick') {
+              relicModal.classList.remove('hidden');
+              cachedOwnedRelics = endlessState.ownedRelics ?? [];
+              if (typeof endlessState.relicHighlight === 'number') {
+                selectedRelicIndex = endlessState.relicHighlight;
+              }
+
+              if (relicCardsContainer) {
+                const RELIC_NAMES: Record<string, string> = {
+                  knife: '环绕飞刀',
+                  arrow: '穿透箭矢',
+                  bomb: '范围炸弹',
+                };
+                let html = '';
+                cachedOwnedRelics.forEach((r, idx) => {
+                  const isSel = idx === selectedRelicIndex;
+                  html += `
+                    <button type="button" class="relic-card ${isSel ? 'selected' : ''}" data-relic-idx="${idx}">
+                      <span class="relic-kind-badge">战斗宝物</span>
+                      <strong class="relic-name">${RELIC_NAMES[r.kind] ?? r.kind}</strong>
+                      <span class="relic-level">LV.${r.level}</span>
+                    </button>
+                  `;
+                });
+                const isNoneSel = selectedRelicIndex >= cachedOwnedRelics.length;
+                html += `
+                  <button type="button" class="relic-card ${isNoneSel ? 'selected' : ''}" data-relic-idx="${cachedOwnedRelics.length}">
+                    <span class="relic-kind-badge" style="background:#8fb6c9">空手</span>
+                    <strong class="relic-name">轻装出发</strong>
+                    <span class="relic-level">无宝物</span>
+                  </button>
+                `;
+                relicCardsContainer.innerHTML = html;
+
+                relicCardsContainer.querySelectorAll('.relic-card').forEach((btn) => {
+                  btn.addEventListener('click', (e) => {
+                    const idxStr = (e.currentTarget as HTMLElement).getAttribute('data-relic-idx');
+                    if (idxStr !== null) {
+                      selectedRelicIndex = parseInt(idxStr, 10);
+                      const chosen = cachedOwnedRelics[selectedRelicIndex] ?? null;
+                      sendTouch({
+                        kind: 'relic_select',
+                        relicKind: chosen?.kind ?? null,
+                        relicLevel: chosen?.level ?? 1,
+                      });
+                    }
+                  });
+                });
+              }
+            } else {
+              relicModal.classList.add('hidden');
+            }
+          }
+
+          // 全局全场修正提示横幅
+          if (worldBanner && worldBannerText) {
+            if (endlessState.ruleAnnouncement) {
+              worldBannerText.textContent = endlessState.ruleAnnouncement;
+              worldBanner.classList.remove('hidden');
+            } else {
+              worldBanner.classList.add('hidden');
+            }
+          }
+        }
+
+        // 胜负结算展示（R02 & R10：准确判断 winnerId 与真实名次）
+        if (resultModal) {
+          if (state.gameOver && endlessState?.phase === 'round-result') {
+            resultModal.classList.remove('hidden');
+            const isWinner = state.isWinner === true;
+            if (resultTitle) {
+              resultTitle.textContent = isWinner
+                ? '你赢了！'
+                : `${state.winnerName ?? '其他角色'} 获胜`;
+            }
+            if (resultSub) {
+              resultSub.textContent = isWinner
+                ? '精彩的合作攒宝与断线分赃决战！'
+                : '荒岛形势瞬息万变，换个策略再试一次！';
+            }
+            if (statTreasure) statTreasure.textContent = String(pTreas);
+            if (statBreaks) statBreaks.textContent = String(breaks);
+            if (statDisbands) statDisbands.textContent = String(disbands);
+            if (statBetrayals) statBetrayals.textContent = String(disbands);
+            if (statKills) statKills.textContent = String(state.kills ?? 0);
+            const rank = typeof state.playerRank === 'number' ? state.playerRank : isWinner ? 1 : Math.max(2, 11 - aliveCount);
+            if (statRank) statRank.textContent = `第 ${rank} 名 / 10`;
+
+            if (challengeProgress) {
+              challengeProgress.textContent = `${cMm.toString().padStart(2, '0')}:${cSs.toString().padStart(2, '0')} / 15:00 (共 ${roundsCompleted} 局)`;
+            }
+          } else {
+            resultModal.classList.add('hidden');
           }
         }
       };

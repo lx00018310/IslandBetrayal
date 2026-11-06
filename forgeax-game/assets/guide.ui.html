@@ -26,12 +26,15 @@
   </div>
 
   <div class="hud-col hud-speed-col">
-    <button type="button" class="btn-speed" data-ui-part="btn-speed">加速 ×4 / Q</button>
-    <div class="shortcut-tip">WASD move · E 组队 · X 忽略 · Space 冲撞</div>
+    <div class="mode-badge" data-ui-part="mode-badge">无限挑战</div>
+    <div class="shortcut-tip">WASD move · Space 组队/确认</div>
   </div>
 </header>
 
-<!-- Boss 巨兽全局血条 -->
+<!-- 全场修正生效横幅 -->
+<div class="world-banner hidden" data-ui-part="world-banner">
+  <span class="world-banner-text" data-ui-part="world-banner-text">第 1 局开始</span>
+</div>
 <section class="boss-hud hidden" data-ui-part="boss-hud">
   <div class="boss-info-row">
     <span class="boss-title">⚠️ 混沌体素巨兽</span>
@@ -55,8 +58,7 @@
   <div class="choice-content">
     <span class="choice-text" data-ui-part="choice-text">附近发现 青岚</span>
     <div class="choice-buttons">
-      <button type="button" class="btn-choice-main" data-ui-part="btn-choice-main">组队 (E)</button>
-      <button type="button" class="btn-choice-ignore" data-ui-part="btn-choice-ignore">忽略 60秒 (X)</button>
+      <button type="button" class="btn-choice-main" data-ui-part="btn-choice-main">组队 (Space)</button>
     </div>
   </div>
 </section>
@@ -78,7 +80,7 @@
 <div class="upgrade-modal hidden" data-ui-part="upgrade-modal">
   <div class="upgrade-dialog">
     <h2 class="upgrade-dialog-title">等级提升 · 选择强化</h2>
-    <p class="upgrade-dialog-sub">选择一项能力强化你的战力（按 1 / 2 / 3 键快捷选择）</p>
+    <p class="upgrade-dialog-sub">选择一项能力强化你的战力（A/D 选择，Space 确认）</p>
     <div class="upgrade-cards" data-ui-part="upgrade-cards">
       <button type="button" class="upgrade-card" data-ui-action="upgrade-0" data-card-index="0" data-ui-part="upgrade-card-0">
         <span class="card-badge" data-ui-part="card-badge-0">新技能</span>
@@ -102,7 +104,7 @@
   </div>
 </div>
 
-<!-- 触屏虚拟摇杆与动作按钮 -->
+<!-- 触屏虚拟摇杆与动作按钮（手机极简：摇杆 +【组队】唯一常驻按键 R03） -->
 <section class="touch-controls" data-ui-part="touch-controls" aria-label="Touch game controls">
   <div class="move-stick" data-ui-part="move-stick" role="group" aria-label="Movement joystick">
     <span class="move-thumb" data-ui-part="move-thumb" aria-hidden="true"></span>
@@ -110,20 +112,69 @@
   </div>
 
   <div class="touch-actions" data-ui-part="touch-actions">
-    <button type="button" class="action-btn btn-dash" data-ui-part="btn-dash" aria-label="冲撞">
-      <span class="btn-main">冲撞</span>
-      <span class="btn-sub">␣</span>
-    </button>
-    <button type="button" class="action-btn btn-ignore" data-ui-part="btn-ignore-touch" aria-label="忽略目标">
-      <span class="btn-main">忽略</span>
-      <span class="btn-sub">X</span>
-    </button>
-    <button type="button" class="action-btn btn-ally" data-ui-part="btn-ally-touch" aria-label="组队/接受">
+    <button type="button" class="action-btn btn-ally" data-ui-part="btn-ally-touch" aria-label="组队/接受/确认">
       <span class="btn-main">组队</span>
-      <span class="btn-sub">E</span>
+      <span class="btn-sub">␣</span>
     </button>
   </div>
 </section>
+
+<!-- 无限模式：全场秘策选择弹窗 -->
+<div class="endless-modal hidden" data-ui-part="endless-rule-modal">
+  <div class="endless-dialog">
+    <h2 class="endless-dialog-title">秘密决策 · 选择下局全场规则</h2>
+    <p class="endless-dialog-sub">影响下局所有角色并持续累乘生效。A/D 选属性，W/S 选倍率，Space 确认。</p>
+    <div class="rule-cards" data-ui-part="rule-cards">
+      <button type="button" class="rule-card" data-stat-index="0" data-ui-part="rule-card-0">
+        <span class="rule-stat-name">最大血量</span>
+        <strong class="rule-stat-val" data-ui-part="rule-stat-val-0">+20%</strong>
+        <span class="rule-stat-sub">全员 HP 上限</span>
+      </button>
+      <button type="button" class="rule-card" data-stat-index="1" data-ui-part="rule-card-1">
+        <span class="rule-stat-name">攻击伤害</span>
+        <strong class="rule-stat-val" data-ui-part="rule-stat-val-1">+20%</strong>
+        <span class="rule-stat-sub">全员普攻伤害</span>
+      </button>
+      <button type="button" class="rule-card" data-stat-index="2" data-ui-part="rule-card-2">
+        <span class="rule-stat-name">移动速度</span>
+        <strong class="rule-stat-val" data-ui-part="rule-stat-val-2">+20%</strong>
+        <span class="rule-stat-sub">全员移动速度</span>
+      </button>
+      <button type="button" class="rule-card" data-stat-index="3" data-ui-part="rule-card-3">
+        <span class="rule-stat-name">攻击频率</span>
+        <strong class="rule-stat-val" data-ui-part="rule-stat-val-3">+20%</strong>
+        <span class="rule-stat-sub">普攻与武器CD</span>
+      </button>
+      <button type="button" class="rule-card" data-stat-index="4" data-ui-part="rule-card-4">
+        <span class="rule-stat-name">暴击概率</span>
+        <strong class="rule-stat-val" data-ui-part="rule-stat-val-4">+20%</strong>
+        <span class="rule-stat-sub">相对提升暴击</span>
+      </button>
+    </div>
+    <div class="factor-selector" data-ui-part="factor-selector">
+      <span class="factor-label">修正倍率：</span>
+      <div class="factor-pills" data-ui-part="factor-pills">
+        <button type="button" class="factor-pill selected" data-factor-index="0" data-ui-part="factor-pill-0">+20% (×1.20)</button>
+        <button type="button" class="factor-pill" data-factor-index="1" data-ui-part="factor-pill-1">+10% (×1.10)</button>
+        <button type="button" class="factor-pill" data-factor-index="2" data-ui-part="factor-pill-2">-10% (×0.90)</button>
+        <button type="button" class="factor-pill" data-factor-index="3" data-ui-part="factor-pill-3">-20% (×0.80)</button>
+      </div>
+    </div>
+    <button type="button" class="btn-confirm-rule" data-ui-part="btn-confirm-rule">确认全场秘策 (Space)</button>
+  </div>
+</div>
+
+<!-- 无限模式：跨局宝物选择弹窗 -->
+<div class="endless-modal hidden" data-ui-part="endless-relic-modal">
+  <div class="endless-dialog">
+    <h2 class="endless-dialog-title">战利继承 · 选择一件宝物带入下一局</h2>
+    <p class="endless-dialog-sub">仅可携带一件本局拥有的武器宝物（保留等级），其他武器与金币清零。A/D 选宝物，Space 确认。</p>
+    <div class="relic-cards" data-ui-part="relic-cards">
+      <!-- 动态填充 -->
+    </div>
+    <button type="button" class="btn-confirm-relic" data-ui-part="btn-confirm-relic">携带宝物出发 (Space)</button>
+  </div>
+</div>
 
 <!-- 结算卡片 -->
 <div class="result-backdrop hidden" data-ui-part="result-modal">
@@ -138,12 +189,17 @@
       <div class="stat-row"><span>最终名次</span><strong data-ui-part="stat-rank">1 / 10</strong></div>
       <div class="stat-row challenge-row"><span>连续挑战进度</span><strong data-ui-part="challenge-progress">00:00 / 15:00</strong></div>
     </div>
-    <button type="button" class="btn-restart" data-ui-part="btn-restart">再来一局 / 下一局挑战</button>
+    <button type="button" class="btn-restart" data-ui-part="btn-restart">进入下局秘策选择 (Space)</button>
+    <button type="button" class="btn-reset-endless" data-ui-part="btn-reset-endless">全新挑战 (重置无限进度)</button>
   </div>
 </div>
 
 <!-- 保持原测试兼容插槽 -->
 <div class="hidden" aria-hidden="true">
+  <button type="button" data-ui-part="btn-speed"></button>
+  <button type="button" data-ui-part="btn-dash"></button>
+  <button type="button" data-ui-part="btn-ignore-touch"></button>
+  <button type="button" data-ui-part="btn-choice-ignore"></button>
   <span data-ui-slot="lock"></span>
   <form data-ui-part="vase-controls"><button type="button"></button></form>
   <span data-ui-part="vase-status"></span>
