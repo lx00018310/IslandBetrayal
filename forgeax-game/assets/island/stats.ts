@@ -18,7 +18,7 @@ export const STAT_TARGETS: readonly StatTarget[] = [
   'critChance',
 ] as const;
 
-export const STAT_FACTORS: readonly StatFactor[] = [0.8, 0.9, 1.1, 1.2] as const;
+export const STAT_FACTORS: readonly StatFactor[] = [1.2, 1.1, 0.9, 0.8] as const;
 
 export const STAT_NAMES: Record<StatTarget, string> = {
   maxHp: '最大血量',
@@ -157,8 +157,8 @@ export function calculateEffectiveDamage(
   damageBonus = 0,
   worldMultiplier = 1.0,
 ): number {
-  const effectiveWorldMult = clamp(worldMultiplier, 0.5, 4.0);
-  const raw = baseWithFlat * (1 + damageBonus) * effectiveWorldMult;
+  const multiplier = clamp((1 + damageBonus) * worldMultiplier, 0.5, 4.0);
+  const raw = baseWithFlat * multiplier;
   return Math.max(1, Math.round(raw));
 }
 

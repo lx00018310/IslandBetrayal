@@ -56,7 +56,9 @@ export interface IslandTouchMessage {
     | 'accept'
     | 'ignore'
     | 'upgrade'
+    | 'rule_highlight'
     | 'rule_select'
+    | 'relic_highlight'
     | 'relic_select'
     | 'next_round'
     | 'mode_select'
@@ -214,6 +216,10 @@ export const islandPlugin: Plugin = {
 
         restartSimulation(sim, { worldMultipliers, carryRelics });
         presentation.reset(sim);
+        touchMoveX = 0;
+        touchMoveY = 0;
+        upgradeHighlight = 0;
+        relicHighlight = 0;
 
         matchIndex++;
         roundFinishedLogged = false;
@@ -238,8 +244,25 @@ export const islandPlugin: Plugin = {
         aiPendingDecisions.clear();
         ruleAnnouncement = null;
         ruleAnnouncementTimer = 0;
+        touchMoveX = 0;
+        touchMoveY = 0;
+        upgradeHighlight = 0;
+        ruleStatIndex = 0;
+        ruleFactorIndex = 0;
+        relicHighlight = 0;
         restartSimulation(sim);
         presentation.reset(sim);
+      };
+
+      const startNextNormalRound = () => {
+        restartSimulation(sim);
+        presentation.reset(sim);
+        matchIndex++;
+        roundFinishedLogged = false;
+        endlessPhase = 'playing';
+        upgradeHighlight = 0;
+        touchMoveX = 0;
+        touchMoveY = 0;
       };
 
       // 前端控制输入意图
@@ -284,8 +307,15 @@ export const islandPlugin: Plugin = {
             case 'upgrade':
               if (typeof data.choiceIndex === 'number') touchUpgradeChoiceIndex = data.choiceIndex;
               break;
+            case 'rule_highlight':
+              if (mode === 'endless' && sim.gameOver && endlessPhase === 'rule-pick') {
+                if (data.stat && STAT_TARGETS.includes(data.stat)) ruleStatIndex = STAT_TARGETS.indexOf(data.stat);
+                if (data.factor && STAT_FACTORS.includes(data.factor)) ruleFactorIndex = STAT_FACTORS.indexOf(data.factor);
+              }
+              break;
             case 'rule_select':
-              if (data.stat && typeof data.factor === 'number') {
+              if (mode === 'endless' && sim.gameOver && endlessPhase === 'rule-pick' &&
+                  data.stat && STAT_TARGETS.includes(data.stat) && data.factor && STAT_FACTORS.includes(data.factor)) {
                 playerPendingRule = {
                   ownerId: 0,
                   stat: data.stat,
@@ -299,22 +329,25 @@ export const islandPlugin: Plugin = {
                 endlessPhase = 'relic-pick';
               }
               break;
-            case 'relic_select':
-              if (data.relicKind) {
-                playerPendingRelic = {
-                  kind: data.relicKind,
-                  level: data.relicLevel ?? 1,
-                };
-              } else {
-                playerPendingRelic = null;
-              }
+            case 'relic_highlight':
+              if (mode === 'endless' && sim.gameOver && endlessPhase === 'relic-pick' &&
+                  Number.isInteger(data.choiceIndex) && data.choiceIndex! >= 0 &&
+                  data.choiceIndex! <= getPlayerOwnedRelics().length) relicHighlight = data.choiceIndex!;
+              break;
+            case 'relic_select': {
+              if (mode !== 'endless' || !sim.gameOver || endlessPhase !== 'relic-pick' || !playerPendingRule) break;
+              const owned = getPlayerOwnedRelics();
+              const chosen = data.relicKind == null ? null : owned.find((r) => r.kind === data.relicKind);
+              if (chosen === undefined) break;
+              // 等级以当局实际拥有的武器为准，不信任前端传回的等级。
+              playerPendingRelic = chosen;
               startNextEndlessRound();
               break;
+            }
             case 'next_round':
+              if (!sim.gameOver || endlessPhase !== 'round-result') break;
               if (mode === 'normal') {
-                restartSimulation(sim);
-                presentation.reset(sim);
-                endlessPhase = 'playing';
+                startNextNormalRound();
               } else {
                 if (endlessPhase === 'round-result') {
                   endlessPhase = 'rule-pick';
@@ -322,8 +355,9 @@ export const islandPlugin: Plugin = {
               }
               break;
             case 'mode_select':
-              if (data.mode) {
+              if ((data.mode === 'normal' || data.mode === 'endless') && mode !== data.mode) {
                 mode = data.mode;
+                resetAllEndless();
               }
               break;
             case 'speed':
@@ -401,6 +435,7 @@ export const islandPlugin: Plugin = {
               y: Number(p.y.toFixed(2)),
               position: [Number(p.x.toFixed(2)), 0, Number(p.y.toFixed(2))],
               hp: Math.round(p.hp),
+              maxHp: p.maxHp,
               team: p.team,
               treasure: p.treasure,
               kills: p.kills,
@@ -501,6 +536,7 @@ export const islandPlugin: Plugin = {
               roundIndex: matchIndex,
               completedRounds,
               phase: endlessPhase,
+              upgradeHighlight,
               worldMultipliers: {
                 maxHp: Number(sim.worldMultipliers.maxHp.toFixed(3)),
                 damage: Number(sim.worldMultipliers.damage.toFixed(3)),
@@ -522,6 +558,8 @@ export const islandPlugin: Plugin = {
                   }
                 : null,
               rulesCount: Array.from(endlessProfiles.values()).reduce((acc, p) => acc + p.rules.length, 0),
+              rules: Array.from(endlessProfiles.values()).flatMap((p) => p.rules.map((r) => ({ ...r }))),
+              ownedRelics: getPlayerOwnedRelics().map((r) => ({ ...r })),
               ruleAnnouncement: ruleAnnouncement ?? null,
             },
             lastBreakEvent: sim.lastBreakEvent
@@ -591,7 +629,7 @@ export const islandPlugin: Plugin = {
               }
 
               // 模态上下文独占 Space 按键
-              if (sim.pendingUpgrade) {
+              if (sim.pendingUpgrade && !sim.gameOver) {
                 if (kb.justPressedCode('KeyA') || kb.justPressedCode('ArrowLeft')) {
                   upgradeHighlight = (upgradeHighlight + 2) % 3;
                 }
@@ -604,7 +642,7 @@ export const islandPlugin: Plugin = {
               } else if (sim.gameOver) {
                 if (mode === 'normal') {
                   if (kb.justPressedCode('Space')) {
-                    restart = true;
+                    startNextNormalRound();
                   }
                 } else {
                   if (endlessPhase === 'round-result') {
@@ -664,7 +702,7 @@ export const islandPlugin: Plugin = {
               moveX,
               moveY,
               teamAction,
-              dash: teamAction,
+              dash: false,
               inviteTargetId,
               acceptInviteId,
               ignoreTargetId,
@@ -673,21 +711,6 @@ export const islandPlugin: Plugin = {
               restart,
             };
 
-            // 推进连续挑战累计有效时间（仅在玩家存活、活跃互动、未暂停、未加速且未结束时累计 R06）
-            if (!sim.gameOver && !sim.upgradePaused && sim.speed === 1 && sim.actors[0]?.alive) {
-              sessionChallengeElapsed += dt;
-            }
-            if (sim.gameOver && !roundFinishedLogged) {
-              roundFinishedLogged = true;
-              completedRounds++;
-              if (mode === 'endless') {
-                endlessPhase = 'round-result';
-              }
-            }
-            if (!sim.gameOver && roundFinishedLogged) {
-              roundFinishedLogged = false;
-            }
-
             if (ruleAnnouncementTimer > 0) {
               ruleAnnouncementTimer -= dt;
               if (ruleAnnouncementTimer <= 0) {
@@ -695,7 +718,17 @@ export const islandPlugin: Plugin = {
               }
             }
 
+            const elapsedBefore = sim.elapsed;
+            const countChallengeTime = !sim.gameOver && !sim.upgradePaused && sim.speed === 1 && sim.actors[0]!.alive;
             stepSimulation(sim, dt, inputIntent);
+            if (countChallengeTime && sim.speed === 1 && sim.actors[0]!.alive && !inputIntent.restart) {
+              sessionChallengeElapsed += Math.max(0, sim.elapsed - elapsedBefore);
+            }
+            if (sim.gameOver && !roundFinishedLogged) {
+              roundFinishedLogged = true;
+              completedRounds++;
+              endlessPhase = 'round-result';
+            }
 
             if (inputIntent.restart) {
               resetAllEndless();
@@ -747,6 +780,7 @@ export const islandPlugin: Plugin = {
                 playerRank: p.rank,
                 aliveCount: aliveActors(sim).length,
                 hp: Math.round(p.hp),
+                maxHp: p.maxHp,
                 isAlive: p.alive,
                 treasure: p.treasure,
                 playerTreasure: sim.playerTreasure,

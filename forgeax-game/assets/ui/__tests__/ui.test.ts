@@ -5,7 +5,8 @@ import { uiAssetContribution } from '@forgeax/engine/ui';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { ui as uiPlugin } from '../ui.pack.ts';
 
-const { dispose, mountUi, label, toggle, signal, button, status, player, disposeVase, installPlayerControls, installVaseControls } = vi.hoisted(() => {
+const { elements, dispose, mountUi, label, toggle, signal, button, status, player, disposeVase, installPlayerControls, installVaseControls } = vi.hoisted(() => {
+  const elements = new Map<string, unknown>();
   const signal = new AbortController().signal;
   const dispose = vi.fn();
   const toggle = vi.fn();
@@ -14,11 +15,12 @@ const { dispose, mountUi, label, toggle, signal, button, status, player, dispose
   const status = { textContent: '' };
   const player = { dispose: vi.fn(), reset: vi.fn(), setEnabled: vi.fn() };
   const disposeVase = vi.fn();
-  return { dispose, toggle, label, signal, button, status, player, disposeVase,
+  return { elements, dispose, toggle, label, signal, button, status, player, disposeVase,
     installPlayerControls: vi.fn((_root: ShadowRoot, _port: MessagePort) => player),
     installVaseControls: vi.fn((_root: ShadowRoot, _port: MessagePort) => ({ localize: vi.fn(), dispose: disposeVase })),
     mountUi: vi.fn(() => ({ ok: true, value: {
     dispose, signal, host: { classList: { toggle }, shadowRoot: { querySelector: (selector: string) => {
+      if (elements.has(selector)) return elements.get(selector);
       if (selector === '[data-ui-slot="lock"]') return label;
       if (selector === '[data-ui-part="vase-controls"] button') return button;
       if (selector === '[data-ui-part="vase-status"]') return status;
@@ -41,10 +43,37 @@ vi.mock('../../shared/guid.ts', () => ({
 }));
 
 afterEach(() => {
+  elements.clear();
   vi.unstubAllGlobals();
   vi.restoreAllMocks();
   vi.clearAllMocks();
 });
+
+class HudElement extends EventTarget {
+  textContent = '';
+  innerHTML = '';
+  style: Record<string, string> = {};
+  attributes = new Map<string, string>();
+  classes = new Set<string>();
+  children: HudElement[] = [];
+  classList = {
+    contains: (name: string) => this.classes.has(name),
+    add: (name: string) => this.classes.add(name),
+    remove: (name: string) => this.classes.delete(name),
+    toggle: (name: string, enabled: boolean) => enabled ? this.classes.add(name) : this.classes.delete(name),
+  };
+  setAttribute(name: string, value: string) { this.attributes.set(name, value); }
+  removeAttribute(name: string) { this.attributes.delete(name); }
+  getAttribute(name: string) { return this.attributes.get(name) ?? null; }
+  querySelectorAll() { return this.children; }
+  click() { this.dispatchEvent(new Event('click')); }
+}
+
+function hudElement(part: string) {
+  const element = new HudElement();
+  elements.set(`[data-ui-part="${part}"]`, element);
+  return element;
+}
 
 function hostFixture(ports: { port?: MessagePort; presentationPort?: MessagePort } = {}) {
   const events = new EventTarget();
@@ -88,6 +117,62 @@ function hostFixture(ports: { port?: MessagePort; presentationPort?: MessagePort
 }
 
 describe('game-3d Host UI lifecycle', () => {
+  it('renders real HP percentage, current round and keyboard upgrade selection', async () => {
+    const hp = hudElement('hp-fill');
+    const challenge = hudElement('challenge-stats');
+    hudElement('upgrade-modal');
+    const cards = [0, 1, 2].map((i) => hudElement(`upgrade-card-${i}`));
+    const port = Object.assign(new EventTarget(), { postMessage: vi.fn() });
+    const { ctx } = hostFixture({ port: port as unknown as MessagePort });
+    try {
+      await ctx.plugin(uiPlugin, { guide: '019fb7ce-3600-7000-8000-000000000001' });
+      port.dispatchEvent(new MessageEvent('message', { data: {
+        channel: 'island/hud-state', hp: 75, maxHp: 300, roundIndex: 2, roundsCompleted: 1,
+        pendingUpgrade: true, upgradeChoices: [{}, {}, {}], endless: { upgradeHighlight: 1 },
+      } }));
+      expect(hp.style.width).toBe('25%');
+      expect(hp.style.background).toBe('#ff5a4a');
+      expect(challenge.textContent).toContain('第 2 局');
+      expect(cards.map((card) => card.classes.has('highlighted'))).toEqual([false, true, false]);
+    } finally { await ctx.fiber.dispose(); }
+  });
+
+  it('keeps pointer choices in engine state and requires separate relic confirmation', async () => {
+    hudElement('endless-rule-modal');
+    hudElement('endless-relic-modal');
+    const rule = hudElement('rule-card-2');
+    const factor = hudElement('factor-pill-3');
+    const value = hudElement('rule-stat-val-2');
+    const confirmRule = hudElement('btn-confirm-rule');
+    const confirmRelic = hudElement('btn-confirm-relic');
+    const relics = hudElement('relic-cards');
+    const card = new HudElement();
+    card.setAttribute('data-relic-idx', '0');
+    relics.children = [card];
+    const port = Object.assign(new EventTarget(), { postMessage: vi.fn() });
+    const { ctx } = hostFixture({ port: port as unknown as MessagePort });
+    const hud = (endless: Record<string, unknown>) => port.dispatchEvent(new MessageEvent('message', {
+      data: { channel: 'island/hud-state', gameOver: true, endless },
+    }));
+    try {
+      await ctx.plugin(uiPlugin, { guide: '019fb7ce-3600-7000-8000-000000000001' });
+      hud({ phase: 'rule-pick', ruleStatIndex: 0, ruleFactorIndex: 0 });
+      rule.click();
+      expect(port.postMessage).toHaveBeenLastCalledWith(expect.objectContaining({ kind: 'rule_highlight', stat: 'moveSpeed' }));
+      factor.click();
+      expect(port.postMessage).toHaveBeenLastCalledWith(expect.objectContaining({ kind: 'rule_highlight', factor: 0.8 }));
+      hud({ phase: 'rule-pick', ruleStatIndex: 2, ruleFactorIndex: 3 });
+      expect(value.textContent).toBe('-20%');
+      confirmRule.click();
+      expect(port.postMessage).toHaveBeenLastCalledWith(expect.objectContaining({ kind: 'rule_select', stat: 'moveSpeed', factor: 0.8 }));
+      hud({ phase: 'relic-pick', relicHighlight: 0, ownedRelics: [{ kind: 'knife', level: 2 }] });
+      card.click();
+      expect(port.postMessage).toHaveBeenLastCalledWith(expect.objectContaining({ kind: 'relic_highlight', choiceIndex: 0 }));
+      confirmRelic.click();
+      expect(port.postMessage).toHaveBeenLastCalledWith(expect.objectContaining({ kind: 'relic_select', relicKind: 'knife', relicLevel: 2 }));
+    } finally { await ctx.fiber.dispose(); }
+  });
+
   it.each(['worker', 'same-realm'] as const)('routes both controllers through the %s presentation endpoint', async (realm) => {
     const channel = new MessageChannel();
     const { ctx, assets, setMode } = hostFixture(realm === 'worker'

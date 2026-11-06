@@ -31,6 +31,27 @@ import {
 } from '../simulation.ts';
 
 describe('荒岛分赃核心规则、肉鸽升级与战斗系统测试', () => {
+  it('怪物独立推进复活计时，较早到期的怪物不被数组前项阻塞', () => {
+    const sim = createInitialSimulation();
+    for (const a of sim.actors) a.attackCd = 999;
+    for (const m of sim.monsters) { m.alive = false; m.respawn = 999; }
+    sim.monsters[0]!.respawn = 1;
+    sim.monsters[1]!.respawn = 0.1;
+    stepSimulation(sim, 0.2, { moveX: 0, moveY: 0 });
+    expect(sim.monsters[0]!.alive).toBe(false);
+    expect(sim.monsters[0]!.respawn).toBeCloseTo(0.8);
+    expect(sim.monsters[1]!.alive).toBe(true);
+  });
+
+  it('世界负倍率与当局卡牌叠加后才应用伤害下限', () => {
+    const sim = createInitialSimulation({ worldMultipliers: {
+      maxHp: 1, damage: 0.2, moveSpeed: 1, attackSpeed: 1, critChance: 1,
+    } });
+    const p = sim.actors[0]!;
+    p.statDamageBonus = 1;
+    expect(calculateAttackDamage(sim, p)).toBe(5);
+  });
+
   // R01: 外部致命攻击破坏宝箱
   it('R01: external lethal attack bursts chest, scatters loot, and preserves team relationship', () => {
     const sim = createInitialSimulation();
@@ -327,6 +348,29 @@ describe('荒岛分赃核心规则、肉鸽升级与战斗系统测试', () => {
   });
 
   // R01: 飞刀命中冷却机制（0.4s CD，高帧率不产生重复多次伤害）
+  it('飞刀旋转与命中冷却受全场攻速影响，同时保留每目标冷却', () => {
+    const sim = createInitialSimulation({ rng: () => 1, worldMultipliers: {
+      maxHp: 1, damage: 1, moveSpeed: 1, attackSpeed: 2, critChance: 1,
+    } });
+    const p = sim.actors[0]!;
+    p.weaponKnife = 1;
+    p.x = 10; p.y = 10; p.knifeAngle = 0;
+    sim.monsters = [sim.monsters[0]!];
+    const target = sim.monsters[0]!;
+    Object.assign(target, { x: 11.6, y: 10, hp: 1000, maxHp: 1000, alive: true });
+    stepWeapons(sim, 0.01);
+    expect(p.knifeAngle).toBeCloseTo(0.072);
+    const firstHp = target.hp;
+    sim.elapsed = 0.1;
+    p.knifeAngle = 0;
+    stepWeapons(sim, 0.01);
+    expect(target.hp).toBe(firstHp);
+    sim.elapsed = 0.21;
+    p.knifeAngle = 0;
+    stepWeapons(sim, 0.01);
+    expect(target.hp).toBeLessThan(firstHp);
+  });
+
   it('R01: knife hit cooldown prevents multi-hit on high FPS / multiple steps within cooldown', () => {
     const sim = createInitialSimulation();
     sim.monsters.length = 0; // 清除普通怪

@@ -10,13 +10,40 @@
 // 8. 连续挑战推进至 Round 3，验证历史累乘 (如 1.20 x 0.90 = 1.08) 与真实有效体验时间统计
 // 运行: pnpm exec forgeax project play scripts/playthrough.mjs --json
 
+let verifiedUpgrades = 0;
+
+async function moveFor(play, key, seconds = 0.25) {
+  const before = await play.state('island.match');
+  return await play.keyboard.hold(key, (cur) =>
+    cur.elapsed >= before.elapsed + seconds || cur.pendingUpgrade || !cur.player.alive || cur.gameOver,
+    { read: 'island.match', timeoutMs: 3000 });
+}
+
+async function confirmUpgrade(play) {
+  const before = await play.state('island.match');
+  if (!before.pendingUpgrade || before.gameOver) return;
+  await play.screenshot(`upgrade-${verifiedUpgrades + 1}-choices`);
+  await play.advance(2);
+  const paused = await play.state('island.match');
+  if (paused.elapsed !== before.elapsed || paused.session.challengeElapsed !== before.session.challengeElapsed) {
+    throw new Error('Upgrade pause advanced simulation or challenge time');
+  }
+  const weaponIndex = before.upgradeChoices.findIndex((c) => c.type === 'weapon');
+  const targetIndex = weaponIndex >= 0 ? weaponIndex : 0;
+  const presses = (targetIndex - before.endless.upgradeHighlight + 3) % 3;
+  for (let i = 0; i < presses; i++) await play.keyboard.press('KeyD');
+  await play.keyboard.press('Space');
+  await play.waitFor((cur) => !cur.pendingUpgrade, { read: 'island.match', timeoutMs: 3000 });
+  verifiedUpgrades++;
+  await play.screenshot(`upgrade-${verifiedUpgrades}-confirmed`);
+}
+
 async function moveToward(play, targetX, targetY, stopDist = 2.0) {
   for (let i = 0; i < 15; i++) {
     let s = await play.state('island.match');
     if (!s.player.alive) break;
     if (s.pendingUpgrade) {
-      await play.keyboard.press('Space');
-      await play.waitFor((cur) => !cur.pendingUpgrade, { read: 'island.match', timeoutMs: 3000 }).catch(() => {});
+      await confirmUpgrade(play);
       s = await play.state('island.match');
     }
     const dx = targetX - s.player.x;
@@ -24,47 +51,33 @@ async function moveToward(play, targetX, targetY, stopDist = 2.0) {
     if (Math.hypot(dx, dy) <= stopDist) break;
     if (Math.abs(dx) > Math.abs(dy)) {
       const key = dx > 0 ? 'KeyD' : 'KeyA';
-      await play.keyboard.hold(
-        key,
-        (cur) =>
-          !cur.player.alive ||
-          Math.abs(targetX - cur.player.x) < Math.abs(dx) - 0.25 ||
-          Math.hypot(targetX - cur.player.x, targetY - cur.player.y) <= stopDist,
-        { read: 'island.match', timeoutMs: 1500 },
-      ).catch(() => {});
+      await moveFor(play, key);
     } else {
       const key = dy > 0 ? 'KeyS' : 'KeyW';
-      await play.keyboard.hold(
-        key,
-        (cur) =>
-          !cur.player.alive ||
-          Math.abs(targetY - cur.player.y) < Math.abs(dy) - 0.25 ||
-          Math.hypot(targetX - cur.player.x, targetY - cur.player.y) <= stopDist,
-        { read: 'island.match', timeoutMs: 1500 },
-      ).catch(() => {});
+      await moveFor(play, key);
     }
   }
 }
 
-async function advanceTime(play, totalSeconds) {
-  let remaining = totalSeconds;
-  while (remaining > 0) {
-    const step = Math.min(25, remaining);
-    if (typeof play.advance === 'function') {
-      await play.advance(step);
-    }
-    remaining -= step;
-    const cur = await play.state('island.match');
-    if (cur.pendingUpgrade) {
-      await play.keyboard.press('Space');
-      await play.waitFor((s) => !s.pendingUpgrade, { read: 'island.match', timeoutMs: 3000 }).catch(() => {});
-    }
+async function advanceTime(play, totalSeconds, stopForUpgrade = false) {
+  let cur = await play.state('island.match');
+  const targetElapsed = cur.elapsed + totalSeconds;
+  while (cur.elapsed < targetElapsed && !cur.gameOver) {
+    await play.advance(Math.min(25, targetElapsed - cur.elapsed));
+    cur = await play.state('island.match');
     if (cur.gameOver) break;
+    if (cur.pendingUpgrade) {
+      if (stopForUpgrade) return;
+      await confirmUpgrade(play);
+    }
+    cur = await play.state('island.match');
   }
 }
 
 /** @param {import('@forgeax/engine/devkit').PlayContext} play */
 export default async function playthrough(play) {
+  verifiedUpgrades = 0;
+  await play.page.waitForSelector('html[data-forgeax-input="open"]');
   // 1. 出生状态与初始候选检测
   const start = await play.step('spawn', async () => {
     await play.screenshot('01-spawn');
@@ -101,14 +114,13 @@ export default async function playthrough(play) {
       if (s.partner) break;
 
       if (s.pendingUpgrade) {
-        await play.keyboard.press('Space');
-        await play.waitFor((cur) => !cur.pendingUpgrade, { read: 'island.match', timeoutMs: 3000 }).catch(() => {});
+        await confirmUpgrade(play);
         continue;
       }
 
       if (s.incomingInvite) {
         await play.keyboard.press('Space');
-        await play.waitFor((cur) => cur.partner !== null, { read: 'island.match', timeoutMs: 4000 }).catch(() => {});
+        await play.advance(0.3);
         s = await play.state('island.match');
         if (s.partner) break;
       }
@@ -120,10 +132,7 @@ export default async function playthrough(play) {
 
       if (s.candidate && s.candidate.canInvite) {
         await play.keyboard.press('Space');
-        await play.waitFor((cur) => cur.partner !== null, {
-          read: 'island.match',
-          timeoutMs: 4000,
-        }).catch(() => {});
+        await play.advance(0.3);
         s = await play.state('island.match');
         if (s.partner) break;
       }
@@ -142,6 +151,7 @@ export default async function playthrough(play) {
     if (!s.partner) {
       throw new Error('Expected partner before testing distance warning and burst');
     }
+    const disbandsBefore = s.playerDisbands;
 
     const getAwayKey = (cur) => {
       if (!cur.partner) return 'KeyS';
@@ -159,30 +169,30 @@ export default async function playthrough(play) {
       return k;
     };
 
-    for (let step = 0; step < 16; step++) {
+    let warningState = null;
+    for (let step = 0; step < 80; step++) {
       const cur = await play.state('island.match');
-      if (!cur.partner || cur.partner.distance >= 4.0) break;
+      if (cur.pendingUpgrade) { await confirmUpgrade(play); continue; }
+      if (!cur.partner) break;
+      if (cur.partner.isWarning) { warningState = cur; break; }
       const key = getAwayKey(cur);
-      await play.keyboard.hold(key, (c) => !c.partner || c.partner.distance >= 4.0, {
-        read: 'island.match',
-        timeoutMs: 800,
-      }).catch(() => {});
+      const moved = await moveFor(play, key, 0.1);
+      if (moved.partner?.isWarning) { warningState = moved; break; }
     }
+    if (!warningState) throw new Error('Expected visible 4m team warning before burst');
     await play.screenshot('04-team-warning');
 
-    for (let step = 0; step < 20; step++) {
+    for (let step = 0; step < 80; step++) {
       const cur = await play.state('island.match');
-      if (!cur.partner || cur.playerDisbands > 0 || cur.chestBreaks > 0) break;
+      if (cur.pendingUpgrade) { await confirmUpgrade(play); continue; }
+      if (!cur.partner || cur.playerDisbands > disbandsBefore) break;
       const key = getAwayKey(cur);
-      await play.keyboard.hold(key, (c) => !c.partner || c.playerDisbands > 0 || c.chestBreaks > 0, {
-        read: 'island.match',
-        timeoutMs: 800,
-      }).catch(() => {});
+      await moveFor(play, key);
     }
 
     const cur = await play.state('island.match');
     await play.screenshot('05-team-burst');
-    if (cur.partner !== null && cur.playerDisbands === 0 && cur.chestBreaks === 0) {
+    if (cur.partner !== null || cur.playerDisbands <= disbandsBefore || cur.lastBreakEvent?.reason !== 'distance') {
       throw new Error('Expected team to break and burst chest when distance exceeds 5.0m');
     }
 
@@ -192,23 +202,12 @@ export default async function playthrough(play) {
   // 5. 验证肉鸽升级三选一与 Space 确认
   await play.step('roguelike-upgrade', async () => {
     let s = await play.state('island.match');
-    if (!s.pendingUpgrade && !s.gameOver) {
-      await advanceTime(play, 25);
+    if (verifiedUpgrades === 0 && !s.pendingUpgrade && !s.gameOver) {
+      await advanceTime(play, 90, true);
     }
     s = await play.state('island.match');
-    if (s.pendingUpgrade) {
-      await play.screenshot('06-upgrade-choices');
-      await play.keyboard.press('KeyD');
-      await play.keyboard.press('Space');
-      await play.waitFor((cur) => !cur.pendingUpgrade, {
-        read: 'island.match',
-        timeoutMs: 4000,
-      });
-      const cur = await play.state('island.match');
-      if (cur.pendingUpgrade) {
-        throw new Error('Failed to confirm upgrade with Space key');
-      }
-    }
+    if (s.pendingUpgrade) await confirmUpgrade(play);
+    if (verifiedUpgrades === 0) throw new Error('Upgrade did not occur; upgrade confirmation is unverified');
     await play.screenshot('07-upgraded');
   });
 
@@ -230,6 +229,11 @@ export default async function playthrough(play) {
       throw new Error(`Expected endless phase round-result, got ${s.endless.phase}`);
     }
     await play.screenshot('08-round1-result');
+    const challengeTime = s.session.challengeElapsed;
+    await play.advance(2);
+    if ((await play.state('island.match')).session.challengeElapsed !== challengeTime) {
+      throw new Error('Result screen counted challenge time');
+    }
   });
 
   // 7. 无限模式局末全场秘策选择 (M3)
@@ -253,6 +257,8 @@ export default async function playthrough(play) {
 
   // 8. 携带一件宝物进入 Round 2 (M4)
   await play.step('endless-relic-choice-and-round2', async () => {
+    const result = await play.state('island.match');
+    const expectedRelic = result.endless.ownedRelics[0] ?? null;
     await play.keyboard.press('Space');
     await play.waitFor(
       (cur) => cur.gameOver === false && cur.endless.roundIndex === 2 && cur.elapsed < 15,
@@ -265,6 +271,9 @@ export default async function playthrough(play) {
     }
     if (round2State.session.roundsCompleted < 1) {
       throw new Error(`Expected roundsCompleted >= 1, got ${round2State.session.roundsCompleted}`);
+    }
+    if (JSON.stringify(round2State.endless.playerRelic) !== JSON.stringify(expectedRelic)) {
+      throw new Error('Relic kind or level was not retained into round 2');
     }
     await play.screenshot('11-round2-start');
   });
@@ -287,13 +296,23 @@ export default async function playthrough(play) {
       timeoutMs: 5000,
     });
 
-    await play.keyboard.press('Space');
+    await play.page.locator('[data-ui-part="rule-card-0"]').click();
+    await play.page.locator('[data-ui-part="factor-pill-3"]').click();
+    await play.advance(0.25);
+    if (!(await play.page.locator('[data-ui-part="factor-pill-3"]').getAttribute('class')).includes('selected')) {
+      throw new Error('Pointer rule choice was overwritten by the next HUD update');
+    }
+    await play.screenshot('12b-pointer-rule-choice');
+    await play.page.locator('[data-ui-part="btn-confirm-rule"]').click();
     await play.waitFor((cur) => cur.endless.phase === 'relic-pick', {
       read: 'island.match',
       timeoutMs: 5000,
     });
 
-    await play.keyboard.press('Space');
+    await play.page.locator('[data-relic-idx="0"]').click();
+    await play.advance(0.25);
+    if ((await play.state('island.match')).endless.roundIndex !== 2) throw new Error('Relic highlight started a round before confirmation');
+    await play.page.locator('[data-ui-part="btn-confirm-relic"]').click();
     await play.waitFor(
       (cur) => cur.gameOver === false && cur.endless.roundIndex === 3 && cur.elapsed < 15,
       { read: 'island.match', timeoutMs: 8000 },
@@ -306,13 +325,29 @@ export default async function playthrough(play) {
     if (round3State.session.roundsCompleted < 2) {
       throw new Error(`Expected roundsCompleted >= 2, got ${round3State.session.roundsCompleted}`);
     }
-    if (round3State.endless.rulesCount < 10) {
+    if (round3State.endless.rulesCount !== 20) {
       throw new Error(`Expected rule accumulation across rounds, rulesCount=${round3State.endless.rulesCount}`);
+    }
+    const pointerRule = round3State.endless.rules.find((r) => r.ownerId === 0 && r.chosenAtRound === 2);
+    if (pointerRule?.stat !== 'maxHp' || pointerRule?.factor !== 0.8) throw new Error('Pointer rule selection applied the wrong stat or factor');
+    for (const stat of ['maxHp', 'damage', 'moveSpeed', 'attackSpeed', 'critChance']) {
+      const expected = round3State.endless.rules.filter((r) => r.stat === stat).reduce((v, r) => v * r.factor, 1);
+      if (Math.abs(round3State.endless.worldMultipliers[stat] - expected) > 0.001) {
+        throw new Error(`Historical world multiplier mismatch: ${stat}`);
+      }
     }
     await play.screenshot('13-round3-start');
   });
 
   const finalState = await play.state('island.match');
+  await play.reload();
+  await play.page.waitForSelector('html[data-forgeax-input="open"]');
+  const reloaded = await play.state('island.match');
+  if (reloaded.endless.roundIndex !== 1 || reloaded.endless.rulesCount !== 0) throw new Error('Reload did not start a fresh challenge');
+  const beforeReloadWalk = reloaded.player.y;
+  const afterReloadWalk = await play.keyboard.hold('KeyS', (s) => s.player.y > beforeReloadWalk + 0.25, { read: 'island.match', timeoutMs: 3000 });
+  if (afterReloadWalk.player.y <= beforeReloadWalk + 0.25) throw new Error('Movement failed after reload');
+  await play.screenshot('14-reload-playable');
   return {
     walked: Number(distance(walked).toFixed(2)),
     aliveCount: finalState.aliveCount,

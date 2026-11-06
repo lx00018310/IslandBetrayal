@@ -234,6 +234,7 @@ export async function createGuideUi(
     let selectedFactorIndex = 0;
     let selectedRelicIndex = 0;
     let cachedOwnedRelics: CarryRelic[] = [];
+    let currentMode: 'normal' | 'endless' = 'endless';
 
     // 无限模式选择弹窗元素
     const ruleModal = shadow?.querySelector<HTMLElement>('[data-ui-part="endless-rule-modal"]');
@@ -242,6 +243,7 @@ export async function createGuideUi(
     const btnConfirmRule = shadow?.querySelector<HTMLButtonElement>('[data-ui-part="btn-confirm-rule"]');
     const btnConfirmRelic = shadow?.querySelector<HTMLButtonElement>('[data-ui-part="btn-confirm-relic"]');
     const btnResetEndless = shadow?.querySelector<HTMLButtonElement>('[data-ui-part="btn-reset-endless"]');
+    const btnSwitchMode = shadow?.querySelector<HTMLButtonElement>('[data-ui-part="btn-switch-mode"]');
     const worldBanner = shadow?.querySelector<HTMLElement>('[data-ui-part="world-banner"]');
     const worldBannerText = shadow?.querySelector<HTMLElement>('[data-ui-part="world-banner-text"]');
     const modeBadge = shadow?.querySelector<HTMLElement>('[data-ui-part="mode-badge"]');
@@ -253,6 +255,7 @@ export async function createGuideUi(
         if (card) {
           card.addEventListener('click', () => {
             selectedStatIndex = s;
+            sendTouch({ kind: 'rule_highlight', stat: STAT_TARGETS[s] });
             updateRuleModalSelection();
           });
         }
@@ -264,6 +267,7 @@ export async function createGuideUi(
         if (pill) {
           pill.addEventListener('click', () => {
             selectedFactorIndex = f;
+            sendTouch({ kind: 'rule_highlight', factor: STAT_FACTORS[f] });
             updateRuleModalSelection();
           });
         }
@@ -293,6 +297,11 @@ export async function createGuideUi(
           sendTouch({ kind: 'restart' });
         });
       }
+      if (btnSwitchMode) {
+        btnSwitchMode.addEventListener('click', () => {
+          sendTouch({ kind: 'mode_select', mode: currentMode === 'endless' ? 'normal' : 'endless' });
+        });
+      }
     }
 
     const updateRuleModalSelection = () => {
@@ -300,6 +309,9 @@ export async function createGuideUi(
       for (let s = 0; s < 5; s++) {
         const card = shadow.querySelector<HTMLElement>(`[data-ui-part="rule-card-${s}"]`);
         if (card) card.classList.toggle('selected', s === selectedStatIndex);
+        const value = shadow.querySelector<HTMLElement>(`[data-ui-part="rule-stat-val-${s}"]`);
+        const pct = Math.round(((STAT_FACTORS[selectedFactorIndex] ?? 1.2) - 1) * 100);
+        if (value) value.textContent = `${pct > 0 ? '+' : ''}${pct}%`;
       }
       for (let f = 0; f < 4; f++) {
         const pill = shadow.querySelector<HTMLElement>(`[data-ui-part="factor-pill-${f}"]`);
@@ -395,7 +407,7 @@ export async function createGuideUi(
         const cMm = Math.floor(challengeElapsed / 60);
         const cSs = Math.floor(challengeElapsed % 60);
         if (challengeStatsElem) {
-          challengeStatsElem.textContent = `挑战 ${cMm.toString().padStart(2, '0')}:${cSs.toString().padStart(2, '0')} · 第 ${roundsCompleted} 局`;
+          challengeStatsElem.textContent = `挑战 ${cMm.toString().padStart(2, '0')}:${cSs.toString().padStart(2, '0')} · 第 ${state.roundIndex ?? 1} 局`;
         }
 
         // 经验条与等级同步
@@ -410,7 +422,7 @@ export async function createGuideUi(
         }
 
         // 升级三选一面板弹窗同步
-        const isUpgradePending = state.pendingUpgrade === true;
+        const isUpgradePending = state.pendingUpgrade === true && !state.gameOver;
         activeUpgradePending = isUpgradePending;
         const choices = state.upgradeChoices as UpgradeOption[] | undefined;
 
@@ -423,6 +435,9 @@ export async function createGuideUi(
               const title = shadow?.querySelector<HTMLElement>(`[data-ui-part="card-title-${i}"]`);
               const desc = shadow?.querySelector<HTMLElement>(`[data-ui-part="card-desc-${i}"]`);
               const preview = shadow?.querySelector<HTMLElement>(`[data-ui-part="card-preview-${i}"]`);
+              const card = shadow?.querySelector<HTMLElement>(`[data-ui-part="upgrade-card-${i}"]`);
+              const highlight = (state.endless as { upgradeHighlight?: number } | undefined)?.upgradeHighlight ?? 0;
+              card?.classList.toggle('highlighted', highlight === i);
 
               if (badge) badge.textContent = c.type === 'weapon' ? '技能' : '属性';
               if (title) title.textContent = c.title;
@@ -459,8 +474,10 @@ export async function createGuideUi(
 
         if (hpFill) {
           const hp = typeof state.hp === 'number' ? Math.max(0, state.hp) : 100;
-          hpFill.style.width = `${hp}%`;
-          hpFill.style.background = hp > 30 ? '#7ee08a' : '#ff5a4a';
+          const maxHp = typeof state.maxHp === 'number' ? state.maxHp : 100;
+          const pct = Math.min(100, Math.max(0, hp / maxHp * 100));
+          hpFill.style.width = `${pct}%`;
+          hpFill.style.background = pct > 30 ? '#7ee08a' : '#ff5a4a';
         }
 
         // 动态同步场上队伍列表
@@ -576,6 +593,8 @@ export async function createGuideUi(
           | undefined;
 
         if (endlessState) {
+          currentMode = endlessState.mode;
+          if (btnSwitchMode) btnSwitchMode.textContent = currentMode === 'endless' ? '新开普通单局' : '新开无限挑战';
           if (modeBadge) {
             modeBadge.textContent =
               endlessState.mode === 'endless'
@@ -633,22 +652,18 @@ export async function createGuideUi(
                     <span class="relic-level">无宝物</span>
                   </button>
                 `;
-                relicCardsContainer.innerHTML = html;
-
-                relicCardsContainer.querySelectorAll('.relic-card').forEach((btn) => {
-                  btn.addEventListener('click', (e) => {
-                    const idxStr = (e.currentTarget as HTMLElement).getAttribute('data-relic-idx');
-                    if (idxStr !== null) {
-                      selectedRelicIndex = parseInt(idxStr, 10);
-                      const chosen = cachedOwnedRelics[selectedRelicIndex] ?? null;
-                      sendTouch({
-                        kind: 'relic_select',
-                        relicKind: chosen?.kind ?? null,
-                        relicLevel: chosen?.level ?? 1,
-                      });
-                    }
+                if (relicCardsContainer.innerHTML !== html) {
+                  relicCardsContainer.innerHTML = html;
+                  relicCardsContainer.querySelectorAll('.relic-card').forEach((btn) => {
+                    btn.addEventListener('click', (e) => {
+                      const idxStr = (e.currentTarget as HTMLElement).getAttribute('data-relic-idx');
+                      if (idxStr !== null) {
+                        selectedRelicIndex = parseInt(idxStr, 10);
+                        sendTouch({ kind: 'relic_highlight', choiceIndex: selectedRelicIndex });
+                      }
+                    });
                   });
-                });
+                }
               }
             } else {
               relicModal.classList.add('hidden');
@@ -668,8 +683,9 @@ export async function createGuideUi(
 
         // 胜负结算展示（R02 & R10：准确判断 winnerId 与真实名次）
         if (resultModal) {
-          if (state.gameOver && endlessState?.phase === 'round-result') {
+          if (state.gameOver && (endlessState?.mode === 'normal' || endlessState?.phase === 'round-result')) {
             resultModal.classList.remove('hidden');
+            if (btnRestart) btnRestart.textContent = endlessState?.mode === 'normal' ? '再来一局 (Space)' : '进入下局秘策选择 (Space)';
             const isWinner = state.isWinner === true;
             if (resultTitle) {
               resultTitle.textContent = isWinner

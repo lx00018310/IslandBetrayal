@@ -988,7 +988,7 @@ export function calculateAttackDamage(sim: SimulationState, attacker: ActorState
   return calculateEffectiveDamage(
     baseDamage,
     attacker.statDamageBonus,
-    sim.effectiveMultipliers.damage,
+    sim.worldMultipliers.damage,
   );
 }
 
@@ -1125,8 +1125,9 @@ export function stepWeapons(sim: SimulationState, dt: number): void {
 
   // 1. 环绕飞刀
   for (const a of aliveActors(sim)) {
+    const attackSpeed = calculateEffectiveAttackSpeed(a.statAttackSpeedBonus, sim.worldMultipliers.attackSpeed);
     if (a.weaponKnife > 0) {
-      a.knifeAngle += dt * 3.6;
+      a.knifeAngle += dt * 3.6 * attackSpeed;
       const count = a.weaponKnife;
       const radius = 1.6 * (1 + a.statAreaBonus);
       const knifeDmg = Math.round(calculateAttackDamage(sim, a) * 0.65);
@@ -1143,7 +1144,7 @@ export function stepWeapons(sim: SimulationState, dt: number): void {
             const mKey = `${a.id}:m:${m.id}`;
             const nextHit = sim.knifeHits.get(mKey) ?? 0;
             if (sim.elapsed >= nextHit) {
-              sim.knifeHits.set(mKey, sim.elapsed + 0.4);
+              sim.knifeHits.set(mKey, sim.elapsed + 0.4 / attackSpeed);
               const crit = calculateEffectiveCrit(sim.effectiveMultipliers.critChance);
               const hit = resolveHitDamage(
                 knifeDmg,
@@ -1163,7 +1164,7 @@ export function stepWeapons(sim: SimulationState, dt: number): void {
             const aKey = `${a.id}:a:${o.id}`;
             const nextHit = sim.knifeHits.get(aKey) ?? 0;
             if (sim.elapsed >= nextHit) {
-              sim.knifeHits.set(aKey, sim.elapsed + 0.4);
+              sim.knifeHits.set(aKey, sim.elapsed + 0.4 / attackSpeed);
               resolveHostileHit(sim, o, knifeDmg, a);
             }
           }
@@ -1177,7 +1178,7 @@ export function stepWeapons(sim: SimulationState, dt: number): void {
       if (a.arrowTimer <= 0) {
         const effAtkSpd = calculateEffectiveAttackSpeed(
           a.statAttackSpeedBonus,
-          sim.effectiveMultipliers.attackSpeed,
+          sim.worldMultipliers.attackSpeed,
         );
         a.arrowTimer = Math.max(0.3, (1.6 - a.weaponArrow * 0.25) / effAtkSpd);
 
@@ -1223,7 +1224,7 @@ export function stepWeapons(sim: SimulationState, dt: number): void {
       if (a.bombTimer <= 0) {
         const effAtkSpd = calculateEffectiveAttackSpeed(
           a.statAttackSpeedBonus,
-          sim.effectiveMultipliers.attackSpeed,
+          sim.worldMultipliers.attackSpeed,
         );
         a.bombTimer = Math.max(0.5, (2.8 - a.weaponBomb * 0.35) / effAtkSpd);
         const radius = (1.8 + a.weaponBomb * 0.45) * (1 + a.statAreaBonus);
@@ -1726,7 +1727,7 @@ export function stepSimulation(
       calculateEffectiveMoveSpeed(
         3.1,
         a.statSpeedBonus,
-        sim.effectiveMultipliers.moveSpeed,
+        sim.worldMultipliers.moveSpeed,
         isSlowed,
       ) * dt;
     const nx = a.x + a.vx * sp;
@@ -1793,25 +1794,27 @@ export function stepSimulation(
   }
 
   // 9. 怪物波次动态刷新（仅在当前安全陆地生成）
+  for (const m of sim.monsters) {
+    if (!m.alive && m.kind !== 'boss') {
+      m.respawn -= dt * (sim.activeEvent === 'monster_frenzy' ? 2.2 : 1.0);
+    }
+  }
   const activeMonsters = sim.monsters.filter((m) => m.alive && m.kind !== 'boss');
   if (activeMonsters.length < sim.maxMonsters) {
-    const deadMonster = sim.monsters.find((m) => !m.alive && m.kind !== 'boss');
+    const deadMonster = sim.monsters.find((m) => !m.alive && m.kind !== 'boss' && m.respawn <= 0);
     if (deadMonster) {
-      deadMonster.respawn -= dt * (sim.activeEvent === 'monster_frenzy' ? 2.2 : 1.0);
-      if (deadMonster.respawn <= 0) {
-        // 寻找一个安全未崩塌陆地网格
-        for (let tries = 0; tries < 15; tries++) {
-          const gx = Math.floor(center + (Math.random() - 0.5) * 16);
-          const gy = Math.floor(center + (Math.random() - 0.5) * 16);
-          const t = tileAt(sim, gx, gy);
-          if (t && t.isLand && !t.gone && t.r <= currentRadius - 0.1) {
-            deadMonster.x = gx + (Math.random() - 0.5) * 0.8;
-            deadMonster.y = gy + (Math.random() - 0.5) * 0.8;
-            deadMonster.hp = deadMonster.maxHp;
-            deadMonster.alive = true;
-            deadMonster.respawn = 0;
-            break;
-          }
+      // 寻找一个安全未崩塌陆地网格
+      for (let tries = 0; tries < 15; tries++) {
+        const gx = Math.floor(center + (Math.random() - 0.5) * 16);
+        const gy = Math.floor(center + (Math.random() - 0.5) * 16);
+        const t = tileAt(sim, gx, gy);
+        if (t && t.isLand && !t.gone && t.r <= currentRadius - 0.1) {
+          deadMonster.x = gx + (Math.random() - 0.5) * 0.8;
+          deadMonster.y = gy + (Math.random() - 0.5) * 0.8;
+          deadMonster.hp = deadMonster.maxHp;
+          deadMonster.alive = true;
+          deadMonster.respawn = 0;
+          break;
         }
       }
     }
@@ -1867,7 +1870,7 @@ export function stepSimulation(
     if (targetMonster) {
       const effAtkSpd = calculateEffectiveAttackSpeed(
         a.statAttackSpeedBonus,
-        sim.effectiveMultipliers.attackSpeed,
+        sim.worldMultipliers.attackSpeed,
       );
       a.attackCd = Math.max(0.45, (0.7 - a.treasure * 0.008) / effAtkSpd);
       const dmg = calculateAttackDamage(sim, a);
@@ -1882,7 +1885,7 @@ export function stepSimulation(
     } else if (targetActor) {
       const effAtkSpd = calculateEffectiveAttackSpeed(
         a.statAttackSpeedBonus,
-        sim.effectiveMultipliers.attackSpeed,
+        sim.worldMultipliers.attackSpeed,
       );
       a.attackCd = Math.max(0.45, (0.7 - a.treasure * 0.008) / effAtkSpd);
       const dmg = calculateAttackDamage(sim, a);

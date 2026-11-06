@@ -109,4 +109,11 @@ describe('统一数值系统（PoE 分层计算与安全边界）测试', () => 
     expect(calculateEffectiveDamage(10, 0, 0.2)).toBe(5); // min clamp 0.5 -> 5
     expect(calculateEffectiveDamage(10, 0, 10.0)).toBe(40); // max clamp 4.0 -> 40
   });
+
+  it('卡牌加成与原始世界倍率全部相乘后才限幅', () => {
+    expect(calculateEffectiveDamage(10, 1, 0.2)).toBe(5);
+    expect(calculateEffectiveDamage(10, 1, 3)).toBe(40);
+    expect(calculateEffectiveMoveSpeed(3.1, 1, 0.4)).toBe(2.48);
+    expect(calculateEffectiveAttackSpeed(1, 0.3)).toBe(0.6);
+  });
 });
