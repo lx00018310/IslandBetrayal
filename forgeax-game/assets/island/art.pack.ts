@@ -618,8 +618,8 @@ export default definePack({
       };
     }
 
-    // 3 把环绕飞刀
-    for (let i = 0; i < 3; i++) {
+    // 30 把环绕飞刀（10 名角色 × 最多 3 把；保留 player-knife-0..2 兼容旧键）
+    for (let i = 0; i < 30; i++) {
       entities[`player-knife-${i}`] = {
         components: {
           Name: { value: `Knife ${i}` },
@@ -630,8 +630,8 @@ export default definePack({
       };
     }
 
-    // 8 支穿透箭矢
-    for (let i = 0; i < 8; i++) {
+    // 24 支穿透箭矢（多人同时发射的可辨认实体池）
+    for (let i = 0; i < 24; i++) {
       entities[`arrow-${i}`] = {
         components: {
           Name: { value: `Arrow ${i}` },
@@ -642,8 +642,8 @@ export default definePack({
       };
     }
 
-    // 4 颗炸弹与冲击波
-    for (let i = 0; i < 4; i++) {
+    // 12 颗炸弹与冲击波
+    for (let i = 0; i < 12; i++) {
       entities[`bomb-${i}`] = {
         components: {
           Name: { value: `Bomb ${i}` },
@@ -661,6 +661,28 @@ export default definePack({
         },
       };
     }
+
+    // 3 处中央岩石掩体（阻挡移动与视线，使用现有 mesh/rock）
+    for (let i = 0; i < 3; i++) {
+      entities[`cover-${i}`] = {
+        components: {
+          Name: { value: `Cover Rock ${i}` },
+          Transform: { pos: [0, -999, 0], scale: [1.6, 1.4, 1.6] },
+          MeshFilter: { assetHandle: guidText(assetGuid(PACKAGE_IDS.islandArt, 'mesh/rock')) },
+          MeshRenderer: { materials: [guidText(assetGuid(PACKAGE_IDS.islandArt, 'material/rock'))] },
+        },
+      };
+    }
+
+    // Boss 圈形预警环（可躲的范围攻击前摇）
+    entities['raid-telegraph'] = {
+      components: {
+        Name: { value: 'Raid Telegraph Ring' },
+        Transform: { pos: [0, -999, 0], quat: [SHADOW_QUAT[0], SHADOW_QUAT[1], SHADOW_QUAT[2], SHADOW_QUAT[3]] },
+        MeshFilter: { assetHandle: guidText(assetGuid(PACKAGE_IDS.islandArt, 'mesh/blast-ring')) },
+        MeshRenderer: { materials: [guidText(assetGuid(PACKAGE_IDS.islandArt, 'material/danger-border'))] },
+      },
+    };
 
     // 72 个公共散落金宝物实体池
     for (let i = 0; i < 72; i++) {
@@ -821,9 +843,9 @@ export default definePack({
         emissiveIntensity: 3.0,
       }),
       'material/boss-body': Materials.standard({
-        baseColor: [0.32, 0.05, 0.12, 1],
-        roughness: 0.45,
-        metallic: 0.3,
+        baseColor: [0.62, 0.09, 0.16, 1],
+        roughness: 0.4,
+        metallic: 0.25,
       }),
       'material/boss-eyes': Materials.standard({
         baseColor: [1.0, 0.38, 0.05, 1],

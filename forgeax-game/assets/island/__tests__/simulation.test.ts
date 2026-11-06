@@ -43,13 +43,14 @@ describe('荒岛分赃核心规则、肉鸽升级与战斗系统测试', () => {
     expect(sim.monsters[1]!.alive).toBe(true);
   });
 
-  it('世界负倍率与当局卡牌叠加后才应用伤害下限', () => {
+  it('世界负倍率与当局卡牌叠加后真实相乘，仅应用伤害最小 1 点', () => {
     const sim = createInitialSimulation({ worldMultipliers: {
       maxHp: 1, damage: 0.2, moveSpeed: 1, attackSpeed: 1, critChance: 1,
     } });
     const p = sim.actors[0]!;
     p.statDamageBonus = 1;
-    expect(calculateAttackDamage(sim, p)).toBe(5);
+    // 10 * (1+1) * 0.2 = 4（旧实现 clamp 到 0.5 倍得 5，现已移除人为上限）
+    expect(calculateAttackDamage(sim, p)).toBe(4);
   });
 
   // R01: 外部致命攻击破坏宝箱
@@ -242,41 +243,57 @@ describe('荒岛分赃核心规则、肉鸽升级与战斗系统测试', () => {
     expect(sim.bombs[0]!.ownerId).toBe(p.id);
   });
 
-  // P1-A: 180s Boss 战
-  it('P1-A: spawns boss at 180s with high HP and drops 8 XP plus 8 treasures on kill', () => {
+  // A: 120s / 240s 两次全员 Boss 团战（旧 180s 单次已移除）
+  it('A: triggers the first all-survivor Boss raid at 120s and never at 180s', () => {
     const sim = createInitialSimulation();
-    const center = (GRID_SIZE - 1) / 2;
     const p = sim.actors[0]!;
-    p.x = center;
-    p.y = center + 1; // 靠近中心以进入攻击距离
-    sim.elapsed = 179.9;
+    p.x = 11;
+    p.y = 11;
 
-    stepSimulation(sim, 0.2, {
-      moveX: 0,
-      moveY: 0,
-      dash: false,
-      speedToggle: false,
-      restart: false,
-    });
+    sim.elapsed = 119.9;
+    stepSimulation(sim, 0.2, { moveX: 0, moveY: 0 });
+    expect(sim.raidPhase).toBe('warning');
+    expect(sim.bossRound).toBe(1);
+    expect(sim.raidParticipants.length).toBeGreaterThan(0);
+    expect(sim.raidBossMaxHp).toBeGreaterThan(0);
 
-    expect(sim.bossSpawned).toBe(true);
-    expect(sim.boss).not.toBeNull();
-    expect(sim.boss?.kind).toBe('boss');
+    // 推进团战直到结束（不超过 45s 兜底）
+    for (let i = 0; i < 200 && sim.raidPhase !== 'none'; i++) {
+      stepSimulation(sim, 0.3, { moveX: 0, moveY: 0 });
+    }
+    expect(sim.raidPhase).toBe('none');
+    // 主对局时钟在团战期间冻结，因此仍在 120s 附近，不会出现 180s 旧 Boss
+    expect(sim.bossRound).toBe(1);
+  });
 
-    sim.boss!.hp = 1;
-    p.attackCd = 0;
+  it('A: triggers the second Boss raid at 240s, then final phase (boss before disband)', () => {
+    const sim = createInitialSimulation();
+    const p = sim.actors[0]!;
+    p.x = 11;
+    p.y = 11;
+    // 先完成第一场
+    sim.elapsed = 119.9;
+    stepSimulation(sim, 0.2, { moveX: 0, moveY: 0 });
+    for (let i = 0; i < 200 && sim.raidPhase !== 'none'; i++) {
+      stepSimulation(sim, 0.3, { moveX: 0, moveY: 0 });
+    }
 
-    stepSimulation(sim, 0.8, {
-      moveX: 0,
-      moveY: 0,
-      dash: false,
-      speedToggle: false,
-      restart: false,
-    });
+    // 推进主时钟到 240s 触发第二场
+    sim.elapsed = 239.9;
+    stepSimulation(sim, 0.2, { moveX: 0, moveY: 0 });
+    expect(sim.raidPhase).toBe('warning');
+    expect(sim.bossRound).toBe(2);
 
-    // 击败 Boss 奖励结算
-    expect(sim.boss?.alive).toBe(false);
-    expect(sim.loots.length).toBeGreaterThanOrEqual(8);
+    // 团战期间不进入 finalPhase
+    stepSimulation(sim, 1.0, { moveX: 0, moveY: 0 });
+    expect(sim.finalPhase).toBe(false);
+
+    for (let i = 0; i < 200 && sim.raidPhase !== 'none'; i++) {
+      stepSimulation(sim, 0.3, { moveX: 0, moveY: 0 });
+    }
+    // 第二场结束后才解盟进入最终混战
+    expect(sim.raidPhase).toBe('none');
+    expect(sim.finalPhase).toBe(true);
   });
 
   // P1-C: 特殊事件
@@ -317,11 +334,28 @@ describe('荒岛分赃核心规则、肉鸽升级与战斗系统测试', () => {
     for (let i = 2; i < 10; i++) {
       sim.actors[i]!.alive = false;
     }
-    // 置于中心安全陆地避免缩圈坠落
-    p.x = center; p.y = center; p.hp = 80;
-    a.x = center + 0.1; a.y = center; a.hp = 60;
+    // 置于中心安全陆地避免缩圈坠落；给足 HP 以在两次 Boss 团战中存活
+    p.x = center; p.y = center; p.hp = 5000; p.maxHp = 5000;
+    a.x = center + 0.1; a.y = center; a.hp = 3000; a.maxHp = 3000;
     p.team = a.id; a.team = p.id;
 
+    // 先完成 120s / 240s 两场全员 Boss 团战（Plan A），再进入加时
+    sim.elapsed = 119.9;
+    stepSimulation(sim, 0.2, { moveX: 0, moveY: 0 });
+    for (let i = 0; i < 400 && sim.raidPhase !== 'none'; i++) {
+      stepSimulation(sim, 0.3, { moveX: 0, moveY: 0 });
+    }
+    sim.elapsed = 239.9;
+    stepSimulation(sim, 0.2, { moveX: 0, moveY: 0 });
+    for (let i = 0; i < 400 && sim.raidPhase !== 'none'; i++) {
+      stepSimulation(sim, 0.3, { moveX: 0, moveY: 0 });
+    }
+    // 团战奖励 XP 会触发玩家升级暂停，先处理完卡片再推进时钟
+    sim.pendingUpgrade = false;
+    sim.upgradePaused = false;
+    sim.pendingUpgradeCount = 0;
+    sim.upgradeChoices = [];
+    // 推进主时钟到 300s+ 进入加时
     sim.elapsed = 300.1;
     stepSimulation(sim, 0.1, {
       moveX: 0,

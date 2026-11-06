@@ -4,6 +4,7 @@
 // P0/P1 肉鸽割草拓展：怪潮波次、经验升级三选一、三类武器（飞刀/箭矢/炸弹）、Boss战、特殊事件、终局加时决胜
 
 import {
+  burdenFactor,
   calculateEffectiveAttackSpeed,
   calculateEffectiveCrit,
   calculateEffectiveDamage,
@@ -11,8 +12,10 @@ import {
   calculateEffectiveMoveSpeed,
   computeEffectiveMultipliers,
   resolveHitDamage,
+  survivalDamageMultiplier,
   type CarryRelic,
   type EffectiveMultipliers,
+  type RelicAffix,
   type WorldMultipliers,
 } from './stats.ts';
 
@@ -30,6 +33,44 @@ export const ALLY_INVITE_TTL = 5.0;
 export const ALLY_IGNORE_SECONDS = 60.0;
 export const TEAM_WARNING_DISTANCE = 4.0;
 export const TEAM_BREAK_DISTANCE = 5.0;
+
+// 两次全员 Boss 团战（主对局时钟 120s / 240s）
+export const RAID_TRIGGER_SECONDS = [120, 240] as const;
+export const RAID_WARNING_SECONDS = 3.0;
+export const RAID_MAX_SECONDS = 45.0;
+export const RAID_RESULT_SECONDS = 2.5;
+export const RAID_PARTICIPATION_XP = 4;
+export const RAID_PARTICIPATION_TREASURE = 2;
+export const RAID_FAIL_HP_LOSS = 0.15;
+
+// 分段缩圈：主对局时钟每满 60s 半径 ×0.85；240s Boss 后再快速收至中心
+export const SHRINK_THRESHOLD_SECONDS = [0, 60, 120, 180, 240, 260, 280, 300] as const;
+export const SHRINK_RADIUS_MULT = [1, 0.85, 0.7225, 0.614125, 0.52200625, 0.44, 0.36, 0.3] as const;
+export const SHRINK_TRANSITION_SECONDS = 5.0;
+
+// 掩体遮挡减伤（炸弹/Boss 圈形攻击被岩石挡住时）
+export const COVER_BLOCK_DAMAGE_SCALE = 0.3;
+
+/** 终局前直接攻击角色伤害系数：0 表示终局前不直接扣角色 HP（主题是掠夺宝箱） */
+export const PRE_FINAL_ACTOR_DAMAGE_SCALE = 0;
+
+/** 攻击周期合法性下界（不是攻速上限：真实频率仍可无限增长，只是周期不能为 0） */
+export const MIN_LEGAL_CYCLE = 1e-4;
+
+/** 怪物仇恨半径（避免全岛 16~40 只怪同时围攻单一角色） */
+export const MONSTER_AGGRO_RADIUS = 3.5;
+
+/** 同一角色最多被几只怪贴身攻击（避免怪潮围殴瞬间秒杀） */
+export const MAX_MONSTERS_PER_TARGET = 1;
+
+/** 角色脱战生命回复（HP/秒），避免长期损耗后无法继续游戏 */
+export const ACTOR_HP_REGEN_PER_SECOND = 5.0;
+
+/** AI 低血撤退阈值（低于该比例时优先远离怪潮回血） */
+export const AI_RETREAT_HP_RATIO = 0.5;
+
+/** 玩家出生保护期（真实秒，含加载与开局无操作窗口） */
+export const PLAYER_SPAWN_PROTECTION_SECONDS = 20.0;
 
 export const PLAYER_COLORS = [
   '#e05a4f', '#3f8ee0', '#e8b53c', '#5fbf6a', '#a06bdd',
@@ -96,6 +137,10 @@ export interface ActorState {
   statSpeedBonus: number;
   statAttackSpeedBonus: number;
   statAreaBonus: number;
+  /** 个人失利负担乘区（无限模式 0..20 层 → ×1.00..×0.80） */
+  personalMultiplier: number;
+  /** 携带宝物词条（仅跨局继承的宝物拥有，首版最多 1 条） */
+  relicAffix: RelicAffix | null;
 
   knifeAngle: number;
   arrowTimer: number;
@@ -271,10 +316,44 @@ export interface SimulationState {
   knifeHits: Map<string, number>;
   rng?: () => number;
 
+  // 单局死亡增伤（每淘汰 1 名参赛角色，幸存者伤害 ×1.20）
+  eliminatedCount: number;
+  eliminatedActorIds: Set<number>;
+
+  // 分段缩圈（分钟档位 + 过渡）
+  shrinkStage: number;
+  shrinkTransition: number;
+
+  // 两次全员 Boss 团战
+  bossRound: 0 | 1 | 2;
+  raidPhase: 'none' | 'warning' | 'fight' | 'result';
+  raidElapsed: number;
+  raidParticipants: number[];
+  raidContributions: Map<number, number>;
+  raidDamage: number;
+  raidBossMaxHp: number;
+  raidBossHp: number;
+  raidBossX: number;
+  raidBossY: number;
+  raidTelegraphX: number;
+  raidTelegraphY: number;
+  raidTelegraphRadius: number;
+  raidTelegraphTimer: number;
+  raidAttackCd: number;
+  raidBossDamage: number;
+  raidFailed: boolean;
+  raidPendingFinalPhase: boolean;
+
+  // 敌人难度成长（无限模式按局数与战力缩放）
+  enemyHpScale: number;
+  enemyDamageScale: number;
+
   // 肉鸽扩展状态
   pendingUpgrade: boolean;
   upgradePaused: boolean;
   upgradeChoices: UpgradeOption[];
+  /** 玩家待处理升级次数（连续升级排队，不覆盖未选卡片） */
+  pendingUpgradeCount: number;
   arrows: ArrowState[];
   bombs: BombState[];
   activeEvent: MatchEventKind;
@@ -304,6 +383,121 @@ export function dist(a: Vec2, b: Vec2): number {
 
 export function landRadius(shrink: number): number {
   return 0.98 * (1 - shrink * 0.62);
+}
+
+/** 默认宝物词条：按武器种类给出首版唯一合法词条 */
+export function defaultRelicAffix(kind: 'knife' | 'arrow' | 'bomb'): RelicAffix {
+  if (kind === 'knife') return 'knifeArea';
+  if (kind === 'arrow') return 'arrowPierce';
+  return 'bombRadius';
+}
+
+/**
+ * 当前分段缩圈档位（主对局时钟每满 60s 一档，240s Boss 后 260/280/300 快速收束）。
+ * 只由主对局时钟（sim.elapsed）驱动；Boss 团战期间主时钟冻结，因此不会交叉执行。
+ */
+export function shrinkStageFor(elapsed: number): number {
+  let stage = 0;
+  for (let i = 0; i < SHRINK_THRESHOLD_SECONDS.length; i++) {
+    if (elapsed >= SHRINK_THRESHOLD_SECONDS[i]!) stage = i;
+  }
+  return stage;
+}
+
+/** 档位对应的安全半径乘数 */
+export function shrinkRadiusMultiplier(stage: number): number {
+  const idx = clamp(stage, 0, SHRINK_RADIUS_MULT.length - 1);
+  return SHRINK_RADIUS_MULT[idx]!;
+}
+
+/** 当前有效安全半径（以地图原始半径函数为基准 × 档位乘数，过渡期间平滑插值） */
+export function currentSafeRadius(sim: SimulationState): number {
+  const base = 0.98;
+  const target = base * shrinkRadiusMultiplier(sim.shrinkStage);
+  const prevStage = Math.max(0, sim.shrinkStage - 1);
+  const prev = base * shrinkRadiusMultiplier(prevStage);
+  const t = clamp(sim.shrinkTransition / SHRINK_TRANSITION_SECONDS, 0, 1);
+  return prev + (target - prev) * t;
+}
+
+// ---------------------------------------------------------------------------
+// 中央掩体（2–3 处体素岩石）：同时阻挡移动与直线视线
+// ---------------------------------------------------------------------------
+
+export interface CoverBlock {
+  readonly id: number;
+  x: number;
+  y: number;
+  /** 半径（近似圆形碰撞/遮挡体积） */
+  radius: number;
+  /** 该掩体在多少档缩圈后消失（外侧掩体随收缩自然消失） */
+  disappearsAtStage: number;
+}
+
+/** 中央固定掩体布局（2–3 处，均有可见绕行通道，不形成密封口袋） */
+export const COVER_LAYOUT: readonly CoverBlock[] = [
+  { id: 0, x: 8.6, y: 8.6, radius: 0.75, disappearsAtStage: 6 },
+  { id: 1, x: 13.4, y: 13.4, radius: 0.75, disappearsAtStage: 6 },
+  { id: 2, x: 13.4, y: 8.6, radius: 0.55, disappearsAtStage: 7 },
+] as const;
+
+/** 当前档位仍然存在的掩体 */
+export function activeCovers(sim: SimulationState): CoverBlock[] {
+  return COVER_LAYOUT.filter((c) => sim.shrinkStage < c.disappearsAtStage);
+}
+
+/** 点是否被任一掩体阻挡（用于移动碰撞与视线遮挡） */
+export function isInsideCover(sim: SimulationState, x: number, y: number): boolean {
+  for (const c of activeCovers(sim)) {
+    if (Math.hypot(x - c.x, y - c.y) <= c.radius) return true;
+  }
+  return false;
+}
+
+/** 线段是否被掩体阻挡（视线遮挡：普通攻击/穿透箭不能穿岩） */
+export function segmentBlockedByCover(
+  sim: SimulationState,
+  x0: number,
+  y0: number,
+  x1: number,
+  y1: number,
+): boolean {
+  const covers = activeCovers(sim);
+  if (covers.length === 0) return false;
+  const dx = x1 - x0;
+  const dy = y1 - y0;
+  const len2 = dx * dx + dy * dy;
+  for (const c of covers) {
+    // 起点或终点在掩体内视为阻挡
+    if (Math.hypot(x0 - c.x, y0 - c.y) <= c.radius) return true;
+    if (Math.hypot(x1 - c.x, y1 - c.y) <= c.radius) return true;
+    if (len2 <= 1e-9) continue;
+    // 线段到圆心的最近点参数
+    let t = ((c.x - x0) * dx + (c.y - y0) * dy) / len2;
+    t = clamp(t, 0, 1);
+    const px = x0 + dx * t;
+    const py = y0 + dy * t;
+    if (Math.hypot(px - c.x, py - c.y) <= c.radius) return true;
+  }
+  return false;
+}
+
+/** 沿 X/Y 分别尝试移动（简单滑墙），返回可行落点 */
+export function slideMove(
+  sim: SimulationState,
+  fromX: number,
+  fromY: number,
+  deltaX: number,
+  deltaY: number,
+): { x: number; y: number } {
+  let x = fromX;
+  let y = fromY;
+  if (!isInsideCover(sim, fromX + deltaX, fromY + deltaY)) {
+    return { x: fromX + deltaX, y: fromY + deltaY };
+  }
+  if (!isInsideCover(sim, fromX + deltaX, fromY)) x = fromX + deltaX;
+  if (!isInsideCover(sim, x, fromY + deltaY)) y = fromY + deltaY;
+  return { x, y };
 }
 
 export function getPairKey(a: number, b: number): string {
@@ -351,6 +545,10 @@ export function ignorePair(sim: SimulationState, a: number, b: number): boolean 
 export function createInitialSimulation(options?: {
   worldMultipliers?: WorldMultipliers;
   carryRelics?: Map<number, CarryRelic>;
+  /** 每个角色的个人失利乘区（无限模式 0..20 层） */
+  personalMultipliers?: Map<number, number>;
+  /** 敌人难度成长（无限模式按局数与战力缩放怪物/Boss） */
+  enemyScale?: { hp: number; damage: number };
   rng?: () => number;
 }): SimulationState {
   const center = (GRID_SIZE - 1) / 2;
@@ -365,7 +563,9 @@ export function createInitialSimulation(options?: {
   };
   const effectiveMultipliers = computeEffectiveMultipliers(worldMultipliers);
   const knifeHits = new Map<string, number>();
-  const initialMaxHp = calculateEffectiveMaxHp(100, 0, 0, effectiveMultipliers.maxHp);
+  const personalMultipliers = options?.personalMultipliers;
+  const enemyHpScale = Math.max(0.2, options?.enemyScale?.hp ?? 1);
+  const enemyDamageScale = Math.max(0.2, options?.enemyScale?.damage ?? 1);
 
   for (let gy = 0; gy < GRID_SIZE; gy++) {
     for (let gx = 0; gx < GRID_SIZE; gx++) {
@@ -419,6 +619,14 @@ export function createInitialSimulation(options?: {
   for (let i = 0; i < 10; i++) {
     const a = 0.42 + (i / 10) * Math.PI * 2;
     const rad = 6.0 + (i % 3) * 1.2;
+    const personalMultiplier = Math.max(0.01, personalMultipliers?.get(i) ?? 1);
+    const actorMaxHp = calculateEffectiveMaxHp(
+      100,
+      0,
+      0,
+      effectiveMultipliers.maxHp,
+      personalMultiplier,
+    );
     actors.push({
       id: i,
       name: PLAYER_NAMES[i] ?? `角色${i}`,
@@ -428,8 +636,8 @@ export function createInitialSimulation(options?: {
       y: center + Math.sin(a) * rad,
       vx: 0,
       vy: 0,
-      hp: initialMaxHp,
-      maxHp: initialMaxHp,
+      hp: actorMaxHp,
+      maxHp: actorMaxHp,
       alive: true,
       team: -1,
       treasure: 0,
@@ -455,13 +663,15 @@ export function createInitialSimulation(options?: {
       statSpeedBonus: 0,
       statAttackSpeedBonus: 0,
       statAreaBonus: 0,
+      personalMultiplier,
+      relicAffix: null,
       knifeAngle: i * 0.6,
       arrowTimer: 0.5 + i * 0.2,
       bombTimer: 1.0 + i * 0.3,
     });
   }
 
-  // 若携带宝物跨局，继承该件宝物等级（其他武器与财富全部清零）
+  // 若携带宝物跨局，继承该件宝物等级与词条（其他武器与财富全部清零）
   if (options?.carryRelics) {
     for (const actor of actors) {
       const relic = options.carryRelics.get(actor.id);
@@ -470,6 +680,7 @@ export function createInitialSimulation(options?: {
         if (relic.kind === 'knife') actor.weaponKnife = lvl;
         else if (relic.kind === 'arrow') actor.weaponArrow = lvl;
         else if (relic.kind === 'bomb') actor.weaponBomb = lvl;
+        actor.relicAffix = relic.affix ?? defaultRelicAffix(relic.kind);
       }
     }
   }
@@ -480,9 +691,10 @@ export function createInitialSimulation(options?: {
     const a = (i / 12) * Math.PI * 2 + 0.3;
     const isInitial = i < 12;
     const kind: MonsterKind = i % 5 === 0 ? 'tank' : i % 3 === 0 ? 'dasher' : 'chaser';
-    const hp = kind === 'tank' ? 8 : kind === 'dasher' ? 4 : 3;
+    const baseHp = kind === 'tank' ? 8 : kind === 'dasher' ? 4 : 3;
     const speed = kind === 'tank' ? 0.9 : kind === 'dasher' ? 2.2 : 1.7;
-    const damage = kind === 'tank' ? 4 : kind === 'dasher' ? 1 : 2;
+    const hp = Math.max(1, Math.round(baseHp * enemyHpScale));
+    const damage = Math.max(1, Math.round((kind === 'tank' ? 1.2 : 1) * enemyDamageScale));
 
     monsters.push({
       id: i,
@@ -532,9 +744,37 @@ export function createInitialSimulation(options?: {
     knifeHits,
     rng: options?.rng,
 
+    eliminatedCount: 0,
+    eliminatedActorIds: new Set<number>(),
+    shrinkStage: 0,
+    shrinkTransition: 0,
+
+    bossRound: 0,
+    raidPhase: 'none',
+    raidElapsed: 0,
+    raidParticipants: [],
+    raidContributions: new Map<number, number>(),
+    raidDamage: 0,
+    raidBossMaxHp: 0,
+    raidBossHp: 0,
+    raidBossX: center,
+    raidBossY: center,
+    raidTelegraphX: center,
+    raidTelegraphY: center,
+    raidTelegraphRadius: 0,
+    raidTelegraphTimer: 0,
+    raidAttackCd: 0,
+    raidBossDamage: 0,
+    raidFailed: false,
+    raidPendingFinalPhase: false,
+
+    enemyHpScale,
+    enemyDamageScale,
+
     pendingUpgrade: false,
     upgradePaused: false,
     upgradeChoices: [],
+    pendingUpgradeCount: 0,
     arrows: [],
     bombs: [],
     activeEvent: 'none',
@@ -809,6 +1049,8 @@ export function getNearbyCandidate(sim: SimulationState, actor: ActorState): Can
 
 export function checkGameOver(sim: SimulationState): void {
   if (sim.gameOver) return;
+  // 团战期间不直接判定整局结束：由 raid 状态机先收尾（避免定格在 fight 阶段）
+  if (sim.raidPhase !== 'none') return;
   const alive = aliveActors(sim);
   if (alive.length <= 1) {
     sim.gameOver = true;
@@ -829,7 +1071,22 @@ export function eliminate(sim: SimulationState, a: ActorState, reason: string): 
   }
   sim.invites = sim.invites.filter((inv) => inv.fromId !== a.id && inv.toId !== a.id);
   burst(sim, a.x, a.y, a.color, 18);
-  pulse(sim, `${a.name} 淘汰`, a.x, a.y, '#ff9a8a');
+
+  // 单局死亡增伤：唯一入口去重，每个 actor.id 只计一次（怪物/Boss/宝箱死亡不计）
+  if (!sim.eliminatedActorIds.has(a.id)) {
+    sim.eliminatedActorIds.add(a.id);
+    sim.eliminatedCount = sim.eliminatedActorIds.size;
+    const mult = survivalDamageMultiplier(sim.eliminatedCount);
+    pulse(
+      sim,
+      `${a.name} 淘汰 · 幸存者伤害 ×${mult.toFixed(2)}`,
+      a.x,
+      a.y,
+      '#ff9a8a',
+    );
+  } else {
+    pulse(sim, `${a.name} 淘汰`, a.x, a.y, '#ff9a8a');
+  }
   void reason;
 
   checkGameOver(sim);
@@ -951,7 +1208,16 @@ export function giveActorXp(sim: SimulationState, actor: ActorState, amount: num
   actor.xp += amount;
   burst(sim, actor.x, actor.y, '#65d5b0', 4);
 
-  while (actor.xp >= actor.xpNext) {
+  // 团战期间延迟升级处理（Plan E2：首版固定为团战结束后集中处理，避免中断 10 人协作）
+  if (sim.raidPhase !== 'none') return;
+
+  processActorLevels(sim, actor);
+}
+
+/** 处理角色所有待结算升级（团战结束后可安全调用） */
+export function processActorLevels(sim: SimulationState, actor: ActorState): void {
+  let guard = 0;
+  while (actor.xp >= actor.xpNext && guard++ < 200) {
     actor.xp -= actor.xpNext;
     actor.level++;
     actor.xpNext = 3 + actor.level * 2;
@@ -959,12 +1225,16 @@ export function giveActorXp(sim: SimulationState, actor: ActorState, amount: num
     pulse(sim, `升级！LV.${actor.level}`, actor.x, actor.y, '#65d5b0');
 
     if (actor.isPlayer) {
-      sim.pendingUpgrade = true;
-      sim.upgradePaused = true; // 玩家升级：全局模拟暂停！
-      sim.upgradeChoices = generateUpgradeChoices(actor);
-      break;
+      // 升级排队：不覆盖已有未选卡片，记录待选次数（Plan E2 / R02）
+      sim.pendingUpgradeCount += 1;
+      if (!sim.pendingUpgrade) {
+        sim.pendingUpgrade = true;
+        sim.upgradePaused = true; // 玩家升级：全局模拟暂停！
+        sim.upgradeChoices = generateUpgradeChoices(actor);
+      }
+      continue;
     } else {
-      // AI 升级：依权重自动选卡并应用
+      // AI 升级：依权重自动选卡并应用（循环上限防卡死）
       const choices = generateUpgradeChoices(actor);
       const chosen = choices[Math.floor(Math.random() * choices.length)]!;
       applyUpgrade(actor, chosen);
@@ -972,8 +1242,33 @@ export function giveActorXp(sim: SimulationState, actor: ActorState, amount: num
   }
 }
 
+/** 处理玩家升级卡片选择；若仍有排队升级，则继续展示下一张（不丢卡） */
+export function selectPlayerUpgrade(sim: SimulationState, index: number): boolean {
+  const choice = sim.upgradeChoices[index];
+  if (!choice) return false;
+  const player = sim.actors[0];
+  if (!player) return false;
+  applyUpgrade(player, choice);
+  pulse(sim, `强化获得：${choice.title}`, player.x, player.y, '#65d5b0');
+  sim.pendingUpgradeCount = Math.max(0, sim.pendingUpgradeCount - 1);
+  if (sim.pendingUpgradeCount > 0) {
+    sim.upgradeChoices = generateUpgradeChoices(player);
+    sim.pendingUpgrade = true;
+    sim.upgradePaused = true;
+  } else {
+    sim.pendingUpgrade = false;
+    sim.upgradePaused = false;
+    sim.upgradeChoices = [];
+  }
+  return true;
+}
+
 /** 计算攻击伤害：包含个人财物增益与结盟/宝箱财富加成，并通过 stats.ts 纯函数计算有效伤害（R07） */
-export function calculateAttackDamage(sim: SimulationState, attacker: ActorState): number {
+export function calculateAttackDamage(
+  sim: SimulationState,
+  attacker: ActorState,
+  includeDeathMultiplier = true,
+): number {
   let baseDamage = 10;
   baseDamage += Math.min(10, attacker.treasure * 0.5);
 
@@ -985,10 +1280,13 @@ export function calculateAttackDamage(sim: SimulationState, attacker: ActorState
     }
   }
 
+  // 唯一伤害出口：个人失利乘区 → 单局死亡增伤乘区（只乘一次）
   return calculateEffectiveDamage(
     baseDamage,
     attacker.statDamageBonus,
     sim.worldMultipliers.damage,
+    attacker.personalMultiplier,
+    includeDeathMultiplier ? survivalDamageMultiplier(sim.eliminatedCount) : 1,
   );
 }
 
@@ -1005,8 +1303,11 @@ export function resolveHostileHit(
     return;
   }
 
-  // 暴击判定（R07）
-  const crit = calculateEffectiveCrit(sim.effectiveMultipliers.critChance);
+  // 暴击判定（R07）：世界暴击 × 攻击者个人乘区（>100% 由 resolveHitDamage 分层）
+  const crit = calculateEffectiveCrit(
+    sim.effectiveMultipliers.critChance,
+    attacker ? attacker.personalMultiplier : 1,
+  );
   const hit = resolveHitDamage(
     baseDamage,
     crit.critChance,
@@ -1032,15 +1333,20 @@ export function resolveHostileHit(
     }
   }
 
-  // 敌对角色直接承伤
-  damageActor(sim, target, hit.damage, attacker);
+  // 玩家出生保护期内免疫敌对角色/武器伤害
+  if (target.isPlayer && sim.elapsed < PLAYER_SPAWN_PROTECTION_SECONDS) {
+    return;
+  }
+  // 终局前：不直接扣角色 HP（设计主题为「外部掠夺宝箱」，角色互斗只在最终混战生效）
+  // 这也保证对局能自然撑到 120s / 240s 两场全员 Boss 团战
+  if (!sim.finalPhase && PRE_FINAL_ACTOR_DAMAGE_SCALE === 0) {
+    return;
+  }
+  const actorDamageScale = sim.finalPhase ? 1 : PRE_FINAL_ACTOR_DAMAGE_SCALE;
+  damageActor(sim, target, Math.max(1, Math.round(hit.damage * actorDamageScale)), attacker);
 }
 
 export function damageActor(sim: SimulationState, target: ActorState, amount: number, from: ActorState | null): void {
-  // 开局 12 秒内为玩家出生加载保护期，免受加载期无操作意外暴毙
-  if (target.isPlayer && sim.elapsed < 12.0) {
-    return;
-  }
   target.hp -= amount;
   target.hitFlash = 0.2;
   burst(sim, target.x, target.y, '#ff8a8a', 4);
@@ -1129,7 +1435,8 @@ export function stepWeapons(sim: SimulationState, dt: number): void {
     if (a.weaponKnife > 0) {
       a.knifeAngle += dt * 3.6 * attackSpeed;
       const count = a.weaponKnife;
-      const radius = 1.6 * (1 + a.statAreaBonus);
+      const radius =
+        1.6 * (1 + a.statAreaBonus) * (a.relicAffix === 'knifeArea' ? 1.1 : 1);
       const knifeDmg = Math.round(calculateAttackDamage(sim, a) * 0.65);
 
       for (let k = 0; k < count; k++) {
@@ -1145,7 +1452,7 @@ export function stepWeapons(sim: SimulationState, dt: number): void {
             const nextHit = sim.knifeHits.get(mKey) ?? 0;
             if (sim.elapsed >= nextHit) {
               sim.knifeHits.set(mKey, sim.elapsed + 0.4 / attackSpeed);
-              const crit = calculateEffectiveCrit(sim.effectiveMultipliers.critChance);
+              const crit = calculateEffectiveCrit(sim.effectiveMultipliers.critChance, a.personalMultiplier);
               const hit = resolveHitDamage(
                 knifeDmg,
                 crit.critChance,
@@ -1180,7 +1487,8 @@ export function stepWeapons(sim: SimulationState, dt: number): void {
           a.statAttackSpeedBonus,
           sim.worldMultipliers.attackSpeed,
         );
-        a.arrowTimer = Math.max(0.3, (1.6 - a.weaponArrow * 0.25) / effAtkSpd);
+        // 无隐形攻速上限：周期必须为正（合法性下界），真实频率可无限增长
+        a.arrowTimer = Math.max(MIN_LEGAL_CYCLE, (1.6 - a.weaponArrow * 0.25) / effAtkSpd);
 
         // 寻找最近敌对目标
         let targetPos: Vec2 | null = null;
@@ -1210,7 +1518,7 @@ export function stepWeapons(sim: SimulationState, dt: number): void {
             vx: (dx / len) * 7.5,
             vy: (dy / len) * 7.5,
             life: 1.4,
-            pierceLeft: a.weaponArrow + 1,
+            pierceLeft: a.weaponArrow + 1 + (a.relicAffix === 'arrowPierce' ? 1 : 0),
             hitMonsterIds: [],
             hitActorIds: [],
           });
@@ -1226,9 +1534,13 @@ export function stepWeapons(sim: SimulationState, dt: number): void {
           a.statAttackSpeedBonus,
           sim.worldMultipliers.attackSpeed,
         );
-        a.bombTimer = Math.max(0.5, (2.8 - a.weaponBomb * 0.35) / effAtkSpd);
-        const radius = (1.8 + a.weaponBomb * 0.45) * (1 + a.statAreaBonus);
-        const bombDmg = Math.round(calculateAttackDamage(sim, a) * 1.3);
+        a.bombTimer = Math.max(MIN_LEGAL_CYCLE, (2.8 - a.weaponBomb * 0.35) / effAtkSpd);
+        const radius =
+          (1.8 + a.weaponBomb * 0.45) *
+          (1 + a.statAreaBonus) *
+          (a.relicAffix === 'bombRadius' ? 1.1 : 1);
+        // 发射时只快照基础伤害；死亡增伤在爆炸命中瞬间读取最新倍率（Plan 2B-1.5）
+        const bombDmg = Math.round(calculateAttackDamage(sim, a, false) * 1.3);
 
         // 投掷在自身或敌群密集方向
         sim.bombs.push({
@@ -1256,12 +1568,17 @@ export function stepWeapons(sim: SimulationState, dt: number): void {
 
     if (owner && arr.pierceLeft > 0) {
       const arrDmg = Math.round(calculateAttackDamage(sim, owner) * 0.85);
-      // 命中怪物
+      // 命中怪物（掩体阻挡视线：不能隔岩命中）
       for (const m of sim.monsters) {
-        if (m.alive && !arr.hitMonsterIds.includes(m.id) && dist(arr, m) < 0.75) {
+        if (
+          m.alive &&
+          !arr.hitMonsterIds.includes(m.id) &&
+          dist(arr, m) < 0.75 &&
+          !segmentBlockedByCover(sim, owner.x, owner.y, m.x, m.y)
+        ) {
           arr.hitMonsterIds.push(m.id);
           arr.pierceLeft--;
-          const crit = calculateEffectiveCrit(sim.effectiveMultipliers.critChance);
+          const crit = calculateEffectiveCrit(sim.effectiveMultipliers.critChance, owner.personalMultiplier);
           const hit = resolveHitDamage(
             arrDmg,
             crit.critChance,
@@ -1279,7 +1596,8 @@ export function stepWeapons(sim: SimulationState, dt: number): void {
             o.id !== arr.ownerId &&
             !(owner.team >= 0 && owner.team === o.id) &&
             !arr.hitActorIds.includes(o.id) &&
-            dist(arr, o) < 0.75
+            dist(arr, o) < 0.75 &&
+            !segmentBlockedByCover(sim, owner.x, owner.y, o.x, o.y)
           ) {
             arr.hitActorIds.push(o.id);
             arr.pierceLeft--;
@@ -1307,14 +1625,24 @@ export function stepWeapons(sim: SimulationState, dt: number): void {
         pulse(sim, '💥 轰！', b.x, b.y, '#f59e0b');
 
         if (owner) {
+          // 死亡增伤在爆炸命中瞬间读取最新倍率（只乘一次）
+          const deathMult = survivalDamageMultiplier(sim.eliminatedCount);
+          const effBombDmg = Math.max(1, Math.round(b.damage * deathMult));
+          const bombCrit = calculateEffectiveCrit(
+            sim.effectiveMultipliers.critChance,
+            owner.personalMultiplier,
+          );
           // 对半径内怪物造成 AOE 伤害
           for (const m of sim.monsters) {
             if (m.alive && dist(b, m) <= b.radius) {
-              const crit = calculateEffectiveCrit(sim.effectiveMultipliers.critChance);
+              const covered = segmentBlockedByCover(sim, b.x, b.y, m.x, m.y);
+              const scaled = covered
+                ? Math.max(1, Math.round(effBombDmg * COVER_BLOCK_DAMAGE_SCALE))
+                : effBombDmg;
               const hit = resolveHitDamage(
-                b.damage,
-                crit.critChance,
-                crit.critMultiplier,
+                scaled,
+                bombCrit.critChance,
+                bombCrit.critMultiplier,
                 sim.rng ?? Math.random,
               );
               damageMonster(sim, m, hit.damage, owner);
@@ -1323,7 +1651,11 @@ export function stepWeapons(sim: SimulationState, dt: number): void {
           // 对半径内敌方角色与宝箱造成伤害（统一入口 R02）
           for (const o of aliveActors(sim)) {
             if (o.id !== b.ownerId && !(owner.team >= 0 && owner.team === o.id) && dist(b, o) <= b.radius) {
-              resolveHostileHit(sim, o, b.damage, owner);
+              const covered = segmentBlockedByCover(sim, b.x, b.y, o.x, o.y);
+              const scaled = covered
+                ? Math.max(1, Math.round(effBombDmg * COVER_BLOCK_DAMAGE_SCALE))
+                : effBombDmg;
+              resolveHostileHit(sim, o, scaled, owner);
             }
           }
         }
@@ -1363,7 +1695,7 @@ export function decideAI(sim: SimulationState, a: ActorState): void {
   let bestLoot: LootState | null = null;
   let bl = 7;
   const partner = partnerOf(sim, a);
-  const currentRadius = landRadius(sim.shrink);
+  const currentRadius = currentSafeRadius(sim);
 
   for (const l of sim.loots) {
     if (!l.value || l.z > 2) continue;
@@ -1435,23 +1767,43 @@ export function decideAI(sim: SimulationState, a: ActorState): void {
     }
   }
 
-  // 6. 优先攻击 Boss 或附近怪物
-  if (sim.boss && sim.boss.alive) {
-    a.aim = {
-      x: sim.boss.x + (Math.random() - 0.5) * 2,
-      y: sim.boss.y + (Math.random() - 0.5) * 2,
-    };
-    return;
+  // 5b. 低血撤退：优先远离怪潮，等待脱战回血（避免 AI 无脑送死导致 240s 前清场）
+  if (a.hp / a.maxHp < AI_RETREAT_HP_RATIO) {
+    let nearestMonster: MonsterState | null = null;
+    let nd = MONSTER_AGGRO_RADIUS * 1.4;
+    for (const m of sim.monsters) {
+      if (!m.alive) continue;
+      const d = dist(a, m);
+      if (d < nd) {
+        nd = d;
+        nearestMonster = m;
+      }
+    }
+    if (nearestMonster) {
+      const dx = a.x - nearestMonster.x || 1;
+      const dy = a.y - nearestMonster.y || 1;
+      const len = Math.hypot(dx, dy);
+      a.aim = {
+        x: clamp(a.x + (dx / len) * 3.0, 1.5, GRID_SIZE - 2.5),
+        y: clamp(a.y + (dy / len) * 3.0, 1.5, GRID_SIZE - 2.5),
+      };
+      return;
+    }
   }
 
+  // 6. 优先攻击附近怪物（绕开掩体，不卡死在岩石前）
   const monster = sim.monsters
     .filter((m) => m.alive)
     .sort((p, q) => dist(a, p) - dist(a, q))[0];
   if (monster) {
-    a.aim = {
-      x: monster.x + (Math.random() - 0.5) * 2,
-      y: monster.y + (Math.random() - 0.5) * 2,
-    };
+    let tx = monster.x + (Math.random() - 0.5) * 2;
+    let ty = monster.y + (Math.random() - 0.5) * 2;
+    if (isInsideCover(sim, tx, ty)) {
+      // 目标落点在掩体内：向侧边预定义绕行点偏移
+      tx = monster.x + (a.x > monster.x ? 1.6 : -1.6);
+      ty = monster.y + (a.y > monster.y ? 1.6 : -1.6);
+    }
+    a.aim = { x: tx, y: ty };
     return;
   }
 
@@ -1461,11 +1813,355 @@ export function decideAI(sim: SimulationState, a: ActorState): void {
   };
 }
 
+// ---------------------------------------------------------------------------
+// 全员 Boss 团战（120s / 240s 两场，所有存活角色强制同阵营参战）
+// ---------------------------------------------------------------------------
+
+/** 触发一场 Boss 团战：记录存活参战者，将全员安全安置到中央 Boss 周围 */
+export function startBossRaid(sim: SimulationState): void {
+  if (sim.raidPhase !== 'none' || sim.gameOver) return;
+  const alive = aliveActors(sim);
+  if (alive.length === 0) return;
+
+  sim.bossRound = (sim.bossRound + 1) as 0 | 1 | 2;
+  sim.raidPhase = 'warning';
+  sim.raidElapsed = 0;
+  sim.raidParticipants = alive.map((a) => a.id);
+  sim.raidContributions = new Map<number, number>();
+  sim.raidDamage = 0;
+  sim.raidFailed = false;
+
+  const center = (GRID_SIZE - 1) / 2;
+  const participantCount = alive.length;
+
+  // Boss HP 与伤害按存活人数、局数与战力动态缩放（目标 20~40s 团战）
+  const hpPerParticipant = 42;
+  const baseBossHp = 60 + hpPerParticipant * participantCount;
+  const player = sim.actors[0]!;
+  const playerDamage = calculateAttackDamage(sim, player, false);
+  const estimatedDps = Math.max(1, playerDamage) * participantCount * 1.4;
+  const targetSeconds = clamp(18 + participantCount * 2, 20, 40);
+  const scaledHp = Math.min(baseBossHp, estimatedDps * targetSeconds * 0.6);
+  sim.raidBossMaxHp = Math.max(
+    120,
+    Math.round(Math.max(scaledHp, baseBossHp * 0.35) * sim.enemyHpScale),
+  );
+  sim.raidBossHp = sim.raidBossMaxHp;
+  sim.raidBossDamage = Math.max(
+    2,
+    Math.round((2 + sim.bossRound) * sim.enemyDamageScale),
+  );
+
+  // Boss 位于地图中心
+  sim.raidBossX = center;
+  sim.raidBossY = center;
+  sim.raidTelegraphRadius = 0;
+  sim.raidTelegraphTimer = 0;
+  sim.raidAttackCd = 3.0;
+
+  // 把存活角色按环形分散安置到 Boss 周围安全地块（不触发误判背叛）
+  const radius = 4.2;
+  alive.forEach((a, i) => {
+    const ang = (i / Math.max(1, participantCount)) * Math.PI * 2;
+    a.x = center + Math.cos(ang) * radius;
+    a.y = center + Math.sin(ang) * radius;
+    a.vx = 0;
+    a.vy = 0;
+    a.hitFlash = 0;
+    a.aim = { x: sim.raidBossX, y: sim.raidBossY };
+  });
+  // 团战期间冻结队伍关系：不做断线检测，宝箱静止（关系与财物保留）
+
+  pulse(sim, `⚠️ 第 ${sim.bossRound} 场全员 Boss 团战即将开始！`, center, center, '#ff4d4f');
+}
+
+/** Boss 团战状态机：预警 → 战斗 → 结算 */
+export function stepBossRaid(sim: SimulationState, dt: number): void {
+  if (sim.raidPhase === 'none') return;
+  sim.raidElapsed += dt;
+  const center = (GRID_SIZE - 1) / 2;
+
+  if (sim.raidPhase === 'warning') {
+    if (sim.raidElapsed >= RAID_WARNING_SECONDS) {
+      sim.raidPhase = 'fight';
+      sim.raidElapsed = 0;
+      pulse(sim, '🔥 团战开始！所有幸存者共同对抗混沌巨兽！', center, center, '#ff4d4f');
+    }
+    return;
+  }
+
+  if (sim.raidPhase === 'fight') {
+    // 团战中若因 Boss 攻击只剩 1 人，视为团战结束（避免定格在 fight 阶段）
+    if (aliveActors(sim).filter((a) => sim.raidParticipants.includes(a.id)).length <= 1) {
+      finishBossRaid(sim, false);
+      return;
+    }
+    // Boss 圈形预警技能：地面预警 → 延迟范围攻击（可躲，可被掩体减伤）
+    sim.raidAttackCd = Math.max(0, sim.raidAttackCd - dt);
+    if (sim.raidTelegraphTimer > 0) {
+      sim.raidTelegraphTimer -= dt;
+      if (sim.raidTelegraphTimer <= 0) {
+        for (const a of aliveActors(sim)) {
+          if (sim.raidParticipants.includes(a.id)) {
+            const inside =
+              Math.hypot(a.x - sim.raidTelegraphX, a.y - sim.raidTelegraphY) <=
+              sim.raidTelegraphRadius;
+            if (inside) {
+              const covered = segmentBlockedByCover(
+                sim,
+                sim.raidTelegraphX,
+                sim.raidTelegraphY,
+                a.x,
+                a.y,
+              );
+              const dmg = Math.round(
+                sim.raidBossDamage * (covered ? COVER_BLOCK_DAMAGE_SCALE : 1),
+              );
+              if (!(a.isPlayer && sim.elapsed < PLAYER_SPAWN_PROTECTION_SECONDS)) {
+                damageActor(sim, a, dmg, null);
+              }
+            }
+          }
+        }
+        burst(sim, sim.raidTelegraphX, sim.raidTelegraphY, '#ff4d4f', 24);
+      }
+    } else if (sim.raidAttackCd <= 0) {
+      const targets = aliveActors(sim).filter((a) => sim.raidParticipants.includes(a.id));
+      const target = targets.sort((p, q) => p.hp - q.hp)[0];
+      if (target) {
+        sim.raidTelegraphX = target.x;
+        sim.raidTelegraphY = target.y;
+        sim.raidTelegraphRadius = 1.2;
+        sim.raidTelegraphTimer = 1.4; // 前摇可视，可走位躲避
+        sim.raidAttackCd = 3.2;
+        pulse(sim, '⚠️ 巨兽蓄力 · 快离开红圈！', target.x, target.y, '#ff4d4f');
+      }
+    }
+
+    // 团战内攻击：所有存活参战者优先攻击 Boss（同阵营）
+    for (const a of aliveActors(sim)) {
+      if (!sim.raidParticipants.includes(a.id)) continue;
+      if (a.attackCd > 0) continue;
+      const d = Math.hypot(sim.raidBossX - a.x, sim.raidBossY - a.y);
+      const reach = 2.7 * (1 + a.statAreaBonus);
+      if (d <= reach) {
+        const effAtkSpd = calculateEffectiveAttackSpeed(
+          a.statAttackSpeedBonus,
+          sim.worldMultipliers.attackSpeed,
+          a.personalMultiplier,
+        );
+        a.attackCd = Math.max(MIN_LEGAL_CYCLE, (0.7 - a.treasure * 0.008) / effAtkSpd);
+        const dmg = calculateAttackDamage(sim, a);
+        const crit = calculateEffectiveCrit(
+          sim.effectiveMultipliers.critChance,
+          a.personalMultiplier,
+        );
+        const hit = resolveHitDamage(
+          dmg,
+          crit.critChance,
+          crit.critMultiplier,
+          sim.rng ?? Math.random,
+        );
+        sim.raidBossHp -= hit.damage;
+        sim.raidDamage += hit.damage;
+        sim.raidContributions.set(
+          a.id,
+          (sim.raidContributions.get(a.id) ?? 0) + hit.damage,
+        );
+        burst(sim, sim.raidBossX, sim.raidBossY, '#ff8a8a', 6);
+      }
+    }
+
+    stepRaidWeapons(sim, dt);
+
+    if (sim.raidBossHp <= 0) {
+      finishBossRaid(sim, true);
+      return;
+    }
+    if (sim.raidElapsed >= RAID_MAX_SECONDS) {
+      finishBossRaid(sim, false);
+    }
+    return;
+  }
+
+  if (sim.raidPhase === 'result') {
+    if (sim.raidElapsed >= RAID_RESULT_SECONDS) {
+      endBossRaid(sim);
+    }
+  }
+}
+
+/** 团战中的武器命中（飞刀/箭矢/炸弹对 Boss） */
+function stepRaidWeapons(sim: SimulationState, dt: number): void {
+  const bossX = sim.raidBossX;
+  const bossY = sim.raidBossY;
+
+  // 环绕飞刀碰触 Boss
+  for (const a of aliveActors(sim)) {
+    if (!sim.raidParticipants.includes(a.id) || a.weaponKnife <= 0) continue;
+    const attackSpeed = calculateEffectiveAttackSpeed(
+      a.statAttackSpeedBonus,
+      sim.worldMultipliers.attackSpeed,
+      a.personalMultiplier,
+    );
+    const radius =
+      1.6 * (1 + a.statAreaBonus) * (a.relicAffix === 'knifeArea' ? 1.1 : 1);
+    for (let k = 0; k < a.weaponKnife; k++) {
+      const ang = a.knifeAngle + (k * Math.PI * 2) / a.weaponKnife;
+      const kx = a.x + Math.cos(ang) * radius;
+      const ky = a.y + Math.sin(ang) * radius;
+      if (Math.hypot(kx - bossX, ky - bossY) < 1.6) {
+        const key = `${a.id}:boss`;
+        const nextHit = sim.knifeHits.get(key) ?? 0;
+        if (sim.raidElapsed >= nextHit) {
+          sim.knifeHits.set(key, sim.raidElapsed + 0.4 / attackSpeed);
+          const dmg = Math.max(1, Math.round(calculateAttackDamage(sim, a) * 0.65));
+          sim.raidBossHp -= dmg;
+          sim.raidDamage += dmg;
+          sim.raidContributions.set(a.id, (sim.raidContributions.get(a.id) ?? 0) + dmg);
+        }
+      }
+    }
+  }
+
+  // 穿透箭与炸弹
+  for (let i = sim.arrows.length - 1; i >= 0; i--) {
+    const arr = sim.arrows[i]!;
+    arr.life -= dt;
+    arr.x += arr.vx * dt;
+    arr.y += arr.vy * dt;
+    const owner = sim.actors[arr.ownerId];
+    if (owner && arr.pierceLeft > 0 && sim.raidParticipants.includes(owner.id)) {
+      if (Math.hypot(arr.x - bossX, arr.y - bossY) < 1.4) {
+        const dmg = Math.max(1, Math.round(calculateAttackDamage(sim, owner) * 0.85));
+        sim.raidBossHp -= dmg;
+        sim.raidDamage += dmg;
+        sim.raidContributions.set(owner.id, (sim.raidContributions.get(owner.id) ?? 0) + dmg);
+        arr.pierceLeft = 0;
+      }
+    }
+    if (arr.life <= 0 || arr.pierceLeft <= 0) sim.arrows.splice(i, 1);
+  }
+
+  for (let i = sim.bombs.length - 1; i >= 0; i--) {
+    const b = sim.bombs[i]!;
+    if (!b.exploded) {
+      b.timer -= dt;
+      if (b.timer <= 0) {
+        b.exploded = true;
+        const owner = sim.actors[b.ownerId];
+        burst(sim, b.x, b.y, '#f59e0b', 20);
+        if (owner && sim.raidParticipants.includes(owner.id)) {
+          if (Math.hypot(b.x - bossX, b.y - bossY) <= b.radius + 1.2) {
+            const deathMult = survivalDamageMultiplier(sim.eliminatedCount);
+            const dmg = Math.max(1, Math.round(b.damage * deathMult));
+            sim.raidBossHp -= dmg;
+            sim.raidDamage += dmg;
+            sim.raidContributions.set(owner.id, (sim.raidContributions.get(owner.id) ?? 0) + dmg);
+          }
+        }
+      }
+    } else {
+      b.fxTimer -= dt;
+      if (b.fxTimer <= 0) sim.bombs.splice(i, 1);
+    }
+  }
+}
+
+/** 结算一场 Boss 团战：成功给参与奖励，失败扣 15% 当前 HP */
+export function finishBossRaid(sim: SimulationState, success: boolean): void {
+  const center = (GRID_SIZE - 1) / 2;
+  sim.raidFailed = !success;
+  sim.raidPhase = 'result';
+  sim.raidElapsed = 0;
+  sim.raidTelegraphTimer = 0;
+  sim.raidTelegraphRadius = 0;
+
+  const participants = aliveActors(sim).filter((a) => sim.raidParticipants.includes(a.id));
+  if (success) {
+    for (const a of participants) {
+      giveActorXp(sim, a, RAID_PARTICIPATION_XP);
+      a.treasure += RAID_PARTICIPATION_TREASURE;
+      if (a.isPlayer) sim.playerTreasure += RAID_PARTICIPATION_TREASURE;
+    }
+    scatterLoot(sim, center, center, 10);
+    pulse(sim, '🏆 全员团战胜利！幸存者获得奖励与战利品！', center, center, '#ffd700');
+  } else {
+    for (const a of participants) {
+      a.hp = Math.max(1, Math.round(a.hp * (1 - RAID_FAIL_HP_LOSS)));
+    }
+    pulse(sim, '❌ 团战防守失败！幸存者损失部分生命，战斗继续', center, center, '#ff6a5a');
+  }
+
+  // 240s 第二场 Boss 结束后进入最终混战（先 Boss 后解盟）
+  if (sim.bossRound >= 2) {
+    sim.raidPendingFinalPhase = true;
+  }
+}
+
+/** 团战结束：恢复主时钟，恢复原队伍关系，清理 Boss 状态 */
+export function endBossRaid(sim: SimulationState): void {
+  const center = (GRID_SIZE - 1) / 2;
+  sim.raidPhase = 'none';
+  sim.raidElapsed = 0;
+  sim.raidParticipants = [];
+  sim.raidBossHp = 0;
+  sim.raidBossMaxHp = 0;
+  sim.raidTelegraphTimer = 0;
+  sim.raidTelegraphRadius = 0;
+  sim.raidAttackCd = 0;
+  sim.arrows.length = 0;
+  sim.bombs.length = 0;
+
+  // 全员回到中央安全岛，给 3~5s 方向走位与缩圈预警（Plan 2C-2.6）
+  const alive = aliveActors(sim);
+  alive.forEach((a, i) => {
+    const ang = (i / Math.max(1, alive.length)) * Math.PI * 2;
+    const rad = 2.2;
+    const tx = center + Math.cos(ang) * rad;
+    const ty = center + Math.sin(ang) * rad;
+    if (isInsideCover(sim, tx, ty)) {
+      a.x = center;
+      a.y = center;
+    } else {
+      a.x = tx;
+      a.y = ty;
+    }
+    a.vx = 0;
+    a.vy = 0;
+    a.hitFlash = 0;
+  });
+
+  // 团战结束后集中处理延迟的升级（每人一次排队处理）
+  for (const a of aliveActors(sim)) {
+    if (a.xp >= a.xpNext) {
+      processActorLevels(sim, a);
+    }
+  }
+
+  if (sim.raidPendingFinalPhase && !sim.finalPhase && !sim.gameOver) {
+    sim.finalPhase = true;
+    for (const a of aliveActors(sim)) {
+      if (a.team >= 0) disbandTeam(sim, a, 'final');
+    }
+    sim.invites.length = 0;
+    sim.raidPendingFinalPhase = false;
+    pulse(sim, '⚔️ 第二场团战结束 · 最终混战开始！', center, center, '#ff9a6a');
+  } else {
+    pulse(sim, '团战结束，返回荒岛战场', center, center, '#65d5b0');
+  }
+
+  // 团战收尾后再判定整局胜负
+  checkGameOver(sim);
+}
+
 export function restartSimulation(
   sim: SimulationState,
   options?: {
     worldMultipliers?: WorldMultipliers;
     carryRelics?: Map<number, CarryRelic>;
+    personalMultipliers?: Map<number, number>;
+    enemyScale?: { hp: number; damage: number };
     rng?: () => number;
   },
 ): void {
@@ -1494,13 +2190,7 @@ export function stepSimulation(
   // 升级三选一选择输入处理（选卡后恢复模拟暂停）
   const player = sim.actors[0]!;
   if (sim.pendingUpgrade && input.upgradeChoiceIndex !== undefined && input.upgradeChoiceIndex !== null) {
-    const choice = sim.upgradeChoices[input.upgradeChoiceIndex];
-    if (choice) {
-      applyUpgrade(player, choice);
-      sim.pendingUpgrade = false;
-      sim.upgradePaused = false;
-      pulse(sim, `强化获得：${choice.title}`, player.x, player.y, '#65d5b0');
-    }
+    selectPlayerUpgrade(sim, input.upgradeChoiceIndex);
   }
 
   // 全局升级暂停：暂停时所有战斗、移动与倒计时静止
@@ -1511,14 +2201,50 @@ export function stepSimulation(
   const dt = dtRaw * sim.speed;
   const center = (GRID_SIZE - 1) / 2;
 
-  sim.elapsed += dt;
+  // 主对局时钟推进（Boss 团战期间冻结，见下方 raid 分支）
+  const raidWasActive = sim.raidPhase !== 'none';
+  if (!raidWasActive) {
+    sim.elapsed += dt;
+  }
 
-  // 缩圈进度推进
-  const progress = sim.elapsed / MATCH_SECONDS;
-  sim.shrink = clamp((progress - 0.38) / 0.5, 0, 1);
+  // 两次全员 Boss 团战：120s / 240s（唯一触发点，替换旧 180s）
+  if (sim.raidPhase === 'none' && !sim.gameOver) {
+    const nextTrigger: number | undefined =
+      RAID_TRIGGER_SECONDS[sim.bossRound as 0 | 1];
+    if (nextTrigger !== undefined && sim.elapsed >= nextTrigger) {
+      startBossRaid(sim);
+    }
+  }
+  const raidActive = sim.raidPhase !== 'none';
 
-  // 终局混战阶段（80% 进度 或 超过 300s 进入加时决胜）
-  if ((progress >= 0.8 || sim.elapsed >= MATCH_SECONDS) && !sim.finalPhase) {
+  // Boss 团战状态机（主时钟冻结，独立 raidElapsed 推进）
+  if (raidActive) {
+    stepBossRaid(sim, dt);
+  }
+
+  // 分段缩圈：主对局时钟每满 60s 一档 ×0.85；240s 后 260/280/300 快速收束
+  const newStage = shrinkStageFor(sim.elapsed);
+  if (newStage !== sim.shrinkStage) {
+    sim.shrinkStage = newStage;
+    sim.shrinkTransition = 0;
+    pulse(
+      sim,
+      `安全区收缩 · 第 ${newStage} 档（半径 ${(shrinkRadiusMultiplier(newStage) * 100).toFixed(0)}%）`,
+      center,
+      center,
+      '#ffb45c',
+    );
+  }
+  if (sim.shrinkTransition < SHRINK_TRANSITION_SECONDS) {
+    sim.shrinkTransition = Math.min(
+      SHRINK_TRANSITION_SECONDS,
+      sim.shrinkTransition + (raidActive ? 0 : dt),
+    );
+  }
+  sim.shrink = 1 - currentSafeRadius(sim) / 0.98;
+
+  // 终局混战阶段：240s 第二场 Boss 结束后才解盟（Plan A1 / 2C-2）
+  if (!raidActive && sim.elapsed >= 240 && !sim.finalPhase) {
     sim.finalPhase = true;
     for (const a of aliveActors(sim)) {
       if (a.team >= 0) {
@@ -1531,7 +2257,6 @@ export function stepSimulation(
   // P1-D: 决胜加时与判定修复（300s 仍有多人存活进入 overtime 加速决胜）
   if (sim.elapsed >= MATCH_SECONDS && !sim.gameOver) {
     sim.overtime = true;
-    sim.shrink = clamp(0.75 + ((sim.elapsed - MATCH_SECONDS) / OVERTIME_SECONDS) * 0.25, 0, 1);
 
     // 达到 360s 加时极限仍有多人存活：按明确平分规则决胜（HP > Kills > Treasure > ID）
     if (sim.elapsed >= MATCH_SECONDS + OVERTIME_SECONDS) {
@@ -1548,6 +2273,8 @@ export function stepSimulation(
         sim.overtimeResolution = 'points';
         winner.rank = 1;
         pulse(sim, `加时积分决胜：${winner.name} 获胜！`, center, center, '#ffe27a');
+        // 结局成立：立即冻结本次模拟更新（Plan R04 / E4）
+        return;
       }
     }
   }
@@ -1597,36 +2324,13 @@ export function stepSimulation(
     }
   }
 
-  // P1-A: 180s Boss 登场
-  if (sim.elapsed >= 180 && !sim.bossSpawned) {
-    sim.bossSpawned = true;
-    const bossMonster: MonsterState = {
-      id: 999,
-      kind: 'boss',
-      x: center,
-      y: center,
-      hp: 75,
-      maxHp: 75,
-      alive: true,
-      respawn: 9999,
-      wobble: 0,
-      hitFlash: 0,
-      speed: 1.25,
-      damage: 18,
-      attackCd: 0,
-    };
-    sim.monsters.push(bossMonster);
-    sim.boss = bossMonster;
-    pulse(sim, '⚠️ 混沌体素巨兽登场！击败将掉落大量战利品！', center, center, '#ff4d4f');
-  }
-
   // 怪潮容量随时间扩展 (16 -> 24 -> 34 -> 40)
-  sim.maxMonsters = sim.elapsed < 60 ? 16 : sim.elapsed < 140 ? 24 : sim.elapsed < 230 ? 34 : 40;
+  sim.maxMonsters = sim.elapsed < 60 ? 5 : sim.elapsed < 140 ? 10 : sim.elapsed < 230 ? 16 : 22;
 
-  // 地块崩塌判定
-  const currentRadius = landRadius(sim.shrink);
+  // 地块崩塌判定（团战期间地图冻结）
+  const currentRadius = currentSafeRadius(sim);
   for (const t of sim.tiles) {
-    if (!t.isLand || t.gone) continue;
+    if (raidActive || !t.isLand || t.gone) continue;
     if (t.r > currentRadius) {
       t.falling += dt;
       if (t.falling > 0.55) {
@@ -1729,6 +2433,7 @@ export function stepSimulation(
         a.statSpeedBonus,
         sim.worldMultipliers.moveSpeed,
         isSlowed,
+        a.personalMultiplier,
       ) * dt;
     const nx = a.x + a.vx * sp;
     const ny = a.y + a.vy * sp;
@@ -1740,12 +2445,18 @@ export function stepSimulation(
         a.vy = ((center - a.y) / (Math.hypot(center - a.x, center - a.y) || 1)) * 0.5;
       }
     }
-    a.x = clamp(a.x + a.vx * sp, 0.5, GRID_SIZE - 1.5);
-    a.y = clamp(a.y + a.vy * sp, 0.5, GRID_SIZE - 1.5);
+    // 掩体碰撞：沿 X/Y 分别尝试移动形成简单滑墙（不引入寻路框架）
+    const slid = slideMove(sim, a.x, a.y, a.vx * sp, a.vy * sp);
+    a.x = clamp(slid.x, 0.5, GRID_SIZE - 1.5);
+    a.y = clamp(slid.y, 0.5, GRID_SIZE - 1.5);
     a.slow = Math.max(0, a.slow - dt);
     a.dashCd = Math.max(0, a.dashCd - dt);
     a.attackCd = Math.max(0, a.attackCd - dt);
     a.hitFlash = Math.max(0, a.hitFlash - dt);
+    // 脱战生命回复（受击后短暂停止），保证长期对局可持续
+    if (a.hitFlash <= 0 && a.hp < a.maxHp) {
+      a.hp = Math.min(a.maxHp, a.hp + ACTOR_HP_REGEN_PER_SECOND * dt);
+    }
   }
 
   // 6. 移动后优先执行本步边缘坠落与淘汰判定（R05）
@@ -1756,8 +2467,10 @@ export function stepSimulation(
     }
   }
 
-  // 7. 统一队伍距离与断线检测
-  checkTeamDistances(sim);
+  // 7. 统一队伍距离与断线检测（团战期间冻结，不因传送误断线）
+  if (!raidActive) {
+    checkTeamDistances(sim);
+  }
 
   // 8. 怪物追踪移动与攻击
   const frenzyMultiplier = sim.activeEvent === 'monster_frenzy' ? 1.35 : 1.0;
@@ -1766,9 +2479,9 @@ export function stepSimulation(
     m.hitFlash = Math.max(0, m.hitFlash - dt);
     m.attackCd = Math.max(0, m.attackCd - dt);
 
-    // 寻找最近的存活角色追逐
+    // 寻找最近的存活角色追逐（限制仇恨半径；同一角色最多被 2 只怪贴身，避免围殴秒杀）
     let closestActor: ActorState | null = null;
-    let minD = 12.0;
+    let minD = MONSTER_AGGRO_RADIUS;
     for (const a of aliveActors(sim)) {
       const d = dist(m, a);
       if (d < minD) {
@@ -1776,25 +2489,48 @@ export function stepSimulation(
         closestActor = a;
       }
     }
-
     if (closestActor) {
+      // 按距离统计真正贴身的怪（attackCd 多数为 0，不能作为交战判据）
+      const engaged = sim.monsters.filter(
+        (o) => o.alive && o.id !== m.id && dist(o, closestActor!) < 1.1,
+      ).length;
+      if (engaged >= MAX_MONSTERS_PER_TARGET) {
+        closestActor = null;
+      }
+    }
+
+    if (closestActor && !raidActive) {
       const dx = closestActor.x - m.x;
       const dy = closestActor.y - m.y;
       const dlen = Math.hypot(dx, dy) || 1;
       const msp = m.speed * frenzyMultiplier * dt;
-      m.x += (dx / dlen) * msp;
-      m.y += (dy / dlen) * msp;
+      // 怪物统一遵守安全地面：目标落点不安全则取消本次位移（不悬空漫游）
+      const nextMx = m.x + (dx / dlen) * msp;
+      const nextMy = m.y + (dy / dlen) * msp;
+      const mt = tileAt(sim, Math.round(nextMx), Math.round(nextMy));
+      if (mt && mt.isLand && !mt.gone && mt.r <= currentRadius - 0.04) {
+        m.x = nextMx;
+        m.y = nextMy;
+      }
 
       // 触碰攻击角色（带 0.2s 受击硬直无敌防瞬间多怪秒杀）
-      if (minD < 0.85 && m.attackCd <= 0 && closestActor.hitFlash <= 0) {
-        m.attackCd = 1.0;
+      const playerProtected =
+        closestActor.isPlayer && sim.elapsed < PLAYER_SPAWN_PROTECTION_SECONDS;
+      if (minD < 0.85 && m.attackCd <= 0 && closestActor.hitFlash <= 0 && !playerProtected) {
+        m.attackCd = 2.0;
         damageActor(sim, closestActor, m.damage, null);
+      }
+      // 保护期内怪物也不主动贴近玩家（避免视觉上围殴但打不动）
+      if (closestActor.isPlayer && sim.elapsed < PLAYER_SPAWN_PROTECTION_SECONDS) {
+        m.x -= (dx / dlen) * msp;
+        m.y -= (dy / dlen) * msp;
       }
     }
   }
 
-  // 9. 怪物波次动态刷新（仅在当前安全陆地生成）
+  // 9. 怪物波次动态刷新（仅在当前安全陆地生成；团战期间冻结）
   for (const m of sim.monsters) {
+    if (raidActive) break;
     if (!m.alive && m.kind !== 'boss') {
       m.respawn -= dt * (sim.activeEvent === 'monster_frenzy' ? 2.2 : 1.0);
     }
@@ -1836,9 +2572,9 @@ export function stepSimulation(
     c.hitFlash = Math.max(0, c.hitFlash - dt);
   }
 
-  // 11. 基础自动攻击判定（遵循最近有效敌对目标）
+  // 11. 基础自动攻击判定（团战期间完全关闭 PvP/破箱，全部锁定 Boss）
   for (const a of aliveActors(sim)) {
-    if (a.attackCd > 0) continue;
+    if (raidActive || a.attackCd > 0) continue;
     let targetMonster: MonsterState | null = null;
     let targetActor: ActorState | null = null;
     let td = 2.7 * (1 + a.statAreaBonus);
@@ -1853,12 +2589,30 @@ export function stepSimulation(
       }
     }
 
-    // 优先击杀怪物积攒宝物；附近无怪时，攻击敌对队伍宝箱（外部掠夺）或在掠夺阶段（elapsed >= 60s / finalPhase）攻击单人
-    if (!targetMonster) {
+    // 目标价值排序（R03）：敌队共享宝箱 > 近身威胁敌对角色 > 普通怪物
+    let targetChest: ChestState | null = null;
+    // 敌队宝箱优先：任何处于攻击范围内的敌队宝箱都优先于怪物/单人
+    let chestDist = 2.7 * (1 + a.statAreaBonus);
+    for (const c of sim.chests) {
+      if (c.hp <= 0 && c.treasure <= 0) continue;
+      if (c.a === a.id || c.b === a.id) continue;
+      const d = dist(a, c);
+      if (d < chestDist) {
+        chestDist = d;
+        targetChest = c;
+      }
+    }
+
+    if (targetChest) {
+      targetMonster = null;
+      targetActor = null;
+      td = chestDist;
+    } else if (!targetMonster) {
       for (const o of aliveActors(sim)) {
         if (o === a || (a.team >= 0 && a.team === o.id)) continue;
-        // 开局结盟期（< 60s）单人与单人之间不互打普攻，保留结盟合伙空间
-        if (a.team < 0 && o.team < 0 && sim.elapsed < 60 && !sim.finalPhase) continue;
+        // 终局前单人与单人之间不互打普攻：保留结盟合伙与掠夺宝箱主题，
+        // 确保对局能撑到 120s / 240s 两场全员 Boss 团战
+        if (!sim.finalPhase) continue;
         const d = dist(a, o);
         if (d < td) {
           td = d;
@@ -1867,14 +2621,38 @@ export function stepSimulation(
       }
     }
 
+    if (targetChest) {
+      const effAtkSpd = calculateEffectiveAttackSpeed(
+        a.statAttackSpeedBonus,
+        sim.worldMultipliers.attackSpeed,
+        a.personalMultiplier,
+      );
+      a.attackCd = Math.max(MIN_LEGAL_CYCLE, (0.7 - a.treasure * 0.008) / effAtkSpd);
+      const dmg = calculateAttackDamage(sim, a);
+      targetChest.hp -= dmg;
+      targetChest.hitFlash = 0.2;
+      burst(sim, targetChest.x, targetChest.y, '#ffb45c', 5);
+      if (targetChest.hp <= 0) {
+        destroyChest(sim, targetChest, targetChest.x, targetChest.y);
+        pulse(sim, '宝箱被打爆！队伍关系仍保留', targetChest.x, targetChest.y, '#ff8a6a');
+      }
+      continue;
+    }
+
+    if (targetMonster && segmentBlockedByCover(sim, a.x, a.y, targetMonster.x, targetMonster.y)) {
+      // 掩体挡住视线：本次不攻击（保留走位绕柱博弈）
+      continue;
+    }
+
     if (targetMonster) {
       const effAtkSpd = calculateEffectiveAttackSpeed(
         a.statAttackSpeedBonus,
         sim.worldMultipliers.attackSpeed,
+        a.personalMultiplier,
       );
-      a.attackCd = Math.max(0.45, (0.7 - a.treasure * 0.008) / effAtkSpd);
+      a.attackCd = Math.max(MIN_LEGAL_CYCLE, (0.7 - a.treasure * 0.008) / effAtkSpd);
       const dmg = calculateAttackDamage(sim, a);
-      const crit = calculateEffectiveCrit(sim.effectiveMultipliers.critChance);
+      const crit = calculateEffectiveCrit(sim.effectiveMultipliers.critChance, a.personalMultiplier);
       const hit = resolveHitDamage(
         dmg,
         crit.critChance,
@@ -1883,18 +2661,25 @@ export function stepSimulation(
       );
       damageMonster(sim, targetMonster, hit.damage, a);
     } else if (targetActor) {
+      if (segmentBlockedByCover(sim, a.x, a.y, targetActor.x, targetActor.y)) {
+        continue;
+      }
       const effAtkSpd = calculateEffectiveAttackSpeed(
         a.statAttackSpeedBonus,
         sim.worldMultipliers.attackSpeed,
+        a.personalMultiplier,
       );
-      a.attackCd = Math.max(0.45, (0.7 - a.treasure * 0.008) / effAtkSpd);
+      a.attackCd = Math.max(MIN_LEGAL_CYCLE, (0.7 - a.treasure * 0.008) / effAtkSpd);
       const dmg = calculateAttackDamage(sim, a);
       resolveHostileHit(sim, targetActor, dmg, a);
     }
   }
 
   // 12. 附加武器步进（飞刀/穿透箭/范围爆轰）
-  stepWeapons(sim, dt);
+  // 团战期间由 stepBossRaid 内部的 stepRaidWeapons 统一处理，避免 PvP/怪物命中与团战 Boss 命中重复结算
+  if (!raidActive) {
+    stepWeapons(sim, dt);
+  }
 
   // 13. 自由宝物物理模拟与拾取
   for (const l of sim.loots) {

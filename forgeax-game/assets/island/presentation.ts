@@ -6,9 +6,16 @@ import { quat } from '@forgeax/engine/math';
 import { sceneEntity, Transform, worldResolveSceneEntity } from '@forgeax/engine/scene';
 import { assetGuid, guidText, PACKAGE_IDS } from '../shared/asset-refs.ts';
 import type { SimulationState } from './simulation.ts';
-import { GRID_SIZE, TEAM_WARNING_DISTANCE } from './simulation.ts';
+import {
+  activeCovers,
+  GRID_SIZE,
+  TEAM_WARNING_DISTANCE,
+} from './simulation.ts';
 
 const SCENE_KEY = 'scene/island' as const;
+
+/** 大范围技能视觉裁剪上限（仅裁剪外观，真实命中范围不变；Plan B2） */
+const VISUAL_MAX_BLAST_SCALE = 6.0;
 const SPRITE_QUAT = [-0.4617486, 0, 0, 0.8870108] as const;
 const SHADOW_QUAT = [-0.7071068, 0, 0, 0.7071068] as const;
 
@@ -101,25 +108,32 @@ export function setupPresentation(
     teamBeamWarnEntities.push(resolve(`team-beam-warn-${i}`));
   }
 
-  // 缓存 3 把环绕飞刀
+  // 缓存 30 把环绕飞刀（10 名角色 × 最多 3 把）
   const knifeEntities: EntityHandle[] = [];
-  for (let i = 0; i < 3; i++) {
+  for (let i = 0; i < 30; i++) {
     knifeEntities.push(resolve(`player-knife-${i}`));
   }
 
-  // 缓存 8 支穿透箭矢
+  // 缓存 24 支穿透箭矢
   const arrowEntities: EntityHandle[] = [];
-  for (let i = 0; i < 8; i++) {
+  for (let i = 0; i < 24; i++) {
     arrowEntities.push(resolve(`arrow-${i}`));
   }
 
-  // 缓存 4 颗炸弹与冲击波
+  // 缓存 12 颗炸弹与冲击波
   const bombEntities: EntityHandle[] = [];
   const blastEntities: EntityHandle[] = [];
-  for (let i = 0; i < 4; i++) {
+  for (let i = 0; i < 12; i++) {
     bombEntities.push(resolve(`bomb-${i}`));
     blastEntities.push(resolve(`blast-${i}`));
   }
+
+  // 缓存 3 处中央岩石掩体与 Boss 圈形预警环
+  const coverEntities: EntityHandle[] = [];
+  for (let i = 0; i < 3; i++) {
+    coverEntities.push(resolve(`cover-${i}`));
+  }
+  const raidTelegraphEntity = resolve('raid-telegraph');
 
   // 缓存 72 个掉落金宝物实体池
   const lootEntities: EntityHandle[] = [];
@@ -225,6 +239,29 @@ export function setupPresentation(
     }
     for (const l of lootEntities) {
       world.set(l, Transform, { pos: [0, -999, 0] }).unwrap();
+    }
+    world.set(raidTelegraphEntity, Transform, { pos: [0, -999, 0] }).unwrap();
+    // 掩体位置按当前档位重建（reset 后档位为 0，全部存在）
+    updateCovers(sim);
+  };
+
+  /** 掩体呈现：位置/大小与模拟层 activeCovers 完全一致 */
+  const updateCovers = (sim: SimulationState) => {
+    const covers = activeCovers(sim);
+    for (let i = 0; i < 3; i++) {
+      const handle = coverEntities[i]!;
+      const c = covers[i];
+      if (!c) {
+        world.set(handle, Transform, { pos: [0, -999, 0] }).unwrap();
+        continue;
+      }
+      const scale = c.radius / 0.4;
+      world
+        .set(handle, Transform, {
+          pos: [c.x, 0.42, c.y],
+          scale: [scale, scale * 1.35, scale],
+        })
+        .unwrap();
     }
   };
 
@@ -345,27 +382,46 @@ export function setupPresentation(
           .unwrap();
       }
 
-      // 5. Boss 巨兽更新
-      if (sim.boss && sim.boss.alive) {
-        const b = sim.boss;
-        const bossBob = Math.sin(sim.elapsed * 1.8) * 0.08;
+      // 5. Boss 巨兽更新（仅团战阶段可见，旧 sim.boss 已废弃）
+      if (sim.raidPhase === 'none') {
+        world.set(bossEntity.root, Transform, { pos: [0, -999, 0] }).unwrap();
+        world.set(bossEntity.shadow, Transform, { pos: [0, -999, 0] }).unwrap();
+      }
+
+      // 5b. 中央掩体呈现（位置与模拟层完全一致）
+      updateCovers(sim);
+
+      // 5c. Boss 团战：巨兽与圈形预警呈现
+      if (sim.raidPhase === 'fight' || sim.raidPhase === 'warning' || sim.raidPhase === 'result') {
+        // Boss 体素主体 1.5×1.5×1.5 居中于自身原点：适度放大但不过度遮挡战场视野
+        const bossBob = 0.85 + Math.sin(sim.elapsed * 2.4) * 0.08;
+        const pulse = sim.raidPhase === 'fight' ? 0.95 : 0.85;
         world
           .set(bossEntity.root, Transform, {
-            pos: [b.x, bossBob, b.y],
-            scale: [1, 1, 1],
+            pos: [sim.raidBossX, bossBob, sim.raidBossY],
+            scale: [pulse, pulse, pulse],
           })
           .unwrap();
-
         world
           .set(bossEntity.shadow, Transform, {
-            pos: [b.x + 0.22, 0.005, b.y + 0.28],
-            scale: [1, 1, 1],
+            pos: [sim.raidBossX + 0.14, 0.005, sim.raidBossY + 0.18],
+            scale: [1.35, 1.35, 1],
+            quat: [SHADOW_QUAT[0], SHADOW_QUAT[1], SHADOW_QUAT[2], SHADOW_QUAT[3]],
+          })
+          .unwrap();
+      }
+
+      if (sim.raidTelegraphTimer > 0) {
+        const scale = Math.min(VISUAL_MAX_BLAST_SCALE, sim.raidTelegraphRadius / 1.2);
+        world
+          .set(raidTelegraphEntity, Transform, {
+            pos: [sim.raidTelegraphX, 0.03, sim.raidTelegraphY],
+            scale: [scale, scale, 1],
             quat: [SHADOW_QUAT[0], SHADOW_QUAT[1], SHADOW_QUAT[2], SHADOW_QUAT[3]],
           })
           .unwrap();
       } else {
-        world.set(bossEntity.root, Transform, { pos: [0, -999, 0] }).unwrap();
-        world.set(bossEntity.shadow, Transform, { pos: [0, -999, 0] }).unwrap();
+        world.set(raidTelegraphEntity, Transform, { pos: [0, -999, 0] }).unwrap();
       }
 
       // 6. 队伍宝箱跟随与财富档位缩放
@@ -444,37 +500,34 @@ export function setupPresentation(
         world.set(inactiveHandle, Transform, { pos: [0, -999, 0] }).unwrap();
       }
 
-      // 8. 环绕飞刀呈现
-      if (player.alive && player.weaponKnife > 0) {
-        const count = player.weaponKnife;
-        const radius = 1.6 * (1 + player.statAreaBonus);
-        for (let k = 0; k < 3; k++) {
-          const handle = knifeEntities[k]!;
-          if (k < count) {
-            const ang = player.knifeAngle + (k * Math.PI * 2) / count;
-            const kx = player.x + Math.cos(ang) * radius;
-            const kz = player.y + Math.sin(ang) * radius;
-
-            quat.fromEuler(knifeQ, -Math.PI / 4, ang + Math.PI / 2, 0, 'YXZ');
-            world
-              .set(handle, Transform, {
-                pos: [kx, 0.45, kz],
-                scale: [1, 1, 1],
-                quat: [knifeQ[0] ?? 0, knifeQ[1] ?? 0, knifeQ[2] ?? 0, knifeQ[3] ?? 1],
-              })
-              .unwrap();
-          } else {
-            world.set(handle, Transform, { pos: [0, -999, 0] }).unwrap();
-          }
+      // 8. 环绕飞刀呈现（所有角色可见，R01）
+      let knifeSlot = 0;
+      for (let ai = 0; ai < 10; ai++) {
+        const actor = sim.actors[ai]!;
+        if (!actor.alive || actor.weaponKnife <= 0) continue;
+        const count = actor.weaponKnife;
+        const radius = 1.6 * (1 + actor.statAreaBonus) * (actor.relicAffix === 'knifeArea' ? 1.1 : 1);
+        for (let k = 0; k < count && knifeSlot < knifeEntities.length; k++, knifeSlot++) {
+          const handle = knifeEntities[knifeSlot]!;
+          const ang = actor.knifeAngle + (k * Math.PI * 2) / count;
+          const kx = actor.x + Math.cos(ang) * radius;
+          const kz = actor.y + Math.sin(ang) * radius;
+          quat.fromEuler(knifeQ, -Math.PI / 4, ang + Math.PI / 2, 0, 'YXZ');
+          world
+            .set(handle, Transform, {
+              pos: [kx, 0.45, kz],
+              scale: [1, 1, 1],
+              quat: [knifeQ[0] ?? 0, knifeQ[1] ?? 0, knifeQ[2] ?? 0, knifeQ[3] ?? 1],
+            })
+            .unwrap();
         }
-      } else {
-        for (const k of knifeEntities) {
-          world.set(k, Transform, { pos: [0, -999, 0] }).unwrap();
-        }
+      }
+      for (let k = knifeSlot; k < knifeEntities.length; k++) {
+        world.set(knifeEntities[k]!, Transform, { pos: [0, -999, 0] }).unwrap();
       }
 
       // 9. 穿透箭矢呈现
-      for (let i = 0; i < 8; i++) {
+      for (let i = 0; i < 24; i++) {
         const handle = arrowEntities[i]!;
         const arr = sim.arrows[i];
         if (arr && arr.life > 0) {
@@ -493,7 +546,7 @@ export function setupPresentation(
       }
 
       // 10. 炸弹与冲击波呈现
-      for (let i = 0; i < 4; i++) {
+      for (let i = 0; i < 12; i++) {
         const bombH = bombEntities[i]!;
         const blastH = blastEntities[i]!;
         const b = sim.bombs[i];
@@ -504,7 +557,8 @@ export function setupPresentation(
             world.set(blastH, Transform, { pos: [0, -999, 0] }).unwrap();
           } else {
             world.set(bombH, Transform, { pos: [0, -999, 0] }).unwrap();
-            const scale = (b.radius / 1.2) * (1 + (0.5 - b.fxTimer) * 1.5);
+            const rawScale = (b.radius / 1.2) * (1 + (0.5 - b.fxTimer) * 1.5);
+            const scale = Math.min(VISUAL_MAX_BLAST_SCALE, rawScale);
             world
               .set(blastH, Transform, {
                 pos: [b.x, 0.02, b.y],

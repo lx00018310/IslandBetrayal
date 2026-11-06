@@ -122,8 +122,9 @@
 }
 
 .hud-speed-col {
-  min-width: 160px;
+  min-width: 172px;
   align-items: flex-end;
+  text-align: right;
 }
 .btn-speed {
   background: rgba(45, 85, 120, 0.6);
@@ -144,10 +145,10 @@
   margin-top: 3px;
 }
 
-/* Boss 巨兽全局血条 */
+/* Boss 巨兽全局血条（旧单 Boss 已废弃，保留隐藏槽位） */
 .boss-hud {
   position: absolute;
-  top: 68px;
+  top: 112px;
   left: 50%;
   transform: translateX(-50%);
   width: 380px;
@@ -185,7 +186,7 @@
 /* 队伍侧边栏 */
 .team-sidebar {
   position: absolute;
-  top: 72px;
+  top: 96px;
   left: 12px;
   width: 170px;
   background: rgba(12, 24, 38, 0.78);
@@ -274,7 +275,7 @@
 /* 玩家状态卡片 */
 .player-card {
   position: absolute;
-  top: 72px;
+  top: 96px;
   right: 12px;
   width: 190px;
   background: rgba(12, 24, 38, 0.78);
@@ -531,6 +532,89 @@
   cursor: pointer;
   box-shadow: 0 3px 8px rgba(126, 224, 138, 0.35);
 }
+/* 死亡增伤 / 缩圈 / 负担 / 团战 HUD */
+.death-damage {
+  font-size: 9px;
+  font-weight: bold;
+  color: #ff8a6a;
+  margin-top: 2px;
+  white-space: nowrap;
+}
+.shrink-info {
+  font-size: 9px;
+  color: #9fc4d8;
+  margin-top: 1px;
+  white-space: nowrap;
+}
+.shortcut-tip {
+  font-size: 9px;
+  color: #7a98a8;
+  margin-top: 2px;
+  white-space: nowrap;
+}
+.save-notice {
+  position: absolute;
+  top: 78px;
+  left: 50%;
+  transform: translateX(-50%);
+  background: rgba(20, 44, 32, 0.95);
+  border: 1px solid #65d5b0;
+  border-radius: 6px;
+  padding: 5px 14px;
+  font-size: 11px;
+  font-weight: bold;
+  color: #a8f0cf;
+  z-index: 46;
+  pointer-events: none;
+}
+.raid-hud {
+  position: absolute;
+  top: 112px;
+  left: 50%;
+  transform: translateX(-50%);
+  width: 420px;
+  max-width: calc(100% - 24px);
+  background: rgba(30, 10, 12, 0.94);
+  border: 2px solid #ff4d4f;
+  border-radius: 8px;
+  padding: 8px 14px;
+  z-index: 48;
+  pointer-events: none;
+  box-shadow: 0 4px 20px rgba(255, 60, 60, 0.35);
+}
+.raid-info-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 5px;
+}
+.raid-title { font-size: 12px; font-weight: bold; color: #ff9a8a; }
+.raid-hp-text { font-size: 11px; font-weight: bold; color: #ffe6a8; }
+.raid-hp-bar {
+  width: 100%;
+  height: 8px;
+  background: rgba(0, 0, 0, 0.55);
+  border-radius: 4px;
+  overflow: hidden;
+}
+.raid-hp-fill { height: 100%; width: 100%; background: linear-gradient(90deg, #ff4d4f, #ff9a3c); }
+
+.burden-row {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  margin-top: 5px;
+}
+.burden-info { font-size: 9px; color: #d7b06a; }
+.burden-bar {
+  width: 100%;
+  height: 4px;
+  background: rgba(0, 0, 0, 0.5);
+  border-radius: 2px;
+  overflow: hidden;
+}
+.burden-fill { height: 100%; width: 0%; background: #d7b06a; }
+
 .mode-badge {
   display: inline-block;
   font-size: 11px;
@@ -546,7 +630,7 @@
 /* 全场修正生效横幅 */
 .world-banner {
   position: absolute;
-  top: 68px;
+  top: 78px;
   left: 50%;
   transform: translateX(-50%);
   background: rgba(14, 28, 48, 0.95);
@@ -758,8 +842,13 @@
 }
 
 /* 响应式适配 */
+@media (max-width: 900px) {
+  .shortcut-tip { display: none; }
+}
+
 @media (max-width: 600px) {
   .hud-title-col { display: none; }
+  .shrink-info { display: none; }
   .team-sidebar { display: none; }
   .island-hud { gap: 4px; }
   .hud-xp-col { min-width: 120px; }

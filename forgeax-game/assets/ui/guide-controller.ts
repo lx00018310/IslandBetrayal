@@ -9,13 +9,17 @@ import { installPlayerControls } from './player-controls.ts';
 import { ISLAND_CONTROL_CHANNEL, type IslandTouchMessage } from '../island/island.pack.ts';
 import type { UpgradeOption } from '../island/simulation.ts';
 import {
+  MAX_LOSS_BURDEN,
+  RELIC_AFFIX_TEXT,
   STAT_FACTORS,
   STAT_NAMES,
   STAT_TARGETS,
   type CarryRelic,
+  type RelicAffix,
   type StatFactor,
   type StatTarget,
 } from '../island/stats.ts';
+import { ENDLESS_SAVE_KEY } from '../island/endless-save.ts';
 
 export async function createGuideUi(
   asset: UiAsset,
@@ -135,6 +139,49 @@ export async function createGuideUi(
         port.postMessage({ channel: ISLAND_CONTROL_CHANNEL, ...msg });
       }
     };
+
+    // 无限存档桥接（UI realm 拥有 localStorage；引擎域通过消息通道交接）
+    const readSave = (): string | null => {
+      try {
+        const win = shadow?.ownerDocument?.defaultView;
+        return win?.localStorage?.getItem(ENDLESS_SAVE_KEY) ?? null;
+      } catch {
+        return null;
+      }
+    };
+    const writeSave = (payload: string): void => {
+      try {
+        const win = shadow?.ownerDocument?.defaultView;
+        win?.localStorage?.setItem(ENDLESS_SAVE_KEY, payload);
+      } catch {
+        // 存储不可用（隐私模式/沙箱）时静默降级，不阻断游戏
+      }
+    };
+    const removeSave = (): void => {
+      try {
+        const win = shadow?.ownerDocument?.defaultView;
+        win?.localStorage?.removeItem(ENDLESS_SAVE_KEY);
+      } catch {
+        // 同上
+      }
+    };
+
+    // 监听引擎侧存档写入请求
+    if (port) {
+      const onSaveMessage = (event: MessageEvent) => {
+        const data = event.data as
+          | { channel?: string; key?: string; payload?: string }
+          | undefined;
+        if (!data || data.channel !== 'island/save-write') return;
+        if (typeof data.payload === 'string') writeSave(data.payload);
+      };
+      port.addEventListener('message', onSaveMessage);
+      releases.push(() => port.removeEventListener('message', onSaveMessage));
+    }
+
+    // 启动握手：把已有存档交给引擎（引擎读完才推进正式对局）
+    const bootstrapSave = readSave();
+    sendTouch({ kind: 'reset', ...(bootstrapSave ? { save: bootstrapSave } : {}) } as never);
 
     // 当前候选目标与邀请状态缓存
     let activeIncomingInviteId: number | null = null;
@@ -294,7 +341,15 @@ export async function createGuideUi(
 
       if (btnResetEndless) {
         btnResetEndless.addEventListener('click', () => {
-          sendTouch({ kind: 'restart' });
+          // 二次确认：清空 10 名角色的全部无限历史、宝物、负担与局数
+          const win = shadow?.ownerDocument?.defaultView;
+          const ok =
+            typeof win?.confirm === 'function'
+              ? win.confirm('确定清空全部无限挑战进度（10 名角色的规则/宝物/负担/局数）？此操作不可撤销。')
+              : true;
+          if (!ok) return;
+          removeSave();
+          sendTouch({ kind: 'clear_save' });
         });
       }
       if (btnSwitchMode) {
@@ -357,6 +412,17 @@ export async function createGuideUi(
     const statKills = shadow?.querySelector<HTMLElement>('[data-ui-part="stat-kills"]');
     const statRank = shadow?.querySelector<HTMLElement>('[data-ui-part="stat-rank"]');
     const challengeProgress = shadow?.querySelector<HTMLElement>('[data-ui-part="challenge-progress"]');
+    const deathDamageElem = shadow?.querySelector<HTMLElement>('[data-ui-part="death-damage"]');
+    const shrinkElem = shadow?.querySelector<HTMLElement>('[data-ui-part="shrink-info"]');
+    const burdenElem = shadow?.querySelector<HTMLElement>('[data-ui-part="burden-info"]');
+    const burdenFill = shadow?.querySelector<HTMLElement>('[data-ui-part="burden-fill"]');
+    const raidHud = shadow?.querySelector<HTMLElement>('[data-ui-part="raid-hud"]');
+    const raidTitle = shadow?.querySelector<HTMLElement>('[data-ui-part="raid-title"]');
+    const raidHpText = shadow?.querySelector<HTMLElement>('[data-ui-part="raid-hp-text"]');
+    const raidHpFill = shadow?.querySelector<HTMLElement>('[data-ui-part="raid-hp-fill"]');
+    const saveNoticeElem = shadow?.querySelector<HTMLElement>('[data-ui-part="save-notice"]');
+    const statDeathDamage = shadow?.querySelector<HTMLElement>('[data-ui-part="stat-death-damage"]');
+    const statBurden = shadow?.querySelector<HTMLElement>('[data-ui-part="stat-burden"]');
 
     if (btnRestart) {
       btnRestart.addEventListener('click', () => {
@@ -446,6 +512,69 @@ export async function createGuideUi(
             }
           } else {
             upgradeModal.classList.add('hidden');
+          }
+        }
+
+        // 单局死亡增伤 / 分段缩圈 / 个人负担 / 团战 HUD
+        const elim = typeof state.eliminatedCount === 'number' ? state.eliminatedCount : 0;
+        const deathMult =
+          typeof state.survivalDamageMultiplier === 'number' ? state.survivalDamageMultiplier : 1;
+        if (deathDamageElem) {
+          deathDamageElem.textContent =
+            elim > 0 ? `淘汰 ${elim} 人 · 全伤 ×${deathMult.toFixed(2)}` : '淘汰 0 人 · 全伤 ×1.00';
+        }
+
+        const shrinkStage = typeof state.shrinkStage === 'number' ? state.shrinkStage : 0;
+        const safeRadius = typeof state.safeRadius === 'number' ? state.safeRadius : 0.98;
+        if (shrinkElem) {
+          shrinkElem.textContent = `缩圈 ${shrinkStage}/7 · 安全半径 ${(safeRadius * 100).toFixed(0)}%`;
+        }
+
+        const burden = typeof state.playerLossBurden === 'number' ? state.playerLossBurden : 0;
+        if (burdenElem) {
+          burdenElem.textContent = `个人负担 ${burden}/${MAX_LOSS_BURDEN} 层 · -${burden}%`;
+        }
+        if (burdenFill) {
+          burdenFill.style.width = `${Math.min(100, (burden / MAX_LOSS_BURDEN) * 100)}%`;
+        }
+
+        const raid = state.raid as
+          | {
+              phase: string;
+              bossRound: number;
+              bossHp: number;
+              bossMaxHp: number;
+              participants: number;
+              timeLeft: number;
+            }
+          | undefined;
+        if (raidHud) {
+          if (raid && raid.phase !== 'none' && raid.phase !== undefined) {
+            raidHud.classList.remove('hidden');
+            if (raidTitle) {
+              raidTitle.textContent = `第 ${raid.bossRound} 场全员 Boss 团战 · ${raid.participants} 人参战 · 剩余 ${raid.timeLeft}s`;
+            }
+            if (raidHpText) raidHpText.textContent = `${raid.bossHp} / ${raid.bossMaxHp} HP`;
+            if (raidHpFill) {
+              const pct = Math.min(
+                100,
+                Math.max(0, Math.round((raid.bossHp / Math.max(1, raid.bossMaxHp)) * 100)),
+              );
+              raidHpFill.style.width = `${pct}%`;
+            }
+          } else {
+            raidHud.classList.add('hidden');
+          }
+        }
+
+        const endlessStateNotice = state.endless as { saveRestored?: string | null } | undefined;
+        if (saveNoticeElem) {
+          const notice = endlessStateNotice?.saveRestored;
+          if (notice) {
+            saveNoticeElem.textContent = notice;
+            saveNoticeElem.classList.remove('hidden');
+          } else {
+            saveNoticeElem.classList.add('hidden');
           }
         }
 
@@ -705,6 +834,14 @@ export async function createGuideUi(
             const rank = typeof state.playerRank === 'number' ? state.playerRank : isWinner ? 1 : Math.max(2, 11 - aliveCount);
             if (statRank) statRank.textContent = `第 ${rank} 名 / 10`;
 
+            if (statDeathDamage) {
+              statDeathDamage.textContent = `×${deathMult.toFixed(2)}（淘汰 ${elim} 人）`;
+            }
+            if (statBurden) {
+              const won = state.isWinner === true;
+              const delta = won ? '胜 -1 层' : '负 +1 层';
+              statBurden.textContent = `${burden} / ${MAX_LOSS_BURDEN} 层（${delta}）`;
+            }
             if (challengeProgress) {
               challengeProgress.textContent = `${cMm.toString().padStart(2, '0')}:${cSs.toString().padStart(2, '0')} / 15:00 (共 ${roundsCompleted} 局)`;
             }

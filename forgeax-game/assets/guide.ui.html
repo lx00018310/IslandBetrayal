@@ -27,6 +27,8 @@
 
   <div class="hud-col hud-speed-col">
     <div class="mode-badge" data-ui-part="mode-badge">无限挑战</div>
+    <div class="death-damage" data-ui-part="death-damage">淘汰 0 人 · 全伤 ×1.00</div>
+    <div class="shrink-info" data-ui-part="shrink-info">缩圈 0/7 · 安全半径 98%</div>
     <div class="shortcut-tip">WASD move · Space 组队/确认</div>
   </div>
 </header>
@@ -35,6 +37,20 @@
 <div class="world-banner hidden" data-ui-part="world-banner">
   <span class="world-banner-text" data-ui-part="world-banner-text">第 1 局开始</span>
 </div>
+
+<!-- 存档恢复提示 -->
+<div class="save-notice hidden" data-ui-part="save-notice">已恢复无限挑战进度</div>
+
+<!-- 全员 Boss 团战 HUD -->
+<section class="raid-hud hidden" data-ui-part="raid-hud">
+  <div class="raid-info-row">
+    <span class="raid-title" data-ui-part="raid-title">第 1 场全员 Boss 团战</span>
+    <span class="raid-hp-text" data-ui-part="raid-hp-text">0 / 0 HP</span>
+  </div>
+  <div class="raid-hp-bar">
+    <div class="raid-hp-fill" data-ui-part="raid-hp-fill"></div>
+  </div>
+</section>
 <section class="boss-hud hidden" data-ui-part="boss-hud">
   <div class="boss-info-row">
     <span class="boss-title">⚠️ 混沌体素巨兽</span>
@@ -73,6 +89,10 @@
     <div class="hp-fill" data-ui-part="hp-fill"></div>
   </div>
   <div class="player-status-hint" data-ui-part="player-status-hint">单人 · 靠近角色可邀请组队</div>
+  <div class="burden-row">
+    <span class="burden-info" data-ui-part="burden-info">个人负担 0/20 层 · -0%</span>
+    <div class="burden-bar"><div class="burden-fill" data-ui-part="burden-fill"></div></div>
+  </div>
   <div class="distance-warning-hint hidden" data-ui-part="distance-warning-hint">⚠️ 距离过远！超 5.0m 断线爆箱！</div>
 </aside>
 
@@ -187,6 +207,8 @@
       <div class="stat-row"><span>断线解散次数</span><strong data-ui-part="stat-disbands">0</strong></div>
       <div class="stat-row"><span>淘汰人数</span><strong data-ui-part="stat-kills">0</strong></div>
       <div class="stat-row"><span>最终名次</span><strong data-ui-part="stat-rank">1 / 10</strong></div>
+      <div class="stat-row"><span>本局淘汰增伤</span><strong data-ui-part="stat-death-damage">×1.00</strong></div>
+      <div class="stat-row"><span>个人失利负担</span><strong data-ui-part="stat-burden">0 / 20 层</strong></div>
       <div class="stat-row challenge-row"><span>连续挑战进度</span><strong data-ui-part="challenge-progress">00:00 / 15:00</strong></div>
     </div>
     <button type="button" class="btn-restart" data-ui-part="btn-restart">进入下局秘策选择 (Space)</button>

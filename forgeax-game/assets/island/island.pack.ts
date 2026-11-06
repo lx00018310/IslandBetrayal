@@ -12,10 +12,14 @@ import { assetGuid, PACKAGE_IDS } from '../shared/asset-refs.ts';
 import { setupPresentation } from './presentation.ts';
 import {
   aggregateWorldMultipliers,
+  applyRoundOutcome,
+  burdenFactor,
   createInitialEndlessProfile,
+  MAX_LOSS_BURDEN,
   STAT_FACTORS,
   STAT_NAMES,
   STAT_TARGETS,
+  survivalDamageMultiplier,
   type CarryRelic,
   type EndlessProfile,
   type GlobalRule,
@@ -24,10 +28,20 @@ import {
   type WorldMultipliers,
 } from './stats.ts';
 import {
+  ENDLESS_SAVE_KEY,
+  parseEndlessSave,
+  serializeEndlessSave,
+  type EndlessSaveV1,
+  type EndlessPhase,
+} from './endless-save.ts';
+import {
   acceptInvite,
+  activeCovers,
   aliveActors,
   chestOf,
   createInitialSimulation,
+  currentSafeRadius,
+  defaultRelicAffix,
   dist,
   getIgnoreRemaining,
   getNearbyCandidate,
@@ -37,8 +51,10 @@ import {
   MATCH_SECONDS,
   partnerOf,
   type PlayerInputIntent,
+  RAID_MAX_SECONDS,
   restartSimulation,
   sendInvite,
+  SHRINK_THRESHOLD_SECONDS,
   stepSimulation,
   TEAM_BREAK_DISTANCE,
   TEAM_WARNING_DISTANCE,
@@ -64,6 +80,7 @@ export interface IslandTouchMessage {
     | 'mode_select'
     | 'speed'
     | 'restart'
+    | 'clear_save'
     | 'reset';
   x?: number;
   y?: number;
@@ -75,6 +92,8 @@ export interface IslandTouchMessage {
   relicKind?: 'knife' | 'arrow' | 'bomb' | null;
   relicLevel?: number;
   mode?: 'normal' | 'endless';
+  /** 存档恢复载荷（由 UI realm 读取 localStorage 后传入） */
+  save?: string | null;
 }
 
 export const islandPlugin: Plugin = {
@@ -117,6 +136,10 @@ export const islandPlugin: Plugin = {
       let sessionChallengeElapsed = 0;
       let roundFinishedLogged = false;
       let endlessPhase: 'playing' | 'round-result' | 'rule-pick' | 'relic-pick' = 'playing';
+      /** 已结算局号（幂等防重复惩罚/重复追加规则） */
+      let lastSettledRound = 0;
+      /** 存档恢复提示 */
+      let saveRestoredNotice: string | null = null;
 
       let ruleAnnouncement: string | null = null;
       let ruleAnnouncementTimer = 0;
@@ -129,6 +152,117 @@ export const islandPlugin: Plugin = {
       let ruleStatIndex = 0;
       let ruleFactorIndex = 0;
       let relicHighlight = 0;
+
+      /** 每局最终结算：每人独立 +1 / -1 失利负担（幂等，仅一次） */
+      const settleRoundOutcome = () => {
+        if (mode !== 'endless') return;
+        if (lastSettledRound >= matchIndex) return;
+        lastSettledRound = matchIndex;
+        const winnerId = sim.winner ? sim.winner.id : -1;
+        for (const [id, profile] of endlessProfiles) {
+          const won = winnerId === id;
+          profile.lossBurden = applyRoundOutcome(profile.lossBurden, won);
+        }
+      };
+
+      /** 无限模式敌人难度成长：按局数与实际有效战力简单缩放 */
+      const computeEnemyScale = (): { hp: number; damage: number } => {
+        const roundFactor = 1 + Math.min(3.0, (matchIndex - 1) * 0.08);
+        const avgDamage =
+          sim.actors.reduce((acc, a) => acc + a.personalMultiplier, 0) / Math.max(1, sim.actors.length);
+        const hp = roundFactor * Math.max(0.6, Math.min(4.0, sim.effectiveMultipliers.damage * 0.8 + 0.2));
+        const damage = roundFactor * Math.max(0.6, Math.min(3.0, avgDamage));
+        return { hp, damage };
+      };
+
+      /** 汇总当前存档快照 */
+      const buildSavePayload = () =>
+        serializeEndlessSave({
+          roundIndex: matchIndex,
+          completedRounds,
+          challengeElapsed: sessionChallengeElapsed,
+          lastSettledRound,
+          profiles: endlessProfiles.values(),
+          phase:
+            endlessPhase === 'round-result'
+              ? 'round-result'
+              : endlessPhase === 'rule-pick'
+                ? 'rule-pick'
+                : endlessPhase === 'relic-pick'
+                  ? 'relic-pick'
+                  : 'round-start',
+          pendingRule: playerPendingRule,
+          pendingRelic: playerPendingRelic,
+        });
+
+      /** 写入浏览器本地存储（通过 UI 消息通道交接） */
+      const persistSave = () => {
+        if (!port || mode !== 'endless') return;
+        try {
+          port.postMessage({
+            channel: 'island/save-write',
+            key: ENDLESS_SAVE_KEY,
+            payload: buildSavePayload(),
+          });
+        } catch {
+          // 存档写入失败不阻断游戏
+        }
+      };
+
+      /** 从存档恢复无限进度（含负担、规则、宝物） */
+      const restoreFromSave = (save: EndlessSaveV1) => {
+        mode = 'endless';
+        matchIndex = Math.max(1, save.roundIndex);
+        completedRounds = Math.max(0, save.completedRounds);
+        sessionChallengeElapsed = Math.max(0, save.challengeElapsed);
+        lastSettledRound = Math.max(0, save.lastSettledRound);
+        for (const p of save.profiles) {
+          endlessProfiles.set(p.actorId, { ...p });
+        }
+        endlessPhase = 'playing';
+        playerPendingRule = null;
+        playerPendingRelic = null;
+        aiPendingDecisions.clear();
+        // 中途退出 → 从第 N 局开场重新开始（不续接半场战斗）
+        applyNextRoundWorld();
+        saveRestoredNotice = `已恢复无限挑战 · 第 ${matchIndex} 局`;
+        ruleAnnouncement = saveRestoredNotice;
+        ruleAnnouncementTimer = 6.0;
+      };
+
+      /** 应用下一局的世界倍率 / 个人失利乘区 / 携带宝物 / 敌人难度 */
+      const applyNextRoundWorld = () => {
+        const allRules: GlobalRule[] = [];
+        for (const p of endlessProfiles.values()) {
+          allRules.push(...p.rules);
+        }
+        const activeIds = new Set(sim.actors.map((a) => a.id));
+        const worldMultipliers = aggregateWorldMultipliers(allRules, activeIds);
+
+        const carryRelics = new Map<number, CarryRelic>();
+        const personalMultipliers = new Map<number, number>();
+        for (const [id, p] of endlessProfiles) {
+          if (p.carryRelic) carryRelics.set(id, p.carryRelic);
+          personalMultipliers.set(id, burdenFactor(p.lossBurden));
+        }
+
+        const enemyScale = computeEnemyScale();
+        restartSimulation(sim, { worldMultipliers, carryRelics, personalMultipliers, enemyScale });
+        presentation.reset(sim);
+        touchMoveX = 0;
+        touchMoveY = 0;
+        upgradeHighlight = 0;
+        relicHighlight = 0;
+        roundFinishedLogged = false;
+        endlessPhase = 'playing';
+
+        const eff = sim.effectiveMultipliers;
+        const playerBurden = endlessProfiles.get(0)?.lossBurden ?? 0;
+        ruleAnnouncement = `第 ${matchIndex} 局开始！全场修正: 血量×${eff.maxHp.toFixed(2)} 伤害×${eff.damage.toFixed(2)} 移速×${eff.moveSpeed.toFixed(2)} 攻速×${eff.attackSpeed.toFixed(2)} 暴击×${eff.critChance.toFixed(2)} · 个人负担 -${playerBurden}%`;
+        ruleAnnouncementTimer = 5.0;
+        // 局开场即落盘：中途刷新可从本局开场恢复
+        persistSave();
+      };
 
       const getPlayerOwnedRelics = (): CarryRelic[] => {
         const p = sim.actors[0];
@@ -147,23 +281,51 @@ export const islandPlugin: Plugin = {
         const actor = sim.actors[actorId];
         const personality = actor?.ai ?? 'honest';
 
-        let preferredStats: StatTarget[] = ['maxHp', 'moveSpeed'];
-        let preferredFactors: StatFactor[] = [1.2, 1.1];
+        // 三种性格各有正负倍率权重（R06 / E5）：正负 10%/20% 均可能被选，
+        // 掠夺者偏好压制性负面规则，形成真实博弈而不是单一正向膨胀。
+        let weightTable: Array<{ stat: StatTarget; factor: StatFactor; w: number }> = [
+          { stat: 'maxHp', factor: 1.2, w: 3 },
+          { stat: 'maxHp', factor: 1.1, w: 2 },
+          { stat: 'moveSpeed', factor: 1.1, w: 2 },
+          { stat: 'attackSpeed', factor: 1.1, w: 1 },
+          { stat: 'damage', factor: 0.9, w: 1 },
+          { stat: 'critChance', factor: 0.8, w: 1 },
+        ];
         if (personality === 'greedy') {
-          preferredStats = ['damage', 'attackSpeed'];
-          preferredFactors = [1.2, 1.1];
+          weightTable = [
+            { stat: 'damage', factor: 1.2, w: 3 },
+            { stat: 'attackSpeed', factor: 1.2, w: 2 },
+            { stat: 'damage', factor: 1.1, w: 2 },
+            { stat: 'maxHp', factor: 0.9, w: 1 },
+            { stat: 'moveSpeed', factor: 0.8, w: 1 },
+            { stat: 'critChance', factor: 1.1, w: 1 },
+          ];
         } else if (personality === 'raider') {
-          preferredStats = ['damage', 'critChance', 'maxHp'];
-          preferredFactors = [1.2, 1.1, 0.9];
+          weightTable = [
+            { stat: 'critChance', factor: 1.2, w: 2 },
+            { stat: 'damage', factor: 1.2, w: 2 },
+            { stat: 'maxHp', factor: 0.9, w: 2 },
+            { stat: 'attackSpeed', factor: 0.8, w: 2 },
+            { stat: 'moveSpeed', factor: 0.9, w: 1 },
+            { stat: 'damage', factor: 0.8, w: 1 },
+          ];
         }
 
-        const stat = preferredStats[Math.floor(Math.random() * preferredStats.length)] ?? 'damage';
-        const factor = preferredFactors[Math.floor(Math.random() * preferredFactors.length)] ?? 1.2;
+        const totalW = weightTable.reduce((acc, e) => acc + e.w, 0);
+        let pick = Math.random() * totalW;
+        let chosenEntry = weightTable[0]!;
+        for (const e of weightTable) {
+          pick -= e.w;
+          if (pick <= 0) {
+            chosenEntry = e;
+            break;
+          }
+        }
 
         const rule: GlobalRule = {
           ownerId: actorId,
-          stat,
-          factor,
+          stat: chosenEntry.stat,
+          factor: chosenEntry.factor,
           chosenAtRound: round,
         };
 
@@ -175,7 +337,8 @@ export const islandPlugin: Plugin = {
           if (actor.weaponBomb > 0) owned.push({ kind: 'bomb', level: actor.weaponBomb });
           if (owned.length > 0) {
             owned.sort((a, b) => b.level - a.level);
-            relic = owned[0] ?? null;
+            const best = owned[0] ?? null;
+            relic = best ? { ...best, affix: best.affix ?? defaultRelicAffix(best.kind) } : null;
           }
         }
 
@@ -202,32 +365,9 @@ export const islandPlugin: Plugin = {
         playerPendingRelic = null;
         aiPendingDecisions.clear();
 
-        const allRules: GlobalRule[] = [];
-        for (const p of endlessProfiles.values()) {
-          allRules.push(...p.rules);
-        }
-        const activeIds = new Set(sim.actors.map((a) => a.id));
-        const worldMultipliers = aggregateWorldMultipliers(allRules, activeIds);
-
-        const carryRelics = new Map<number, CarryRelic>();
-        for (const [id, p] of endlessProfiles) {
-          if (p.carryRelic) carryRelics.set(id, p.carryRelic);
-        }
-
-        restartSimulation(sim, { worldMultipliers, carryRelics });
-        presentation.reset(sim);
-        touchMoveX = 0;
-        touchMoveY = 0;
-        upgradeHighlight = 0;
-        relicHighlight = 0;
-
         matchIndex++;
-        roundFinishedLogged = false;
-        endlessPhase = 'playing';
-
-        const eff = sim.effectiveMultipliers;
-        ruleAnnouncement = `第 ${matchIndex} 局开始！全场修正已生效: 血量×${eff.maxHp.toFixed(2)} 伤害×${eff.damage.toFixed(2)} 移速×${eff.moveSpeed.toFixed(2)} 攻速×${eff.attackSpeed.toFixed(2)} 暴击×${eff.critChance.toFixed(2)}`;
-        ruleAnnouncementTimer = 5.0;
+        applyNextRoundWorld();
+        persistSave();
       };
 
       const resetAllEndless = () => {
@@ -238,6 +378,9 @@ export const islandPlugin: Plugin = {
         completedRounds = 0;
         sessionChallengeElapsed = 0;
         roundFinishedLogged = false;
+        lastSettledRound = 0;
+        saveRestoredNotice = null;
+        saveApplied = true; // 主动重置后不再接受旧存档
         endlessPhase = 'playing';
         playerPendingRule = null;
         playerPendingRelic = null;
@@ -252,6 +395,7 @@ export const islandPlugin: Plugin = {
         relicHighlight = 0;
         restartSimulation(sim);
         presentation.reset(sim);
+        persistSave();
       };
 
       const startNextNormalRound = () => {
@@ -267,6 +411,8 @@ export const islandPlugin: Plugin = {
 
       // 前端控制输入意图
       let matchReady = false;
+      /** 存档是否已应用（保证只恢复一次，防止重复初始化） */
+      let saveApplied = false;
       let touchMoveX = 0;
       let touchMoveY = 0;
       let touchTeamAction = false;
@@ -327,6 +473,7 @@ export const islandPlugin: Plugin = {
                   aiPendingDecisions.set(i, aiDecideNextRound(i, matchIndex));
                 }
                 endlessPhase = 'relic-pick';
+                persistSave();
               }
               break;
             case 'relic_highlight':
@@ -355,9 +502,22 @@ export const islandPlugin: Plugin = {
               }
               break;
             case 'mode_select':
-              if ((data.mode === 'normal' || data.mode === 'endless') && mode !== data.mode) {
-                mode = data.mode;
-                resetAllEndless();
+              if (data.mode === 'normal' || data.mode === 'endless') {
+                if (mode !== data.mode) {
+                  mode = data.mode;
+                  // 切回无限模式不删除原存档：直接按已保存进度重开当前局
+                  if (mode === 'endless') {
+                    applyNextRoundWorld();
+                    ruleAnnouncement = `无限挑战 · 第 ${matchIndex} 局`;
+                    ruleAnnouncementTimer = 4.0;
+                  } else {
+                    // 切到普通模式：从普通单局开场（不消耗无限存档）
+                    restartSimulation(sim);
+                    presentation.reset(sim);
+                    roundFinishedLogged = false;
+                    endlessPhase = 'playing';
+                  }
+                }
               }
               break;
             case 'speed':
@@ -366,15 +526,30 @@ export const islandPlugin: Plugin = {
             case 'restart':
               resetAllEndless();
               break;
-            case 'reset':
+            case 'clear_save':
+              resetAllEndless();
+              lastSettledRound = 0;
+              saveRestoredNotice = '无限进度已清空 · 从第 1 局重新开始';
+              ruleAnnouncement = saveRestoredNotice;
+              ruleAnnouncementTimer = 5.0;
+              break;
+            case 'reset': {
               touchMoveX = 0;
               touchMoveY = 0;
-              if (!matchReady) {
+              const restored = parseEndlessSave(data.save);
+              if (restored && !saveApplied) {
+                // 存档优先：即使引擎已用默认状态开局，也立刻切回已保存的第 N 局
+                saveApplied = true;
+                matchReady = true;
+                restoreFromSave(restored);
+              } else if (!matchReady) {
                 matchReady = true;
                 restartSimulation(sim);
                 presentation.reset(sim);
+                persistSave();
               }
               break;
+            }
           }
         };
         port.addEventListener('message', onMessage);
@@ -509,15 +684,17 @@ export const islandPlugin: Plugin = {
             upgradeChoices: sim.upgradeChoices,
             activeEvent: sim.activeEvent,
             eventTimeLeft: Number(Math.max(0, sim.eventTimeLeft).toFixed(1)),
-            boss: sim.boss && sim.boss.alive
-              ? {
-                  id: sim.boss.id,
-                  hp: sim.boss.hp,
-                  maxHp: sim.boss.maxHp,
-                  x: Number(sim.boss.x.toFixed(2)),
-                  y: Number(sim.boss.y.toFixed(2)),
-                }
-              : null,
+            // 旧单 Boss 已废弃：兼容槽位改由团战 Boss 派生（供旧 UI 槽读取）
+            boss:
+              sim.raidPhase !== 'none' && sim.raidBossHp > 0
+                ? {
+                    id: 999,
+                    hp: Math.max(0, Math.round(sim.raidBossHp)),
+                    maxHp: Math.round(sim.raidBossMaxHp),
+                    x: Number(sim.raidBossX.toFixed(2)),
+                    y: Number(sim.raidBossY.toFixed(2)),
+                  }
+                : null,
             chestsCount: sim.chests.filter((c) => c.hp > 0 || c.treasure > 0).length,
             monstersCount: sim.monsters.filter((m) => m.alive).length,
             lootsCount: sim.loots.filter((l) => l.value > 0).length,
@@ -525,6 +702,45 @@ export const islandPlugin: Plugin = {
             betrayals: sim.playerDisbands,
             chestBreaks: sim.chestBreaks,
             playerTreasure: sim.playerTreasure,
+            // 单局死亡增伤（Plan 2B）
+            eliminatedCount: sim.eliminatedCount,
+            survivalDamageMultiplier: Number(survivalDamageMultiplier(sim.eliminatedCount).toFixed(3)),
+            // 分段缩圈（Plan 2C）
+            shrinkStage: sim.shrinkStage,
+            safeRadius: Number(currentSafeRadius(sim).toFixed(3)),
+            nextShrinkIn: Number(
+              Math.max(
+                0,
+                (SHRINK_THRESHOLD_SECONDS[Math.min(sim.shrinkStage + 1, SHRINK_THRESHOLD_SECONDS.length - 1)] ?? 0) -
+                  sim.elapsed,
+              ).toFixed(1),
+            ),
+            // 两次全员 Boss 团战（Plan A）
+            raid: {
+              phase: sim.raidPhase,
+              bossRound: sim.bossRound,
+              elapsed: Number(sim.raidElapsed.toFixed(1)),
+              participants: sim.raidParticipants.length,
+              bossHp: Math.max(0, Math.round(sim.raidBossHp)),
+              bossMaxHp: Math.round(sim.raidBossMaxHp),
+              telegraph: sim.raidTelegraphTimer > 0
+                ? {
+                    x: Number(sim.raidTelegraphX.toFixed(2)),
+                    y: Number(sim.raidTelegraphY.toFixed(2)),
+                    radius: Number(sim.raidTelegraphRadius.toFixed(2)),
+                    timeLeft: Number(sim.raidTelegraphTimer.toFixed(2)),
+                  }
+                : null,
+              failed: sim.raidFailed,
+              damage: Math.round(sim.raidDamage),
+            },
+            // 中央掩体（Plan 2C-2）
+            covers: activeCovers(sim).map((c) => ({
+              id: c.id,
+              x: Number(c.x.toFixed(2)),
+              y: Number(c.y.toFixed(2)),
+              radius: Number(c.radius.toFixed(2)),
+            })),
             session: {
               challengeElapsed: Number(sessionChallengeElapsed.toFixed(1)),
               roundsCompleted: completedRounds,
@@ -561,6 +777,18 @@ export const islandPlugin: Plugin = {
               rules: Array.from(endlessProfiles.values()).flatMap((p) => p.rules.map((r) => ({ ...r }))),
               ownedRelics: getPlayerOwnedRelics().map((r) => ({ ...r })),
               ruleAnnouncement: ruleAnnouncement ?? null,
+              saveRestored: saveRestoredNotice,
+              lastSettledRound,
+              profiles: Array.from(endlessProfiles.values()).map((p) => ({
+                actorId: p.actorId,
+                endlessRound: p.endlessRound,
+                lossBurden: p.lossBurden,
+                rulesCount: p.rules.length,
+                relic: p.carryRelic ? { ...p.carryRelic } : null,
+              })),
+              playerLossBurden: endlessProfiles.get(0)?.lossBurden ?? 0,
+              playerBurdenFactor: Number(burdenFactor(endlessProfiles.get(0)?.lossBurden ?? 0).toFixed(3)),
+              maxLossBurden: MAX_LOSS_BURDEN,
             },
             lastBreakEvent: sim.lastBreakEvent
               ? {
@@ -587,6 +815,8 @@ export const islandPlugin: Plugin = {
           fn: () => {
             const snap = world.getResource<InputSnapshot>(INPUT_SNAPSHOT_RESOURCE_KEY);
             if (!matchReady && snap) {
+              // 输入已就绪但 UI 尚未交接存档：先以默认状态开局，但**不落盘**，
+              // 避免把玩家已保存的无限进度覆盖成第 1 局
               matchReady = true;
               restartSimulation(sim);
               presentation.reset(sim);
@@ -674,6 +904,7 @@ export const islandPlugin: Plugin = {
                         aiPendingDecisions.set(i, aiDecideNextRound(i, matchIndex));
                       }
                       endlessPhase = 'relic-pick';
+                      persistSave();
                     }
                   } else if (endlessPhase === 'relic-pick') {
                     const owned = getPlayerOwnedRelics();
@@ -728,6 +959,8 @@ export const islandPlugin: Plugin = {
               roundFinishedLogged = true;
               completedRounds++;
               endlessPhase = 'round-result';
+              settleRoundOutcome();
+              persistSave();
             }
 
             if (inputIntent.restart) {
@@ -796,17 +1029,45 @@ export const islandPlugin: Plugin = {
                 playerXpNext: p.xpNext,
                 pendingUpgrade: sim.pendingUpgrade,
                 upgradeChoices: sim.upgradeChoices,
-                boss: sim.boss && sim.boss.alive
-                  ? {
-                      alive: true,
-                      hp: sim.boss.hp,
-                      maxHp: sim.boss.maxHp,
-                    }
-                  : null,
+                boss:
+                  sim.raidPhase !== 'none' && sim.raidBossHp > 0
+                    ? {
+                        alive: true,
+                        hp: Math.max(0, Math.round(sim.raidBossHp)),
+                        maxHp: Math.round(sim.raidBossMaxHp),
+                      }
+                    : null,
                 challengeElapsed: Number(sessionChallengeElapsed.toFixed(1)),
                 roundsCompleted: completedRounds,
                 roundIndex: matchIndex,
                 isChallengeTargetReached: sessionChallengeElapsed >= 900,
+                eliminatedCount: sim.eliminatedCount,
+                survivalDamageMultiplier: Number(survivalDamageMultiplier(sim.eliminatedCount).toFixed(2)),
+                shrinkStage: sim.shrinkStage,
+                safeRadius: Number(currentSafeRadius(sim).toFixed(3)),
+                raid: {
+                  phase: sim.raidPhase,
+                  bossRound: sim.bossRound,
+                  bossHp: Math.max(0, Math.round(sim.raidBossHp)),
+                  bossMaxHp: Math.round(sim.raidBossMaxHp),
+                  participants: sim.raidParticipants.length,
+                  timeLeft: Number(Math.max(0, RAID_MAX_SECONDS - sim.raidElapsed).toFixed(1)),
+                  telegraph:
+                    sim.raidTelegraphTimer > 0
+                      ? {
+                          x: Number(sim.raidTelegraphX.toFixed(2)),
+                          y: Number(sim.raidTelegraphY.toFixed(2)),
+                          radius: Number(sim.raidTelegraphRadius.toFixed(2)),
+                        }
+                      : null,
+                },
+                covers: activeCovers(sim).map((c) => ({
+                  id: c.id,
+                  x: c.x,
+                  y: c.y,
+                  radius: c.radius,
+                })),
+                playerLossBurden: endlessProfiles.get(0)?.lossBurden ?? 0,
                 endless: {
                   mode,
                   roundIndex: matchIndex,
