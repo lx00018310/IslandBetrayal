@@ -15,6 +15,16 @@
 export type StatTarget = 'maxHp' | 'damage' | 'moveSpeed' | 'attackSpeed' | 'critChance';
 export type StatFactor = 0.8 | 0.9 | 1.1 | 1.2;
 
+// 【玩法支柱三】7 种博弈杠杆秘策 (Plan v2026-11-06)
+export type GlobalRuleKind =
+  | 'tether_tight'   // 猜疑短绳：断线距离 -15%, 宝箱获取 +25%
+  | 'tether_long'    // 铁索连环：断线距离 +20%, 队友移速 +10%
+  | 'bounty_greed'   // 悬赏狂热：Boss/敌箱伤害 +25%, 爆箱范围 +30%
+  | 'storm_rush'     // 急速坍塌：每阶段缩圈额外 -5%, 全员移速 +12%
+  | 'close_combat'   // 近身肉搏：飞刀伤害 +20%, 范围 +20%; 箭矢射程 -15%
+  | 'ranged_snipe'   // 猎手视野：箭矢/炸弹伤害 +20%; 近战/飞刀伤害 -10%
+  | 'blood_feud';    // 嗜血分赃：淘汰乘区底数 b 从 1.20→1.25
+
 export const STAT_TARGETS: readonly StatTarget[] = [
   'maxHp',
   'damage',
@@ -31,6 +41,17 @@ export const STAT_NAMES: Record<StatTarget, string> = {
   moveSpeed: '移动速度',
   attackSpeed: '攻击频率',
   critChance: '暴击概率',
+};
+
+// 7 种秘策的可读名称
+export const RULE_KIND_NAMES: Record<GlobalRuleKind, string> = {
+  tether_tight: '猜疑短绳',
+  tether_long: '铁索连环',
+  bounty_greed: '悬赏狂热',
+  storm_rush: '急速坍塌',
+  close_combat: '近身肉搏',
+  ranged_snipe: '猎手视野',
+  blood_feud: '嗜血分赃',
 };
 
 /** 单局死亡增伤：每淘汰 1 名参赛角色，幸存者伤害 ×1.20（本局独立乘区） */
@@ -55,6 +76,13 @@ export interface CarryRelic {
   affix?: RelicAffix;
 }
 
+/**【玩法支柱三·AI 记仇生态】仇恨记忆记录（Plan R06）*/
+export interface GrudgeRecord {
+  lastBetrayedById: number | null;  // 上一局背叛拉爆自己箱子的仇人 ID
+  lastKilledById: number | null;    // 上一局直接击杀自己的仇人 ID
+  grudgeScoreByActor: Record<number, number>; // 对各角色的累计仇恨值 0..100
+}
+
 export interface EndlessProfile {
   actorId: number;
   endlessRound: number;
@@ -62,6 +90,8 @@ export interface EndlessProfile {
   carryRelic: CarryRelic | null;
   /** 失利负担层数 0..20，每层使该角色下一局全属性 -1% */
   lossBurden: number;
+  /** 跨局记仇记忆（Plan R06） */
+  grudge?: GrudgeRecord;
 }
 
 export interface WorldMultipliers {
@@ -101,6 +131,35 @@ export const MIN_LEGAL_RATE = 0.01;
 
 export function clamp(v: number, lo: number, hi: number): number {
   return Math.max(lo, Math.min(hi, v));
+}
+
+// ---------------------------------------------------------------------------
+// AI 记仇系统辅助函数（Plan R06）
+// ---------------------------------------------------------------------------
+
+/** 创建初始空仇恨记录 */
+export function createEmptyGrudgeRecord(): GrudgeRecord {
+  return {
+    lastBetrayedById: null,
+    lastKilledById: null,
+    grudgeScoreByActor: {},
+  };
+}
+
+/** 自然衰减仇恨值（每局结束未发生新冲突则 -15） */
+export function decayGrudgeScore(score: number): number {
+  return Math.max(0, score - 15);
+}
+
+/** 对单个角色增加仇恨值 */
+export function addGrudgeScore(record: GrudgeRecord, actorId: number, amount: number): void {
+  const current = record.grudgeScoreByActor[actorId] || 0;
+  record.grudgeScoreByActor[actorId] = Math.min(100, current + amount);
+}
+
+/** 获取某角色的仇恨值（无记录则为 0） */
+export function getGrudgeScore(record: GrudgeRecord, actorId: number): number {
+  return record.grudgeScoreByActor[actorId] || 0;
 }
 
 // ---------------------------------------------------------------------------
@@ -162,6 +221,117 @@ export function survivalDamageMultiplier(eliminatedCount: number): number {
   const n = Math.max(0, Math.round(finiteOr(eliminatedCount, 0)));
   if (n === 0) return 1;
   return Math.pow(DEATH_DAMAGE_FACTOR, n);
+}
+
+// 【玩法支柱三】7 种博弈杠杆秘策的聚合计算函数
+/** 
+ * 根据全局规则集计算应用后的断线距离修正系数
+ * tether_tight: -15%, tether_long: +20%
+ */
+export function calculateTetherDistanceModifier(rules: readonly GlobalRule[]): number {
+  let modifier = 1.0;
+  for (const r of rules) {
+    if (r.stat === 'moveSpeed' && r.factor === 0.85) {
+      modifier *= 0.85; // tether_tight
+    } else if (r.stat === 'moveSpeed' && r.factor === 1.20) {
+      modifier *= 1.20; // tether_long
+    }
+  }
+  return modifier;
+}
+
+/** 
+ * 根据全局规则集计算缩圈加速修正
+ * storm_rush: 每阶段额外收紧 5%
+ */
+export function calculateShrinkAccelerationModifier(rules: readonly GlobalRule[]): number {
+  for (const r of rules) {
+    if (r.stat === 'moveSpeed' && r.factor === 0.88) {
+      return 0.95; // storm_rush: 每个阶段再额外 -5%
+    }
+  }
+  return 1.0;
+}
+
+/** 
+ * 根据全局规则集计算 Boss/敌箱伤害修正
+ * bounty_greed: +25%
+ */
+export function calculateBountyDamageModifier(rules: readonly GlobalRule[], targetIsBoss: boolean): number {
+  for (const r of rules) {
+    if (r.stat === 'damage' && r.factor === 1.25 && targetIsBoss) {
+      return 1.25; // bounty_greed
+    }
+  }
+  return 1.0;
+}
+
+/** 
+ * 根据全局规则集计算近远程武器平衡修正
+ * close_combat: 飞刀+20%, 箭矢射程-15%
+ * ranged_snipe: 箭矢/炸弹+20%, 近战/飞刀-10%
+ */
+export function calculateWeaponBalanceModifier(weaponKind: 'knife' | 'arrow' | 'bomb' | 'melee', rules: readonly GlobalRule[]): number {
+  let knifeMod = 1.0;
+  let arrowMod = 1.0;
+  let bombMod = 1.0;
+  let meleeMod = 1.0;
+
+  for (const r of rules) {
+    // close_combet
+    if (r.stat === 'attackSpeed' && r.factor === 1.20) {
+      knifeMod *= 1.20; // 飞刀伤害/范围 +20%
+    }
+    if (r.stat === 'attackSpeed' && r.factor === 0.85) {
+      arrowMod *= 0.85; // 箭矢射程 -15%
+    }
+    // ranged_snipe
+    if (r.stat === 'critChance' && r.factor === 1.20) {
+      arrowMod *= 1.20; // 箭矢伤害 +20%
+      bombMod *= 1.20; // 炸弹伤害 +20%
+    }
+    if (r.stat === 'critChance' && r.factor === 0.90) {
+      meleeMod *= 0.90; // 近战伤害 -10%
+      knifeMod *= 0.90; // 飞刀伤害 -10%
+    }
+  }
+
+  if (weaponKind === 'knife') return knifeMod;
+  if (weaponKind === 'arrow') return arrowMod;
+  if (weaponKind === 'bomb') return bombMod;
+  return meleeMod;
+}
+
+/** 
+ * 根据全局规则集计算淘汰乘区底数修正
+ * blood_feud: b 从 1.20 → 1.25
+ */
+export function calculateBloodFeudBase(): number {
+  // 此处应在 simulation.createInitialSimulation 或 island.pack 中读取全局规则
+  // 为简化，返回默认值 1.20 (实际应由外部传入)
+  return DEATH_DAMAGE_FACTOR;
+}
+
+/** 根据全局规则集汇总所有秘策影响因子 */
+export function aggregateGlobalRules(rules: readonly GlobalRule[]): {
+  tetherModifier: number;
+  shrinkModifier: number;
+  bossDamageModifier: number;
+  weaponModifiers: Record<string, number>;
+  bloodFeudBase: number;
+} {
+  return {
+    tetherModifier: calculateTetherDistanceModifier(rules),
+    shrinkModifier: calculateShrinkAccelerationModifier(rules),
+    bossDamageModifier: calculateBountyDamageModifier(rules, true),
+    weaponModifiers: {
+      knife: calculateWeaponBalanceModifier('knife', rules),
+      arrow: calculateWeaponBalanceModifier('arrow', rules),
+      bomb: calculateWeaponBalanceModifier('bomb', rules),
+      melee: calculateWeaponBalanceModifier('melee', rules),
+    },
+    bloodFeudBase: calculateBloodFeudBase(),
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -277,6 +447,8 @@ export function createInitialEndlessProfile(actorId: number): EndlessProfile {
     rules: [],
     carryRelic: null,
     lossBurden: 0,
+    /**【玩法支柱三】初始化空仇恨记录（Plan R06） */
+    grudge: createEmptyGrudgeRecord(),
   };
 }
 

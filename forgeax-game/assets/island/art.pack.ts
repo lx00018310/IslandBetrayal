@@ -45,41 +45,56 @@ export default definePack({
     const shadowQuad = createPlaneGeometry(1.25, 0.75);
     if (!shadowQuad.ok) return shadowQuad;
 
-    // 体素角色部件
-    const charHead = createBoxGeometry(0.48, 0.44, 0.44);
+    // 体素角色部件 (Tier 2: 二头身大头剪影，宽高比 1.00:1.00:1.35，头部占 50%)
+    const charHead = createBoxGeometry(0.48, 0.48, 0.48);        // 放大头部至 50% 高度
     if (!charHead.ok) return charHead;
-    const charHair = createBoxGeometry(0.52, 0.22, 0.48);
+    const charHair = createBoxGeometry(0.52, 0.24, 0.48);        // 宽檐帽/装饰顶部
     if (!charHair.ok) return charHair;
     const charEyes = createBoxGeometry(0.36, 0.12, 0.14);
     if (!charEyes.ok) return charEyes;
-    const charBody = createBoxGeometry(0.54, 0.50, 0.38);
+    const charBody = createBoxGeometry(0.54, 0.48, 0.38);        // 缩小躯干占比
     if (!charBody.ok) return charBody;
     const charBelt = createBoxGeometry(0.56, 0.10, 0.40);
     if (!charBelt.ok) return charBelt;
     const charArms = createBoxGeometry(0.68, 0.36, 0.26);
     if (!charArms.ok) return charArms;
-    const charLegs = createBoxGeometry(0.44, 0.36, 0.30);
+    const charLegs = createBoxGeometry(0.44, 0.34, 0.30);        // 压低腿长
     if (!charLegs.ok) return charLegs;
     const charShoes = createBoxGeometry(0.46, 0.10, 0.34);
     if (!charShoes.ok) return charShoes;
     const playerMarker = createBoxGeometry(0.24, 0.24, 0.24);
     if (!playerMarker.ok) return playerMarker;
 
-    // 怪物与 Boss 部件
-    const monsterBody = createBoxGeometry(0.68, 0.65, 0.68);
+    // 脚底功能底盘 (视觉方向三：全员脚底锚定盘)
+    const playerFootRing = createPlaneGeometry(0.55, 0.55);       // 玩家绿环 + 朝向箭头
+    if (!playerFootRing.ok) return playerFootRing;
+    const teammateFootRing = createPlaneGeometry(0.50, 0.50);     // 盟友天蓝环
+    if (!teammateFootRing.ok) return teammateFootRing;
+    const rivalFootRing = createPlaneGeometry(0.48, 0.48);        // 敌对 AI 暖红警戒环
+    if (!rivalFootRing.ok) return rivalFootRing;
+    const grudgeFootRing = createPlaneGeometry(0.52, 0.52);       // 记仇 AI 紫红脉冲环
+    if (!grudgeFootRing.ok) return grudgeFootRing;
+    const monsterShadow = createPlaneGeometry(0.75, 0.75);        // 小怪深黑硬阴影
+    if (!monsterShadow.ok) return monsterShadow;
+    const coverAoEdge = createPlaneGeometry(1.50, 1.50);          // 掩体底部 Fake AO 暗边
+    if (!coverAoEdge.ok) return coverAoEdge;
+
+    // 怪物部件 (Tier 1: 矮扁匍匐型，宽高比 1.25:1.25:0.60，高度仅为角色 60%)
+    const monsterBody = createBoxGeometry(0.75, 0.40, 0.75);     // 加宽底座、压扁主体
     if (!monsterBody.ok) return monsterBody;
-    const monsterEyes = createBoxGeometry(0.48, 0.14, 0.16);
+    const monsterEyes = createBoxGeometry(0.48, 0.14, 0.16);     // 亮核视觉焦点
     if (!monsterEyes.ok) return monsterEyes;
-    const monsterHorns = createBoxGeometry(0.54, 0.20, 0.26);
+    const monsterHorns = createBoxGeometry(0.54, 0.20, 0.26);    // 顶部尖角
     if (!monsterHorns.ok) return monsterHorns;
 
-    const bossBody = createBoxGeometry(1.5, 1.5, 1.5);
+    // Boss 部件 (Tier 4: 巨型异形，宽高比 2.40:2.20:2.80，带横向双角)
+    const bossBody = createBoxGeometry(1.6, 1.9, 1.7);           // 巨大厚重主体
     if (!bossBody.ok) return bossBody;
-    const bossEyes = createBoxGeometry(1.1, 0.28, 0.32);
+    const bossEyes = createBoxGeometry(1.1, 0.28, 0.32);         // 炽红核心眼
     if (!bossEyes.ok) return bossEyes;
-    const bossHorns = createBoxGeometry(1.35, 0.45, 0.55);
+    const bossHorns = createBoxGeometry(2.4, 0.35, 0.60);        // 夸张横向双角
     if (!bossHorns.ok) return bossHorns;
-    const bossShadow = createPlaneGeometry(2.4, 1.5);
+    const bossShadow = createPlaneGeometry(2.8, 2.2);            // 扩大 Boss 阴影
     if (!bossShadow.ok) return bossShadow;
 
     // 宝箱部件
@@ -90,14 +105,14 @@ export default definePack({
     const chestLock = createBoxGeometry(0.18, 0.24, 0.16);
     if (!chestLock.ok) return chestLock;
 
-    // 武器部件
-    const knifeMesh = createBoxGeometry(0.14, 0.44, 0.06);
+    // 武器部件 (反写实放大 1.6~2.0 倍)
+    const knifeMesh = createBoxGeometry(0.18, 0.54, 0.08);        // 飞刀放大 1.8x，宽刃月牙
     if (!knifeMesh.ok) return knifeMesh;
-    const arrowMesh = createBoxGeometry(0.08, 0.08, 0.72);
+    const arrowMesh = createBoxGeometry(0.12, 0.12, 0.96);        // 箭矢放大 1.7x，流线型棱锥
     if (!arrowMesh.ok) return arrowMesh;
-    const bombMesh = createBoxGeometry(0.38, 0.38, 0.38);
+    const bombMesh = createBoxGeometry(0.48, 0.48, 0.48);         // 炸弹放大 1.8x，球体化
     if (!bombMesh.ok) return bombMesh;
-    const blastMesh = createPlaneGeometry(2.4, 2.4);
+    const blastMesh = createPlaneGeometry(3.0, 3.0);              // 冲击波环扩大
     if (!blastMesh.ok) return blastMesh;
 
     // 战利品与场景道具部件
@@ -109,7 +124,8 @@ export default definePack({
     if (!teamBeamMesh.ok) return teamBeamMesh;
     const bushMesh = createBoxGeometry(0.85, 0.70, 0.85);
     if (!bushMesh.ok) return bushMesh;
-    const rockMesh = createBoxGeometry(0.92, 0.60, 0.80);
+    // 中央岩石掩体 (Tier 3: 厚重梯形台柱，宽高比 2.60:2.60:1.50)
+    const rockMesh = createBoxGeometry(0.98, 0.72, 0.88);         // 加宽底座，顶部收窄梯形
     if (!rockMesh.ok) return rockMesh;
     const crystalMesh = createBoxGeometry(0.38, 1.25, 0.38);
     if (!crystalMesh.ok) return crystalMesh;

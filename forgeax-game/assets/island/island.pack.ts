@@ -280,6 +280,19 @@ export const islandPlugin: Plugin = {
       ): { rule: GlobalRule; relic: CarryRelic | null } => {
         const actor = sim.actors[actorId];
         const personality = actor?.ai ?? 'honest';
+        const profile = endlessProfiles.get(actorId);
+        
+        //【玩法支柱三·AI 记仇生态】R06: 仇恨 >=40 的 AI 有 70% 概率针对仇人宝物投克制秘策
+        let targetGrudgeId: number | null = null;
+        if (profile?.grudge) {
+          // 找最高仇恨对象且仇恨值>=40
+          for (const [aid, score] of Object.entries(profile.grudge.grudgeScoreByActor)) {
+            if (score >= 40 && Math.random() < 0.7) {
+              targetGrudgeId = parseInt(aid);
+              break;
+            }
+          }
+        }
 
         // 三种性格各有正负倍率权重（R06 / E5）：正负 10%/20% 均可能被选，
         // 掠夺者偏好压制性负面规则，形成真实博弈而不是单一正向膨胀。
@@ -309,6 +322,44 @@ export const islandPlugin: Plugin = {
             { stat: 'moveSpeed', factor: 0.9, w: 1 },
             { stat: 'damage', factor: 0.8, w: 1 },
           ];
+        }
+
+        // 如果仇恨了某个角色且有仇人宝物信息，针对性投克制秘策
+        if (targetGrudgeId !== null) {
+          const grudgeActor = sim.actors[targetGrudgeId];
+          if (grudgeActor) {
+            const owned: CarryRelic[] = [];
+            if (grudgeActor.weaponKnife > 0) owned.push({ kind: 'knife', level: grudgeActor.weaponKnife });
+            if (grudgeActor.weaponArrow > 0) owned.push({ kind: 'arrow', level: grudgeActor.weaponArrow });
+            if (grudgeActor.weaponBomb > 0) owned.push({ kind: 'bomb', level: grudgeActor.weaponBomb });
+            
+            if (owned.length > 0) {
+              owned.sort((a, b) => b.level - a.level);
+              const best = owned[0]!;
+              
+              // 针对性克制：带飞刀则投 ranged_snipe，带箭矢则投 close_combat，带炸弹也投 close_combat
+              let chosenStat: StatTarget = 'damage';
+              let chosenFactor: StatFactor = 1.1;
+              
+              if (best.kind === 'knife') {
+                chosenStat = 'critChance'; // 飞刀依赖暴击
+                chosenFactor = 0.9;
+              } else if (best.kind === 'arrow' || best.kind === 'bomb') {
+                chosenStat = 'damage'; // 远程/炸弹 -> 削弱伤害
+                chosenFactor = 0.8;
+              }
+              
+              return {
+                rule: {
+                  ownerId: actorId,
+                  stat: chosenStat,
+                  factor: chosenFactor,
+                  chosenAtRound: round,
+                },
+                relic: null,
+              };
+            }
+          }
         }
 
         const totalW = weightTable.reduce((acc, e) => acc + e.w, 0);

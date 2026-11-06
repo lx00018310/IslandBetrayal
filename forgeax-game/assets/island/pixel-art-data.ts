@@ -1,5 +1,10 @@
 // 《荒岛分赃》像素美术图集生成器
 // 生成纯色、高辨识度的像素图集原始 RGBA 字节流，支持近距离正交 2.5D 呈现。
+// 【视觉方向一】四大视觉图层色板：
+//   L0 底板层：地面明度 0.25-0.42，饱和度 0.12-0.28
+//   L1 掩体层：冷青灰岩 #3A4652 / 顶面亮灰 #8FA1B3
+//   L2 单位层：角色暖白 #F7F3E8，怪物深紫黑/深墨绿 + 亮焦点
+//   L3 弹药层：纯白/高亮黄，外框霓虹色
 
 import { PLAYER_COLORS } from './simulation.ts';
 
@@ -8,6 +13,33 @@ export interface TextureData {
   height: number;
   rgba: Uint8Array;
 }
+
+/** 【视觉方向一】四大视觉图层标准色板 */
+export const VISUAL_LAYERS = {
+  // L0 底板层 (暗调背景)
+  groundBase: '#2C3E50',      // 草地基底暗色
+  groundDetail: '#34495E',    // 地面噪点
+  water: '#1A252F',           // 水体深色
+  // L1 掩体层 (冷青灰)
+  rockSide: '#3A4652',        // 岩石侧面深冷青灰
+  rockTop: '#8FA1B3',         // 岩石顶面高亮冷灰
+  rockAO: '#12161A',          // 岩石底部 Fake AO 暗边
+  // L2 单位层
+  playerBody: '#F7F3E8',      // 玩家身体暖白主体
+  aiFriendlyBlue: '#38BDF8',  // 老实人 AI 天蓝
+  aiGreedyGold: '#FACC15',    // 贪财鬼 AI 琥珀金
+  aiRaiderPurple: '#E879F9',  // 掠夺者 AI 品红/亮紫
+  monsterBodyDark: '#1E1B2E', // 普通怪物深紫黑
+  monsterGlow: '#FF4D00',     // 怪物亮橘红视觉焦点
+  bossCore: '#FF1E42',        // Boss 炽红核心
+  chestGold: '#FFB703',       // 宝箱皇室金
+  // L3 弹药层 (最高明度自发光)
+  ammoWhite: '#FFFFFF',       // 弹药核心纯白
+  ammoYellow: '#FFF066',      // 弹药高亮黄
+  ammoCyan: '#00F5D4',        // 飞刀青色外框
+  ammoOrange: '#FF6B00',      // 箭矢亮橙外框
+  ammoRed: '#FF1E42',         // 炸弹炽红外框
+};
 
 function hexToRgb(hex: string): [number, number, number] {
   const clean = hex.replace('#', '');
@@ -87,8 +119,8 @@ class CanvasBitmap {
   }
 }
 
-/** 生成柔和的暗色地面接触椭圆阴影 */
-export function createShadowTexture(): TextureData {
+/** 【视觉方向三】生成高亮脚底功能底盘圆环 (Ground Anchor Ring) */
+export function createShadowTexture(color: string = '#10B981', alpha: number = 0.6): TextureData {
   const w = 32;
   const h = 32;
   const bmp = new CanvasBitmap(w, h);
@@ -106,8 +138,9 @@ export function createShadowTexture(): TextureData {
       const d = (dx * dx) / rx2 + (dy * dy) / ry2;
       if (d <= 1) {
         // 中心深，边缘淡出
-        const alpha = Math.round(180 * (1 - Math.sqrt(d)));
-        bmp.setPixel(x, y, 22, 36, 30, alpha);
+        const alphaValue = Math.round(255 * (1 - Math.sqrt(d)) * alpha);
+        const rgb = hexToRgb(color);
+        bmp.setPixel(x, y, rgb[0], rgb[1], rgb[2], alphaValue);
       }
     }
   }
@@ -115,7 +148,32 @@ export function createShadowTexture(): TextureData {
   return { width: w, height: h, rgba: bmp.data };
 }
 
-/** 32x48 原创像素角色图集生成 */
+/** 创建玩家绿色脚底环 (带朝向箭头) */
+export function createPlayerFootRingTexture(alpha: number = 0.7): TextureData {
+  return createShadowTexture('#10B981', alpha); // 翠绿
+}
+
+/** 创建盟友蓝色脚底环 */
+export function createTeammateFootRingTexture(alpha: number = 0.7): TextureData {
+  return createShadowTexture('#0EA5E9', alpha); // 天蓝
+}
+
+/** 创建敌对 AI 暖红警戒环 */
+export function createRivalFootRingTexture(alpha: number = 0.6): TextureData {
+  return createShadowTexture('#FB923C', alpha); // 暖琥珀
+}
+
+/** 创建记仇 AI 紫红脉冲环 */
+export function createGrudgeFootRingTexture(alpha: number = 0.75): TextureData {
+  return createShadowTexture('#D946EF', alpha); // 品红/紫红
+}
+
+/** 创建小怪深黑硬阴影 */
+export function createMonsterShadowTexture(alpha: number = 0.5): TextureData {
+  return createShadowTexture('#0F1417', alpha); // 极暗灰近乎纯黑
+}
+
+/** 【视觉方向二】32x48 原创像素角色图集生成 - 大头二头身比例 (头部占 50%) */
 export function createCharacterTexture(colorHex: string, style: number): TextureData {
   const w = 32;
   const h = 48;
@@ -123,116 +181,125 @@ export function createCharacterTexture(colorHex: string, style: number): Texture
   const baseRgb = hexToRgb(colorHex);
   const darkRgb = adjustColor(baseRgb, 0.72);
   const lightRgb = adjustColor(baseRgb, 1.25);
-  const skinRgb: [number, number, number] = [248, 206, 172];
+  
+  // 【视觉方向一】使用高明度暖白 #F7F3E8 作为身体主色
+  const skinRgb: [number, number, number] = [247, 243, 232];
   const skinShadow: [number, number, number] = [218, 170, 138];
   const hairDark: [number, number, number] = [46, 32, 24];
 
-  // 1. 头发与头部轮廓 (Y: 6..14)
-  bmp.fillEllipse(16, 12, 6, 6, hairDark[0], hairDark[1], hairDark[2]);
+  // 1.【视觉方向二】放大头部体素块至全身高度的 50% (Y: 4..16) - 大头剪影
+  bmp.fillEllipse(16, 10, 9, 7, hairDark[0], hairDark[1], hairDark[2]);
 
   // 头型与风格差异
   if (style === 0) {
     // 探险者宽檐帽子
-    bmp.fillRect(10, 8, 12, 3, darkRgb[0], darkRgb[1], darkRgb[2]);
-    bmp.fillRect(8, 10, 16, 2, baseRgb[0], baseRgb[1], baseRgb[2]);
+    bmp.fillRect(7, 5, 18, 4, darkRgb[0], darkRgb[1], darkRgb[2]);
+    bmp.fillRect(5, 9, 22, 3, baseRgb[0], baseRgb[1], baseRgb[2]);
   } else if (style === 1) {
-    // 金色战额带 / 王冠
-    bmp.fillRect(11, 11, 10, 2, 255, 218, 86);
-    bmp.setPixel(16, 9, 255, 240, 140);
+    // 金色战额带 / 王冠 - 贪财鬼 AI
+    bmp.fillRect(10, 8, 12, 3, VISUAL_LAYERS.aiGreedyGold.split('#')[1] || 'FFD166', 1);
+    bmp.setPixel(16, 6, 255, 240, 140);
   } else if (style === 2) {
-    // 银质战士头盔
-    bmp.fillRect(10, 7, 12, 6, 180, 190, 205);
-    bmp.fillRect(11, 11, 10, 2, 80, 88, 102);
+    // 银质战士头盔 - 掠夺者 AI
+    bmp.fillRect(9, 5, 14, 7, 180, 190, 205);
+    bmp.fillRect(10, 9, 12, 3, 80, 88, 102);
   } else {
     // 披风斗篷兜帽
-    bmp.fillEllipse(16, 11, 7, 6, darkRgb[0], darkRgb[1], darkRgb[2]);
+    bmp.fillEllipse(16, 10, 8, 7, darkRgb[0], darkRgb[1], darkRgb[2]);
   }
 
-  // 2. 面部与眼睛 (Y: 13..21)
-  bmp.fillRect(12, 13, 8, 8, skinRgb[0], skinRgb[1], skinRgb[2]);
-  bmp.fillRect(12, 20, 8, 1, skinShadow[0], skinShadow[1], skinShadow[2]); // 下巴阴影
-  // 眼睛
-  bmp.fillRect(13, 16, 2, 2, 28, 28, 30);
-  bmp.fillRect(17, 16, 2, 2, 28, 28, 30);
-  // 腮红
-  bmp.setPixel(12, 18, 235, 145, 145);
-  bmp.setPixel(19, 18, 235, 145, 145);
+  // 2.【视觉方向一】面部 (Y: 15..23) 保持高明度
+  bmp.fillRect(11, 15, 10, 8, skinRgb[0], skinRgb[1], skinRgb[2]);
+  bmp.fillRect(11, 22, 10, 1, skinShadow[0], skinShadow[1], skinShadow[2]); // 下巴阴影
+  // 眼睛 - 简洁大眼
+  bmp.fillRect(12, 18, 3, 3, 28, 28, 30);
+  bmp.fillRect(17, 18, 3, 3, 28, 28, 30);
+  // 腮红 - 小点缀
+  bmp.setPixel(11, 20, 235, 145, 145);
+  bmp.setPixel(20, 20, 235, 145, 145);
 
-  // 3. 躯干 / 战袍 (Y: 22..34)
-  bmp.fillRect(14, 22, 4, 2, skinShadow[0], skinShadow[1], skinShadow[2]); // 脖颈
-  bmp.fillRect(10, 24, 12, 9, baseRgb[0], baseRgb[1], baseRgb[2]); // 主衣身
-  bmp.fillRect(10, 24, 2, 9, darkRgb[0], darkRgb[1], darkRgb[2]); // 左侧阴影
-  bmp.fillRect(18, 24, 3, 9, lightRgb[0], lightRgb[1], lightRgb[2]); // 右侧高光
+  // 3. 躯干/战袍 (Y: 23..36) - 缩小身体占比
+  bmp.fillRect(13, 23, 6, 2, skinShadow[0], skinShadow[1], skinShadow[2]); // 脖颈
+  bmp.fillRect(9, 25, 14, 10, baseRgb[0], baseRgb[1], baseRgb[2]); // 主衣身
+  bmp.fillRect(9, 25, 3, 10, darkRgb[0], darkRgb[1], darkRgb[2]); // 左侧阴影
+  bmp.fillRect(20, 25, 3, 10, lightRgb[0], lightRgb[1], lightRgb[2]); // 右侧高光
 
   // 腰带与腰带扣
-  bmp.fillRect(10, 31, 12, 2, 44, 30, 20);
-  bmp.fillRect(15, 31, 2, 2, 245, 205, 78);
+  bmp.fillRect(9, 32, 14, 2, 44, 30, 20);
+  bmp.fillRect(15, 32, 2, 2, 245, 205, 78);
 
-  // 双臂与双手
-  bmp.fillRect(8, 24, 2, 7, darkRgb[0], darkRgb[1], darkRgb[2]);
-  bmp.fillRect(22, 24, 2, 7, baseRgb[0], baseRgb[1], baseRgb[2]);
-  bmp.fillRect(8, 30, 2, 3, skinRgb[0], skinRgb[1], skinRgb[2]);
-  bmp.fillRect(22, 30, 2, 3, skinRgb[0], skinRgb[1], skinRgb[2]);
+  // 双臂与双手 - 简化
+  bmp.fillRect(7, 25, 2, 8, darkRgb[0], darkRgb[1], darkRgb[2]);
+  bmp.fillRect(23, 25, 2, 8, baseRgb[0], baseRgb[1], baseRgb[2]);
+  bmp.fillRect(7, 31, 2, 4, skinRgb[0], skinRgb[1], skinRgb[2]);
+  bmp.fillRect(23, 31, 2, 4, skinRgb[0], skinRgb[1], skinRgb[2]);
 
-  // 4. 裤腿与战靴 (Y: 34..46)
+  // 4. 裤腿与战靴 (Y: 36..46) - 压低高度
   // 裤子
-  bmp.fillRect(11, 34, 4, 6, 42, 45, 48);
-  bmp.fillRect(17, 34, 4, 6, 42, 45, 48);
+  bmp.fillRect(10, 36, 5, 6, 42, 45, 48);
+  bmp.fillRect(17, 36, 5, 6, 42, 45, 48);
   // 靴子
-  bmp.fillRect(10, 40, 5, 5, 58, 38, 24);
-  bmp.fillRect(17, 40, 5, 5, 58, 38, 24);
+  bmp.fillRect(9, 41, 6, 5, 58, 38, 24);
+  bmp.fillRect(17, 41, 6, 5, 58, 38, 24);
   // 鞋底深色边缘
-  bmp.fillRect(10, 44, 5, 1, 24, 18, 14);
-  bmp.fillRect(17, 44, 5, 1, 24, 18, 14);
+  bmp.fillRect(9, 45, 6, 1, 24, 18, 14);
+  bmp.fillRect(17, 45, 6, 1, 24, 18, 14);
 
   return { width: w, height: h, rgba: bmp.data };
 }
 
-/** 32x32 怪物像素图集生成（虚空紫怪） */
+/** 【视觉方向二 & 一】32x32 怪物像素图集生成 - 矮扁匍匐型 + 暗体亮核 */
 export function createMonsterTexture(): TextureData {
   const w = 32;
   const h = 32;
   const bmp = new CanvasBitmap(w, h);
 
-  // 身体椭圆 (Y: 8..26)
-  bmp.fillEllipse(16, 17, 9, 8, 92, 52, 134);
-  bmp.fillEllipse(16, 17, 7, 6, 120, 72, 168);
+  //【视觉方向二】矮扁匍匐剪影 (Y: 10..24) - 高度只有角色的 60%
+  //【视觉方向一】暗体 #1E1B2E
+  bmp.fillEllipse(16, 17, 10, 6, VISUAL_LAYERS.monsterBodyDark.split('#')[1] || '1E1B2E', 1);
+  bmp.fillEllipse(16, 17, 8, 5, 50, 30, 60);
 
-  // 顶部尖角/耳朵
-  bmp.fillRect(10, 6, 3, 4, 80, 42, 118);
-  bmp.fillRect(19, 6, 3, 4, 80, 42, 118);
+  // 顶部尖角/耳朵 - 简化大块面
+  bmp.fillRect(9, 8, 4, 5, 40, 22, 48);
+  bmp.fillRect(19, 8, 4, 5, 40, 22, 48);
 
-  // 恶魔红眼与眼白高光
-  bmp.fillRect(11, 14, 3, 3, 255, 60, 60);
-  bmp.fillRect(18, 14, 3, 3, 255, 60, 60);
-  bmp.setPixel(12, 14, 255, 200, 200);
-  bmp.setPixel(19, 14, 255, 200, 200);
+  //【视觉方向一】亮核 #FF4D00 视觉焦点 (眼睛与高光)
+  // 恶魔红眼
+  bmp.fillRect(11, 15, 4, 4, VISUAL_LAYERS.monsterGlow.split('#')[1] || 'FF4D00', 1);
+  bmp.fillRect(17, 15, 4, 4, VISUAL_LAYERS.monsterGlow.split('#')[1] || 'FF4D00', 1);
+  bmp.setPixel(13, 15, 255, 200, 200);
+  bmp.setPixel(19, 15, 255, 200, 200);
 
-  // 尖牙嘴部
-  bmp.fillRect(14, 21, 4, 2, 40, 18, 62);
-  bmp.setPixel(14, 21, 255, 255, 255);
-  bmp.setPixel(17, 21, 255, 255, 255);
+  // 尖牙嘴部 - 简洁白点
+  bmp.fillRect(13, 20, 6, 3, 40, 18, 62);
+  bmp.setPixel(14, 20, 255, 255, 255);
+  bmp.setPixel(17, 20, 255, 255, 255);
 
-  // 触手/小足部
-  bmp.fillRect(10, 25, 3, 4, 70, 36, 102);
-  bmp.fillRect(19, 25, 3, 4, 70, 36, 102);
+  // 触手/小足部 - 简化
+  bmp.fillRect(9, 24, 4, 4, 70, 36, 102);
+  bmp.fillRect(19, 24, 4, 4, 70, 36, 102);
 
   return { width: w, height: h, rgba: bmp.data };
 }
 
-/** 32x32 共享宝箱图集生成 */
+/** 【视觉方向一】32x32 共享宝箱图集生成 - 高饱和度皇室金 #FFB703 */
 export function createChestTexture(): TextureData {
   const w = 32;
   const h = 32;
   const bmp = new CanvasBitmap(w, h);
 
+  //【视觉方向一】箱体采用高饱和度皇室金 #FFB703
+  const chestGoldRgb = hexToRgb(VISUAL_LAYERS.chestGold);
+  const darkGoldRgb = adjustColor(chestGoldRgb, 0.65);
+  const lightGoldRgb = adjustColor(chestGoldRgb, 1.25);
+
   // 箱盖 (Y: 6..14)
-  bmp.fillRect(6, 6, 20, 8, 168, 107, 48); // 木板
-  bmp.fillRect(5, 7, 22, 2, 85, 52, 26); // 铁箍顶横条
-  bmp.fillRect(5, 13, 22, 2, 55, 36, 18); // 铁箍底横条
+  bmp.fillRect(6, 6, 20, 8, VISUAL_LAYERS.chestGold.split('#')[1] || 'FFB703', 1); // 主体金
+  bmp.fillRect(5, 7, 22, 2, lightGoldRgb[0], lightGoldRgb[1], lightGoldRgb[2]); // 铁箍顶高光
+  bmp.fillRect(5, 13, 22, 2, darkGoldRgb[0], darkGoldRgb[1], darkGoldRgb[2]); // 铁箍底暗面
 
   // 箱身 (Y: 14..25)
-  bmp.fillRect(6, 14, 20, 11, 140, 85, 36);
+  bmp.fillRect(6, 14, 20, 11, chestGoldRgb[0], chestGoldRgb[1], chestGoldRgb[2]);
   // 左右金铜包角
   bmp.fillRect(5, 14, 3, 11, 220, 168, 68);
   bmp.fillRect(24, 14, 3, 11, 220, 168, 68);
