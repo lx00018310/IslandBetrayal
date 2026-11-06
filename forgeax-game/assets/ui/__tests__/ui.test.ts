@@ -158,13 +158,10 @@ describe('game-3d Host UI lifecycle', () => {
       await ctx.plugin(uiPlugin, { guide: '019fb7ce-3600-7000-8000-000000000001' });
       hud({ phase: 'rule-pick', ruleStatIndex: 0, ruleFactorIndex: 0 });
       rule.click();
-      expect(port.postMessage).toHaveBeenLastCalledWith(expect.objectContaining({ kind: 'rule_highlight', stat: 'moveSpeed' }));
-      factor.click();
-      expect(port.postMessage).toHaveBeenLastCalledWith(expect.objectContaining({ kind: 'rule_highlight', factor: 0.8 }));
+      expect(port.postMessage).toHaveBeenLastCalledWith(expect.objectContaining({ kind: 'rule_highlight', ruleKind: 'bounty_greed' }));
       hud({ phase: 'rule-pick', ruleStatIndex: 2, ruleFactorIndex: 3 });
-      expect(value.textContent).toBe('-20%');
       confirmRule.click();
-      expect(port.postMessage).toHaveBeenLastCalledWith(expect.objectContaining({ kind: 'rule_select', stat: 'moveSpeed', factor: 0.8 }));
+      expect(port.postMessage).toHaveBeenLastCalledWith(expect.objectContaining({ kind: 'rule_select', ruleKind: 'bounty_greed' }));
       hud({ phase: 'relic-pick', relicHighlight: 0, ownedRelics: [{ kind: 'knife', level: 2 }] });
       card.click();
       expect(port.postMessage).toHaveBeenLastCalledWith(expect.objectContaining({ kind: 'relic_highlight', choiceIndex: 0 }));

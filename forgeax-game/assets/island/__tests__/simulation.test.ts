@@ -9,6 +9,10 @@ import {
   checkTeamDistances,
   chestOf,
   createInitialSimulation,
+  startBossRaid,
+  stepBossRaid,
+  finishBossRaid,
+  endBossRaid,
   damageActor,
   destroyChest,
   disbandTeam,
@@ -85,7 +89,7 @@ describe('荒岛分赃核心规则、肉鸽升级与战斗系统测试', () => {
     expect(sim.chestBreaks).toBe(1);
 
     const pickedUp = a.treasure + b.treasure + enemy.treasure;
-    const groundLoots = sim.loots.filter((l) => l.value > 0).length;
+    const groundLoots = sim.loots.reduce((sum, l) => sum + l.value, 0);
     expect(groundLoots + pickedUp).toBe(5);
 
     expect(a.team).toBe(b.id);
@@ -244,59 +248,44 @@ describe('荒岛分赃核心规则、肉鸽升级与战斗系统测试', () => {
   });
 
   // A: 120s / 240s 两次全员 Boss 团战（旧 180s 单次已移除）
-  it('A: triggers the first all-survivor Boss raid at 120s and never at 180s', () => {
+  it('120s Boss 不传送角色、不暂停主时钟或缩圈，180s 不重复刷新', () => {
     const sim = createInitialSimulation();
-    const p = sim.actors[0]!;
-    p.x = 11;
-    p.y = 11;
-
+    for (const a of sim.actors) { a.x = 11; a.y = 11; a.think = 999; a.attackCd = 999; }
+    sim.monsters.length = 0;
     sim.elapsed = 119.9;
     stepSimulation(sim, 0.2, { moveX: 0, moveY: 0 });
-    expect(sim.raidPhase).toBe('warning');
     expect(sim.bossRound).toBe(1);
-    expect(sim.raidParticipants.length).toBeGreaterThan(0);
-    expect(sim.raidBossMaxHp).toBeGreaterThan(0);
-
-    // 推进团战直到结束（不超过 45s 兜底）
-    for (let i = 0; i < 200 && sim.raidPhase !== 'none'; i++) {
-      stepSimulation(sim, 0.3, { moveX: 0, moveY: 0 });
-    }
-    expect(sim.raidPhase).toBe('none');
-    // 主对局时钟在团战期间冻结，因此仍在 120s 附近，不会出现 180s 旧 Boss
+    expect(sim.raidPhase).toBe('warning');
+    expect(sim.actors[0]!.x).toBe(11);
+    const before = sim.elapsed;
+    stepSimulation(sim, 0.2, { moveX: 0, moveY: 0 });
+    expect(sim.elapsed).toBeCloseTo(before + 0.2);
+    expect(sim.shrinkStage).toBe(2);
+    finishBossRaid(sim, false);
+    endBossRaid(sim);
+    sim.elapsed = 180;
+    stepSimulation(sim, 0.01, { moveX: 0, moveY: 0 });
     expect(sim.bossRound).toBe(1);
   });
 
-  it('A: triggers the second Boss raid at 240s, then final phase (boss before disband)', () => {
-    const sim = createInitialSimulation();
-    const p = sim.actors[0]!;
-    p.x = 11;
-    p.y = 11;
-    // 先完成第一场
-    sim.elapsed = 119.9;
-    stepSimulation(sim, 0.2, { moveX: 0, moveY: 0 });
-    for (let i = 0; i < 200 && sim.raidPhase !== 'none'; i++) {
-      stepSimulation(sim, 0.3, { moveX: 0, moveY: 0 });
+  it('第二场 Boss 击破或 35 秒超时立即全场解盟', () => {
+    for (const success of [true, false]) {
+      const sim = createInitialSimulation();
+      sim.bossRound = 1;
+      sim.elapsed = 240;
+      const a = sim.actors[0]!, b = sim.actors[1]!;
+      a.x = 11; a.y = 11; b.x = 12; b.y = 11;
+      expect(formTeam(sim, a, b)).toBe(true);
+      startBossRaid(sim);
+      expect(a.team).toBe(b.id);
+      if (success) finishBossRaid(sim, true);
+      else stepBossRaid(sim, 35);
+      expect(sim.finalPhase).toBe(true);
+      expect(a.team).toBe(-1);
+      expect(b.team).toBe(-1);
     }
-
-    // 推进主时钟到 240s 触发第二场
-    sim.elapsed = 239.9;
-    stepSimulation(sim, 0.2, { moveX: 0, moveY: 0 });
-    expect(sim.raidPhase).toBe('warning');
-    expect(sim.bossRound).toBe(2);
-
-    // 团战期间不进入 finalPhase
-    stepSimulation(sim, 1.0, { moveX: 0, moveY: 0 });
-    expect(sim.finalPhase).toBe(false);
-
-    for (let i = 0; i < 200 && sim.raidPhase !== 'none'; i++) {
-      stepSimulation(sim, 0.3, { moveX: 0, moveY: 0 });
-    }
-    // 第二场结束后才解盟进入最终混战
-    expect(sim.raidPhase).toBe('none');
-    expect(sim.finalPhase).toBe(true);
   });
 
-  // P1-C: 特殊事件
   it('P1-C: triggers treasure_rain at 90s and monster_frenzy at 220s', () => {
     const sim = createInitialSimulation();
     sim.elapsed = 89.9;

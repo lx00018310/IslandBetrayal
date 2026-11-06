@@ -862,3 +862,28 @@
   .btn-choice-main { padding: 4px 10px; font-size: 11px; }
   .btn-choice-ignore { padding: 4px 8px; font-size: 10px; }
 }
+
+/* 七种具名秘策在窄屏换行，模态内容可滚动。 */
+.rule-cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(135px, 1fr)); gap: 8px; }
+.rule-card { min-height: 85px; padding: 10px; }
+.rule-stat-sub { white-space: normal; }
+
+.endless-dialog { max-height: calc(100vh - 24px); overflow-y: auto; box-sizing: border-box; }
+.relic-cards { flex-wrap: wrap; }
+.world-banner { max-width: calc(100% - 24px); box-sizing: border-box; }
+.world-banner-text { white-space: normal; overflow-wrap: anywhere; }
+
+.rule-stat-sub { font-size: 12px; line-height: 1.35; }
+@media (max-height: 450px) { .endless-dialog { padding: 12px; } .endless-dialog-sub { display: none; } .endless-dialog-title { margin-bottom: 8px; } }
+
+/* 窄屏 HUD 保留计时、经验和存活数，避免沿用桌面的列宽下限。 */
+@media (max-width: 900px) {
+  .hud-title-col { display: none; }
+}
+@media (max-width: 600px) {
+  .island-hud { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.25fr) minmax(0, 1fr); }
+  .hud-col, .hud-center-col, .hud-xp-col, .hud-stats-col { min-width: 0; padding: 6px; }
+  .hud-speed-col { display: none; }
+  .survivors-count { font-size: 12px; }
+  .match-phase { text-align: center; font-size: 9px; }
+}

@@ -3,13 +3,17 @@
 
 import type { EntityHandle, World } from '@forgeax/engine/ecs';
 import { quat } from '@forgeax/engine/math';
+import { Camera } from '@forgeax/engine/render';
 import { sceneEntity, Transform, worldResolveSceneEntity } from '@forgeax/engine/scene';
 import { assetGuid, guidText, PACKAGE_IDS } from '../shared/asset-refs.ts';
+import { getGrudgeScore } from './stats.ts';
 import type { SimulationState } from './simulation.ts';
 import {
   activeCovers,
   GRID_SIZE,
   TEAM_WARNING_DISTANCE,
+  SHRINK_THRESHOLD_SECONDS,
+  currentSafeRadius,
 } from './simulation.ts';
 
 const SCENE_KEY = 'scene/island' as const;
@@ -25,10 +29,19 @@ export interface PresentationController {
   dispose(): void;
 }
 
+/** 正交视野按真实宽高比匹配画布，竖屏保留至少 8m 横向可见范围。 */
+export function islandCameraBounds(width: number, height: number) {
+  const aspect = width / height;
+  const halfWidth = Math.max(4, 4.5 * aspect);
+  const halfHeight = halfWidth / aspect;
+  return { left: -halfWidth, right: halfWidth, bottom: -halfHeight, top: halfHeight };
+}
+
 export function setupPresentation(
   world: World,
   sceneRoot: EntityHandle,
   initialSim: SimulationState,
+  drawingBufferSize?: () => { width: number; height: number },
 ): PresentationController {
   const resolve = (key: string): EntityHandle => {
     const res = worldResolveSceneEntity(world, sceneRoot, sceneEntity(SCENE_KEY, key));
@@ -36,11 +49,18 @@ export function setupPresentation(
     return res.value;
   };
 
+  const rings = Array.from({ length: 10 }, (_, id) =>
+    Object.fromEntries(['player', 'ally', 'rival', 'grudge'].map(state => [state, resolve(`actor-${id}-ring-${state}`)])));
+  const playerDirection = resolve('player-direction');
+  const playerInnerRing = resolve('player-inner-ring');
+  const coverAoEntities = [0, 1, 2].map(i => resolve(`cover-${i}-ao`));
+  const coverTopEntities = [0, 1, 2].map(i => resolve(`cover-${i}-top`));
+  const shrinkBoundary = resolve('shrink-boundary');
   const cameraEntity = resolve('camera');
   const center = (GRID_SIZE - 1) / 2;
 
   // 缓存 529 块地块实体与初始高度
-  const tileEntities: Array<{ handle: EntityHandle; gx: number; gy: number; initialY: number }> = [];
+  const tileEntities: Array<{ handle: EntityHandle; gx: number; gy: number; initialY: number; hidden: boolean }> = [];
   const propEntities: Map<string, { handle: EntityHandle; initialY: number }> = new Map();
 
   for (let gy = 0; gy < GRID_SIZE; gy++) {
@@ -48,7 +68,7 @@ export function setupPresentation(
       const h = resolve(`tile-${gx}-${gy}`);
       const t = initialSim.tiles[gy * GRID_SIZE + gx]!;
       const initY = t.isLand ? (t.height > 0 ? 0.05 : -0.11) : -999;
-      tileEntities.push({ handle: h, gx, gy, initialY: initY });
+      tileEntities.push({ handle: h, gx, gy, initialY: initY, hidden: false });
 
       try {
         const prop = resolve(`prop-${gx}-${gy}`);
@@ -66,6 +86,7 @@ export function setupPresentation(
     body: EntityHandle;
     hit: EntityHandle;
     shadow: EntityHandle;
+    ringState: string | null;
   }> = [];
   for (let i = 0; i < 10; i++) {
     actorEntities.push({
@@ -73,6 +94,7 @@ export function setupPresentation(
       body: resolve(`actor-${i}-body`),
       hit: resolve(`actor-${i}-hit`),
       shadow: resolve(`actor-${i}-shadow`),
+      ringState: null,
     });
   }
 
@@ -110,20 +132,22 @@ export function setupPresentation(
 
   // 缓存 30 把环绕飞刀（10 名角色 × 最多 3 把）
   const knifeEntities: EntityHandle[] = [];
-  for (let i = 0; i < 30; i++) {
+  for (let i = 0; i < 40; i++) {
     knifeEntities.push(resolve(`player-knife-${i}`));
   }
 
   // 缓存 24 支穿透箭矢
   const arrowEntities: EntityHandle[] = [];
-  for (let i = 0; i < 24; i++) {
+  for (let i = 0; i < 64; i++) {
     arrowEntities.push(resolve(`arrow-${i}`));
   }
+
+  const arrowTails = Array.from({ length: 64 }, (_, i) => [0, 1].map(tail => resolve(`arrow-${i}-tail-${tail}`)));
 
   // 缓存 12 颗炸弹与冲击波
   const bombEntities: EntityHandle[] = [];
   const blastEntities: EntityHandle[] = [];
-  for (let i = 0; i < 12; i++) {
+  for (let i = 0; i < 32; i++) {
     bombEntities.push(resolve(`bomb-${i}`));
     blastEntities.push(resolve(`blast-${i}`));
   }
@@ -161,8 +185,13 @@ export function setupPresentation(
   const arrowQ = quat.create();
 
   // 重置全部场景实体至初始形态
+  let coverStage = -1;
+  let lastArrowCount = 0;
+  let lastBombCount = 0;
+
   const resetAll = (sim: SimulationState) => {
     for (const item of tileEntities) {
+      item.hidden = false;
       world.set(item.handle, Transform, { pos: [item.gx, item.initialY, item.gy] }).unwrap();
       const prop = propEntities.get(`${item.gx},${item.gy}`);
       if (prop) {
@@ -184,6 +213,8 @@ export function setupPresentation(
     for (let i = 0; i < 10; i++) {
       const a = sim.actors[i]!;
       const e = actorEntities[i]!;
+      e.ringState = null;
+      for (const ring of Object.values(rings[i]!)) world.set(ring, Transform, { pos: [0, -999, 0] }).unwrap();
       world.set(e.root, Transform, { pos: [a.x, 0, a.y], scale: [1, 1, 1] }).unwrap();
       world.set(e.shadow, Transform, {
         pos: [a.x + 0.16, 0.005, a.y + 0.22],
@@ -241,21 +272,29 @@ export function setupPresentation(
       world.set(l, Transform, { pos: [0, -999, 0] }).unwrap();
     }
     world.set(raidTelegraphEntity, Transform, { pos: [0, -999, 0] }).unwrap();
+    for (const tails of arrowTails) for (const tail of tails) world.set(tail, Transform, { pos: [0, -999, 0] }).unwrap();
+    lastArrowCount = 0; lastBombCount = 0; coverStage = -1;
     // 掩体位置按当前档位重建（reset 后档位为 0，全部存在）
     updateCovers(sim);
   };
 
   /** 掩体呈现：位置/大小与模拟层 activeCovers 完全一致 */
   const updateCovers = (sim: SimulationState) => {
+    if (coverStage === sim.shrinkStage) return;
+    coverStage = sim.shrinkStage;
     const covers = activeCovers(sim);
     for (let i = 0; i < 3; i++) {
       const handle = coverEntities[i]!;
-      const c = covers[i];
+      const c = covers.find(c => c.id === i);
       if (!c) {
         world.set(handle, Transform, { pos: [0, -999, 0] }).unwrap();
+        world.set(coverAoEntities[i]!, Transform, { pos: [0, -999, 0] }).unwrap();
+        world.set(coverTopEntities[i]!, Transform, { pos: [0, -999, 0] }).unwrap();
         continue;
       }
-      const scale = c.radius / 0.4;
+      const scale = c.radius;
+      world.set(coverAoEntities[i]!, Transform, { pos: [c.x, 0.025, c.y], scale: [c.radius + 0.25, 1, c.radius + 0.25] }).unwrap();
+      world.set(coverTopEntities[i]!, Transform, { pos: [c.x, 2.01, c.y], scale: [c.radius * 0.65, 1, c.radius * 0.65] }).unwrap();
       world
         .set(handle, Transform, {
           pos: [c.x, 0.42, c.y],
@@ -266,6 +305,7 @@ export function setupPresentation(
   };
 
   let wasGameOver = false;
+  let viewportWidth = 0, viewportHeight = 0;
 
   return {
     reset(sim: SimulationState): void {
@@ -273,6 +313,11 @@ export function setupPresentation(
     },
 
     update(sim: SimulationState, dt: number): void {
+      const size = drawingBufferSize?.();
+      if (size && size.width > 0 && size.height > 0 && (size.width !== viewportWidth || size.height !== viewportHeight)) {
+        viewportWidth = size.width; viewportHeight = size.height;
+        world.set(cameraEntity, Camera, islandCameraBounds(size.width, size.height)).unwrap();
+      }
       if (wasGameOver && !sim.gameOver) {
         resetAll(sim);
       }
@@ -300,6 +345,8 @@ export function setupPresentation(
         const prop = propEntities.get(`${item.gx},${item.gy}`);
 
         if (t.gone) {
+          if (item.hidden) continue;
+          item.hidden = true;
           world.set(item.handle, Transform, { pos: [item.gx, -999, item.gy] }).unwrap();
           if (prop) {
             world.set(prop.handle, Transform, { pos: [item.gx, -999, item.gy] }).unwrap();
@@ -310,18 +357,36 @@ export function setupPresentation(
           if (prop) {
             world.set(prop.handle, Transform, { pos: [item.gx, dropY + 0.5, item.gy] }).unwrap();
           }
-        } else {
-          world.set(item.handle, Transform, { pos: [item.gx, item.initialY, item.gy] }).unwrap();
-          if (prop) {
-            world.set(prop.handle, Transform, { pos: [item.gx, prop.initialY, item.gy] }).unwrap();
-          }
         }
       }
+
+      const nextShrink = SHRINK_THRESHOLD_SECONDS[sim.shrinkStage + 1];
+      const warning = nextShrink !== undefined && nextShrink - sim.elapsed <= 5;
+      const boundaryRadius = currentSafeRadius(sim) * 11;
+      world.set(shrinkBoundary, Transform, {
+        pos: warning || (sim.shrinkStage > 0 && sim.shrinkTransition < 5) ? [11, 0.06, 11] : [0, -999, 0],
+        scale: [boundaryRadius * 1.06, boundaryRadius * 0.94, 1], quat: [...SHADOW_QUAT],
+      }).unwrap();
 
       // 3. 10 名体素角色更新
       for (let i = 0; i < 10; i++) {
         const a = sim.actors[i]!;
         const e = actorEntities[i]!;
+
+        const grudge = sim.grudges.get(a.id);
+        const state = !a.alive ? null : a.id === 0 ? 'player' : a.id === player.team ? 'ally' : grudge && getGrudgeScore(grudge, 0) >= 50 ? 'grudge' : 'rival';
+        if (e.ringState !== state && e.ringState) world.set(rings[i]![e.ringState]!, Transform, { pos: [0, -999, 0] }).unwrap();
+        e.ringState = state;
+        if (state) {
+          const pulse = state === 'grudge' ? 1 + Math.sin(sim.elapsed * 7) * 0.08 : 1;
+          world.set(rings[i]![state]!, Transform, { pos: [a.x, 0.035, a.y], scale: [pulse, pulse, 0.35], quat: [...SHADOW_QUAT] }).unwrap();
+        }
+        if (i === 0) {
+          world.set(playerInnerRing, Transform, { pos: a.alive ? [a.x, 0.04, a.y] : [0, -999, 0], scale: [0.85, 0.85, 0.3], quat: [...SHADOW_QUAT] }).unwrap();
+          const arrowQuat = quat.create();
+          quat.fromEuler(arrowQuat, Math.PI / 2, 0, a.facing - Math.PI / 2, 'YXZ');
+          world.set(playerDirection, Transform, { pos: a.alive ? [a.x + Math.cos(a.facing) * 0.78, 0.07, a.y + Math.sin(a.facing) * 0.78] : [0, -999, 0], quat: Array.from(arrowQuat) as [number, number, number, number] }).unwrap();
+        }
 
         if (!a.alive) {
           world.set(e.root, Transform, { pos: [0, -999, 0] }).unwrap();
@@ -345,9 +410,8 @@ export function setupPresentation(
 
         world
           .set(e.shadow, Transform, {
-            pos: [a.x + 0.16, 0.005, a.y + 0.22],
-            scale: [1, 1, 1],
-            quat: [SHADOW_QUAT[0], SHADOW_QUAT[1], SHADOW_QUAT[2], SHADOW_QUAT[3]],
+            pos: [a.x + 0.08, 0.015, a.y + 0.1],
+            scale: [1, 1, 1], quat: [0, 0, 0, 1],
           })
           .unwrap();
       }
@@ -375,15 +439,14 @@ export function setupPresentation(
 
         world
           .set(e.shadow, Transform, {
-            pos: [m.x + 0.14 * mScale, 0.005, m.y + 0.18 * mScale],
-            scale: [0.95 * mScale, 0.95 * mScale, 1],
-            quat: [SHADOW_QUAT[0], SHADOW_QUAT[1], SHADOW_QUAT[2], SHADOW_QUAT[3]],
+            pos: [m.x, 0.02, m.y],
+            scale: [mScale, 1, mScale], quat: [0, 0, 0, 1],
           })
           .unwrap();
       }
 
       // 5. Boss 巨兽更新（仅团战阶段可见，旧 sim.boss 已废弃）
-      if (sim.raidPhase === 'none') {
+      if (sim.raidPhase === 'none' || sim.raidPhase === 'result') {
         world.set(bossEntity.root, Transform, { pos: [0, -999, 0] }).unwrap();
         world.set(bossEntity.shadow, Transform, { pos: [0, -999, 0] }).unwrap();
       }
@@ -392,10 +455,10 @@ export function setupPresentation(
       updateCovers(sim);
 
       // 5c. Boss 团战：巨兽与圈形预警呈现
-      if (sim.raidPhase === 'fight' || sim.raidPhase === 'warning' || sim.raidPhase === 'result') {
+      if (sim.raidPhase === 'fight' || sim.raidPhase === 'warning') {
         // Boss 体素主体 1.5×1.5×1.5 居中于自身原点：适度放大但不过度遮挡战场视野
-        const bossBob = 0.85 + Math.sin(sim.elapsed * 2.4) * 0.08;
-        const pulse = sim.raidPhase === 'fight' ? 0.95 : 0.85;
+        const bossBob = 0.02 + Math.sin(sim.elapsed * 2.4) * 0.08;
+        const pulse = 1.5 + Math.sin(sim.elapsed * 2.4) * 0.025;
         world
           .set(bossEntity.root, Transform, {
             pos: [sim.raidBossX, bossBob, sim.raidBossY],
@@ -405,14 +468,13 @@ export function setupPresentation(
         world
           .set(bossEntity.shadow, Transform, {
             pos: [sim.raidBossX + 0.14, 0.005, sim.raidBossY + 0.18],
-            scale: [1.35, 1.35, 1],
-            quat: [SHADOW_QUAT[0], SHADOW_QUAT[1], SHADOW_QUAT[2], SHADOW_QUAT[3]],
+            scale: [2.6, 1, 2.2], quat: [0, 0, 0, 1],
           })
           .unwrap();
       }
 
       if (sim.raidTelegraphTimer > 0) {
-        const scale = Math.min(VISUAL_MAX_BLAST_SCALE, sim.raidTelegraphRadius / 1.2);
+        const scale = Math.min(VISUAL_MAX_BLAST_SCALE, sim.raidTelegraphRadius);
         world
           .set(raidTelegraphEntity, Transform, {
             pos: [sim.raidTelegraphX, 0.03, sim.raidTelegraphY],
@@ -447,8 +509,7 @@ export function setupPresentation(
         world
           .set(e.shadow, Transform, {
             pos: [c.x + 0.12, 0.005, c.y + 0.16],
-            scale: [size * 1.1, size * 1.1, 1],
-            quat: [SHADOW_QUAT[0], SHADOW_QUAT[1], SHADOW_QUAT[2], SHADOW_QUAT[3]],
+            scale: [size * 1.1, 1, size * 0.8], quat: [0, 0, 0, 1],
           })
           .unwrap();
       }
@@ -486,7 +547,7 @@ export function setupPresentation(
           [0, 1, 0],
         );
 
-        const isWarning = pair.dist >= TEAM_WARNING_DISTANCE;
+        const isWarning = pair.dist >= TEAM_WARNING_DISTANCE * sim.rules.tetherModifier;
         const activeHandle = isWarning ? warnHandle : beamHandle;
         const inactiveHandle = isWarning ? beamHandle : warnHandle;
 
@@ -505,8 +566,8 @@ export function setupPresentation(
       for (let ai = 0; ai < 10; ai++) {
         const actor = sim.actors[ai]!;
         if (!actor.alive || actor.weaponKnife <= 0) continue;
-        const count = actor.weaponKnife;
-        const radius = 1.6 * (1 + actor.statAreaBonus) * (actor.relicAffix === 'knifeArea' ? 1.1 : 1);
+        const count = actor.weaponKnife + (actor.relicAffix === 'knifeArea' ? 1 : 0);
+        const radius = 1.6 * (1 + actor.statAreaBonus) * sim.rules.knifeRangeModifier;
         for (let k = 0; k < count && knifeSlot < knifeEntities.length; k++, knifeSlot++) {
           const handle = knifeEntities[knifeSlot]!;
           const ang = actor.knifeAngle + (k * Math.PI * 2) / count;
@@ -527,12 +588,24 @@ export function setupPresentation(
       }
 
       // 9. 穿透箭矢呈现
-      for (let i = 0; i < 24; i++) {
+      const arrowCount = Math.min(64, sim.arrows.length);
+      const arrowSlots = Math.max(lastArrowCount, arrowCount);
+      lastArrowCount = arrowCount;
+      for (let i = 0; i < arrowSlots; i++) {
         const handle = arrowEntities[i]!;
         const arr = sim.arrows[i];
+        for (const [tail, handle] of arrowTails[i]!.entries()) {
+          const speed = arr ? Math.hypot(arr.vx, arr.vy) : 1;
+          const q = quat.create();
+          if (arr) quat.fromEuler(q, Math.PI / 2, 0, Math.atan2(arr.vy, arr.vx) - Math.PI / 2, 'YXZ');
+          world.set(handle, Transform, {
+            pos: arr ? [arr.x - arr.vx / speed * (tail + 1) * 0.4, 0.44, arr.y - arr.vy / speed * (tail + 1) * 0.4] : [0, -999, 0],
+            scale: [0.7, 0.5, 0.7], quat: Array.from(q) as [number, number, number, number],
+          }).unwrap();
+        }
         if (arr && arr.life > 0) {
           const angle = Math.atan2(arr.vy, arr.vx);
-          quat.fromEuler(arrowQ, 0, -angle + Math.PI / 2, 0, 'YXZ');
+          quat.fromEuler(arrowQ, Math.PI / 2, 0, angle - Math.PI / 2, 'YXZ');
           world
             .set(handle, Transform, {
               pos: [arr.x, 0.45, arr.y],
@@ -546,7 +619,10 @@ export function setupPresentation(
       }
 
       // 10. 炸弹与冲击波呈现
-      for (let i = 0; i < 12; i++) {
+      const bombCount = Math.min(32, sim.bombs.length);
+      const bombSlots = Math.max(lastBombCount, bombCount);
+      lastBombCount = bombCount;
+      for (let i = 0; i < bombSlots; i++) {
         const bombH = bombEntities[i]!;
         const blastH = blastEntities[i]!;
         const b = sim.bombs[i];
@@ -554,10 +630,10 @@ export function setupPresentation(
         if (b) {
           if (!b.exploded) {
             world.set(bombH, Transform, { pos: [b.x, 0.25, b.y], scale: [1, 1, 1] }).unwrap();
-            world.set(blastH, Transform, { pos: [0, -999, 0] }).unwrap();
+            world.set(blastH, Transform, { pos: [b.x, 0.04, b.y], scale: [b.radius, b.radius, 0.5], quat: [...SHADOW_QUAT] }).unwrap();
           } else {
             world.set(bombH, Transform, { pos: [0, -999, 0] }).unwrap();
-            const rawScale = (b.radius / 1.2) * (1 + (0.5 - b.fxTimer) * 1.5);
+            const rawScale = b.radius * (1 + (0.5 - b.fxTimer) * 1.5);
             const scale = Math.min(VISUAL_MAX_BLAST_SCALE, rawScale);
             world
               .set(blastH, Transform, {

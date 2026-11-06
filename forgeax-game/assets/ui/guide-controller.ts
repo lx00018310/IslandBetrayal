@@ -9,15 +9,10 @@ import { installPlayerControls } from './player-controls.ts';
 import { ISLAND_CONTROL_CHANNEL, type IslandTouchMessage } from '../island/island.pack.ts';
 import type { UpgradeOption } from '../island/simulation.ts';
 import {
-  MAX_LOSS_BURDEN,
+  RULE_KINDS,
   RELIC_AFFIX_TEXT,
-  STAT_FACTORS,
-  STAT_NAMES,
-  STAT_TARGETS,
   type CarryRelic,
   type RelicAffix,
-  type StatFactor,
-  type StatTarget,
 } from '../island/stats.ts';
 import { ENDLESS_SAVE_KEY } from '../island/endless-save.ts';
 
@@ -278,7 +273,6 @@ export async function createGuideUi(
 
     // 无限模式秘策与宝物选择状态
     let selectedStatIndex = 0;
-    let selectedFactorIndex = 0;
     let selectedRelicIndex = 0;
     let cachedOwnedRelics: CarryRelic[] = [];
     let currentMode: 'normal' | 'endless' = 'endless';
@@ -297,24 +291,12 @@ export async function createGuideUi(
 
     if (shadow) {
       // 秘策属性卡片点击
-      for (let s = 0; s < 5; s++) {
+      for (let s = 0; s < RULE_KINDS.length; s++) {
         const card = shadow.querySelector<HTMLElement>(`[data-ui-part="rule-card-${s}"]`);
         if (card) {
           card.addEventListener('click', () => {
             selectedStatIndex = s;
-            sendTouch({ kind: 'rule_highlight', stat: STAT_TARGETS[s] });
-            updateRuleModalSelection();
-          });
-        }
-      }
-
-      // 修正倍率胶囊点击
-      for (let f = 0; f < 4; f++) {
-        const pill = shadow.querySelector<HTMLElement>(`[data-ui-part="factor-pill-${f}"]`);
-        if (pill) {
-          pill.addEventListener('click', () => {
-            selectedFactorIndex = f;
-            sendTouch({ kind: 'rule_highlight', factor: STAT_FACTORS[f] });
+            sendTouch({ kind: 'rule_highlight', ruleKind: RULE_KINDS[s] });
             updateRuleModalSelection();
           });
         }
@@ -322,9 +304,7 @@ export async function createGuideUi(
 
       if (btnConfirmRule) {
         btnConfirmRule.addEventListener('click', () => {
-          const stat = STAT_TARGETS[selectedStatIndex] ?? 'damage';
-          const factor = STAT_FACTORS[selectedFactorIndex] ?? 1.2;
-          sendTouch({ kind: 'rule_select', stat, factor });
+          sendTouch({ kind: 'rule_select', ruleKind: RULE_KINDS[selectedStatIndex] });
         });
       }
 
@@ -345,7 +325,7 @@ export async function createGuideUi(
           const win = shadow?.ownerDocument?.defaultView;
           const ok =
             typeof win?.confirm === 'function'
-              ? win.confirm('确定清空全部无限挑战进度（10 名角色的规则/宝物/负担/局数）？此操作不可撤销。')
+              ? win.confirm('确定清空全部无限挑战进度（10 名角色的秘策/宝物/记仇/局数）？此操作不可撤销。')
               : true;
           if (!ok) return;
           removeSave();
@@ -361,16 +341,9 @@ export async function createGuideUi(
 
     const updateRuleModalSelection = () => {
       if (!shadow) return;
-      for (let s = 0; s < 5; s++) {
+      for (let s = 0; s < RULE_KINDS.length; s++) {
         const card = shadow.querySelector<HTMLElement>(`[data-ui-part="rule-card-${s}"]`);
         if (card) card.classList.toggle('selected', s === selectedStatIndex);
-        const value = shadow.querySelector<HTMLElement>(`[data-ui-part="rule-stat-val-${s}"]`);
-        const pct = Math.round(((STAT_FACTORS[selectedFactorIndex] ?? 1.2) - 1) * 100);
-        if (value) value.textContent = `${pct > 0 ? '+' : ''}${pct}%`;
-      }
-      for (let f = 0; f < 4; f++) {
-        const pill = shadow.querySelector<HTMLElement>(`[data-ui-part="factor-pill-${f}"]`);
-        if (pill) pill.classList.toggle('selected', f === selectedFactorIndex);
       }
     };
 
@@ -414,15 +387,12 @@ export async function createGuideUi(
     const challengeProgress = shadow?.querySelector<HTMLElement>('[data-ui-part="challenge-progress"]');
     const deathDamageElem = shadow?.querySelector<HTMLElement>('[data-ui-part="death-damage"]');
     const shrinkElem = shadow?.querySelector<HTMLElement>('[data-ui-part="shrink-info"]');
-    const burdenElem = shadow?.querySelector<HTMLElement>('[data-ui-part="burden-info"]');
-    const burdenFill = shadow?.querySelector<HTMLElement>('[data-ui-part="burden-fill"]');
     const raidHud = shadow?.querySelector<HTMLElement>('[data-ui-part="raid-hud"]');
     const raidTitle = shadow?.querySelector<HTMLElement>('[data-ui-part="raid-title"]');
     const raidHpText = shadow?.querySelector<HTMLElement>('[data-ui-part="raid-hp-text"]');
     const raidHpFill = shadow?.querySelector<HTMLElement>('[data-ui-part="raid-hp-fill"]');
     const saveNoticeElem = shadow?.querySelector<HTMLElement>('[data-ui-part="save-notice"]');
     const statDeathDamage = shadow?.querySelector<HTMLElement>('[data-ui-part="stat-death-damage"]');
-    const statBurden = shadow?.querySelector<HTMLElement>('[data-ui-part="stat-burden"]');
 
     if (btnRestart) {
       btnRestart.addEventListener('click', () => {
@@ -527,15 +497,7 @@ export async function createGuideUi(
         const shrinkStage = typeof state.shrinkStage === 'number' ? state.shrinkStage : 0;
         const safeRadius = typeof state.safeRadius === 'number' ? state.safeRadius : 0.98;
         if (shrinkElem) {
-          shrinkElem.textContent = `缩圈 ${shrinkStage}/7 · 安全半径 ${(safeRadius * 100).toFixed(0)}%`;
-        }
-
-        const burden = typeof state.playerLossBurden === 'number' ? state.playerLossBurden : 0;
-        if (burdenElem) {
-          burdenElem.textContent = `个人负担 ${burden}/${MAX_LOSS_BURDEN} 层 · -${burden}%`;
-        }
-        if (burdenFill) {
-          burdenFill.style.width = `${Math.min(100, (burden / MAX_LOSS_BURDEN) * 100)}%`;
+          shrinkElem.textContent = `安全区 ${(safeRadius / 0.98 * 100).toFixed(0)}% · 下圈 ${Number(state.nextShrinkIn ?? 0).toFixed(0)}s`;
         }
 
         const raid = state.raid as
@@ -552,7 +514,7 @@ export async function createGuideUi(
           if (raid && raid.phase !== 'none' && raid.phase !== undefined) {
             raidHud.classList.remove('hidden');
             if (raidTitle) {
-              raidTitle.textContent = `第 ${raid.bossRound} 场全员 Boss 团战 · ${raid.participants} 人参战 · 剩余 ${raid.timeLeft}s`;
+              raidTitle.textContent = `第 ${raid.bossRound} 场悬赏 Boss · 自由混战 · 剩余 ${raid.timeLeft}s`;
             }
             if (raidHpText) raidHpText.textContent = `${raid.bossHp} / ${raid.bossMaxHp} HP`;
             if (raidHpFill) {
@@ -627,6 +589,8 @@ export async function createGuideUi(
         }
 
         const partnerName = state.partnerName as string | null;
+        const teamButton = shadow?.querySelector<HTMLElement>('[data-ui-part="btn-ally-touch"]');
+        if (teamButton) { teamButton.textContent = partnerName ? '背叛' : state.incomingInvite ? '接受' : '组队'; teamButton.setAttribute('aria-label', partnerName ? '背叛解盟' : '组队或接受'); }
         const partnerDist = state.partnerDistance as number | null;
         const isWarning = state.isWarning === true;
         const ownChest = state.ownChest as
@@ -641,13 +605,13 @@ export async function createGuideUi(
               : ' · 宝箱已破';
             statusHint.textContent = `队友 ${partnerName} · 距离 ${partnerDist ?? 0}m${chestText}`;
           } else {
-            statusHint.textContent = '单人 · 靠近角色可邀请组队';
+            statusHint.textContent = 'Space 结盟 · 再按背叛';
           }
         }
 
         if (warningHint) {
           if (isWarning && partnerName) {
-            warningHint.textContent = `⚠️ 距离过远 (${partnerDist ?? 0}/5.0m)！超距断线爆箱！`;
+            warningHint.textContent = `⚠️ 距离过远 (${partnerDist ?? 0}/${Number(state.breakDistance ?? 5).toFixed(1)}m)！超距断线爆箱！`;
             warningHint.classList.remove('hidden');
           } else {
             warningHint.classList.add('hidden');
@@ -715,7 +679,6 @@ export async function createGuideUi(
               ruleAnnouncement: string | null;
               upgradeHighlight?: number;
               ruleStatIndex?: number;
-              ruleFactorIndex?: number;
               relicHighlight?: number;
               ownedRelics?: CarryRelic[];
             }
@@ -737,9 +700,6 @@ export async function createGuideUi(
               ruleModal.classList.remove('hidden');
               if (typeof endlessState.ruleStatIndex === 'number') {
                 selectedStatIndex = endlessState.ruleStatIndex;
-              }
-              if (typeof endlessState.ruleFactorIndex === 'number') {
-                selectedFactorIndex = endlessState.ruleFactorIndex;
               }
               updateRuleModalSelection();
             } else {
@@ -836,11 +796,6 @@ export async function createGuideUi(
 
             if (statDeathDamage) {
               statDeathDamage.textContent = `×${deathMult.toFixed(2)}（淘汰 ${elim} 人）`;
-            }
-            if (statBurden) {
-              const won = state.isWinner === true;
-              const delta = won ? '胜 -1 层' : '负 +1 层';
-              statBurden.textContent = `${burden} / ${MAX_LOSS_BURDEN} 层（${delta}）`;
             }
             if (challengeProgress) {
               challengeProgress.textContent = `${cMm.toString().padStart(2, '0')}:${cSs.toString().padStart(2, '0')} / 15:00 (共 ${roundsCompleted} 局)`;

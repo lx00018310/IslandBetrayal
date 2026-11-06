@@ -16,7 +16,7 @@ import {
   type GlobalRule,
 } from '../stats.ts';
 
-describe('统一数值系统（PoE 分层计算，无成长上限）测试', () => {
+describe('统一数值系统（PoE 分层计算，有界数值）测试', () => {
   it('算例 1 (Plan 3.3): 基础100，固定加20，卡牌+15%，A选+20%，B选-10% -> 149', () => {
     const rules: GlobalRule[] = [
       { ownerId: 0, stat: 'maxHp', factor: 1.2, chosenAtRound: 1 },
@@ -56,20 +56,18 @@ describe('统一数值系统（PoE 分层计算，无成长上限）测试', () 
     expect(hp).toBe(182);
   });
 
-  it('移除人为上限：MaxHP 不再夹到 300，长期累乘真实增长', () => {
-    // 旧实现会 clamp 到 300；新实现必须真实增长
-    expect(calculateEffectiveMaxHp(100, 0, 0, 10.0)).toBe(1000);
-    expect(calculateEffectiveMaxHp(100, 0, 0, 100.0)).toBe(10000);
+  it('MaxHP 在最终出口限制为 300', () => {
+    expect(calculateEffectiveMaxHp(100, 0, 0, 10.0)).toBe(300);
+    expect(calculateEffectiveMaxHp(100, 0, 0, 100.0)).toBe(300);
     // 合法下界：至少 1 HP
     expect(calculateEffectiveMaxHp(100, 0, 0, 0.001)).toBe(1);
   });
 
-  it('移动速度：无上限，真实增长；减速状态独立施加', () => {
+  it('移动速度：有安全上限，真实增长；减速状态独立施加', () => {
     expect(calculateEffectiveMoveSpeed(3.1, 0, 1.0, false)).toBeCloseTo(3.1);
 
-    // 旧实现 clamp 到 5.58；新实现必须真实增长
-    expect(calculateEffectiveMoveSpeed(3.1, 0, 5.0, false)).toBeCloseTo(15.5);
-    expect(calculateEffectiveMoveSpeed(3.1, 0, 50.0, false)).toBeCloseTo(155);
+    expect(calculateEffectiveMoveSpeed(3.1, 0, 5.0, false)).toBeCloseTo(5.58);
+    expect(calculateEffectiveMoveSpeed(3.1, 0, 50.0, false)).toBeCloseTo(5.58);
 
     // 减速 ×0.55 在最终移速后施加
     expect(calculateEffectiveMoveSpeed(3.1, 0, 1.0, true)).toBeCloseTo(3.1 * 0.55);
@@ -77,29 +75,26 @@ describe('统一数值系统（PoE 分层计算，无成长上限）测试', () 
     expect(calculateEffectiveMoveSpeed(3.1, 0, 0.0001, false)).toBeGreaterThan(0);
   });
 
-  it('攻击频率：无上限，真实增长；周期始终为正', () => {
+  it('攻击频率：有安全上限，真实增长；周期始终为正', () => {
     expect(calculateEffectiveAttackSpeed(0, 1.0)).toBeCloseTo(1.0);
-    // 旧实现 clamp 到 2.5
-    expect(calculateEffectiveAttackSpeed(0.5, 2.0)).toBeCloseTo(3.0);
-    expect(calculateEffectiveAttackSpeed(4, 10.0)).toBeCloseTo(50.0);
+    expect(calculateEffectiveAttackSpeed(0.5, 2.0)).toBeCloseTo(2.5);
+    expect(calculateEffectiveAttackSpeed(4, 10.0)).toBeCloseTo(2.5);
     // 合法下界（正频率）
     expect(calculateEffectiveAttackSpeed(-0.999, 0.0001)).toBeGreaterThan(0);
   });
 
-  it('暴击率：无上限；>100% 分层结算（135% → 必中 1 层 + 35% 概率第 2 层）', () => {
+  it('暴击率：有安全上限；最多 60%，不再结算多层暴击', () => {
     expect(calculateEffectiveCrit(1.2).critChance).toBeCloseTo(0.06);
-    // 旧实现 clamp 到 60%
-    expect(calculateEffectiveCrit(100.0).critChance).toBeCloseTo(5.0);
+    expect(calculateEffectiveCrit(100.0).critChance).toBeCloseTo(0.6);
 
-    // 135% 暴击率：guaranteed 1 层；余数 0.35
     const guaranteed = resolveHitDamage(20, 1.35, 1.5, () => 0.9);
-    expect(guaranteed.critLayers).toBe(1);
-    expect(guaranteed.isCrit).toBe(true);
-    expect(guaranteed.damage).toBe(30);
+    expect(guaranteed.critLayers).toBe(0);
+    expect(guaranteed.isCrit).toBe(false);
+    expect(guaranteed.damage).toBe(20);
 
     const double = resolveHitDamage(20, 1.35, 1.5, () => 0.1);
-    expect(double.critLayers).toBe(2);
-    expect(double.damage).toBe(45); // 20 * 1.5^2
+    expect(double.critLayers).toBe(1);
+    expect(double.damage).toBe(30); // 20 * 1.5，超额概率不再产生第二层
 
     // 0 暴击率不暴击
     const none = resolveHitDamage(20, 0, 1.5, () => 0.0);
@@ -107,12 +102,10 @@ describe('统一数值系统（PoE 分层计算，无成长上限）测试', () 
     expect(none.damage).toBe(20);
   });
 
-  it('攻击伤害：无上限；最少 1 点', () => {
+  it('攻击伤害：有安全上限；最少 1 点', () => {
     expect(calculateEffectiveDamage(10, 0, 1.0)).toBe(10);
-    // 旧实现 clamp 到 0.5 倍 → 5；新实现真实计算 10*0.2 = 2
     expect(calculateEffectiveDamage(10, 0, 0.2)).toBe(2);
-    // 旧实现 clamp 到 4 倍 → 40；新实现真实计算 10*10 = 100
-    expect(calculateEffectiveDamage(10, 0, 10.0)).toBe(100);
+    expect(calculateEffectiveDamage(10, 0, 10.0)).toBe(40);
     // 合法下界
     expect(calculateEffectiveDamage(1, 0, 0.001)).toBe(1);
   });
@@ -133,13 +126,12 @@ describe('统一数值系统（PoE 分层计算，无成长上限）测试', () 
     expect(withDeath).toBe(14); // round(10 * 1.44)
   });
 
-  it('个人失利乘区：0 层 ×1.00，1 层 ×0.99，20 层 ×0.80', () => {
+  it('旧存档的失败负担不再生效', () => {
     expect(burdenFactor(0)).toBeCloseTo(1.0);
-    expect(burdenFactor(1)).toBeCloseTo(0.99);
-    expect(burdenFactor(2)).toBeCloseTo(0.98);
-    expect(burdenFactor(MAX_LOSS_BURDEN)).toBeCloseTo(0.8);
-    // 越界被合法夹住（这是用户明确指定的 20 层上限，不是属性成长上限）
-    expect(burdenFactor(999)).toBeCloseTo(0.8);
+    expect(burdenFactor(1)).toBeCloseTo(1);
+    expect(burdenFactor(2)).toBeCloseTo(1);
+    expect(burdenFactor(MAX_LOSS_BURDEN)).toBeCloseTo(1);
+    expect(burdenFactor(999)).toBeCloseTo(1);
     expect(burdenFactor(-5)).toBeCloseTo(1.0);
   });
 
@@ -151,16 +143,16 @@ describe('统一数值系统（PoE 分层计算，无成长上限）测试', () 
       burdenFactor(2),
       survivalDamageMultiplier(3),
     );
-    // 10 * 1.5 * 2.0 * 0.98 * 1.728 = 50.8032 → 51
-    expect(dmg).toBe(51);
+    // 10 * 1.5 * 2.0 * 1 * 1.728 = 51.84 → 52
+    expect(dmg).toBe(52);
   });
 
-  it('胜负负担结算：输 +1、赢 -1、0~20', () => {
-    expect(applyRoundOutcome(0, false)).toBe(1);
-    expect(applyRoundOutcome(1, false)).toBe(2);
-    expect(applyRoundOutcome(2, true)).toBe(1);
+  it('胜负均不再增加下局属性负担', () => {
+    expect(applyRoundOutcome(0, false)).toBe(0);
+    expect(applyRoundOutcome(1, false)).toBe(0);
+    expect(applyRoundOutcome(2, true)).toBe(0);
     expect(applyRoundOutcome(0, true)).toBe(0);
-    expect(applyRoundOutcome(MAX_LOSS_BURDEN, false)).toBe(MAX_LOSS_BURDEN);
+    expect(applyRoundOutcome(MAX_LOSS_BURDEN, false)).toBe(0);
   });
 
   it('非有限数值不会进入战斗（NaN/Infinity 防护）', () => {

@@ -1,7 +1,7 @@
 // 《荒岛分赃》受管艺术资产包
 // 统一低对比自然平整草地、3D 体素角色、3 类怪物、Boss 巨兽、三武器（飞刀/箭矢/炸弹）、道具、光照与材质
 
-import { createBoxGeometry, createPlaneGeometry } from '@forgeax/engine/geometry';
+import { createBoxGeometry, createPlaneGeometry, createTorusGeometry, createCylinderGeometry, createSphereGeometry, withVertexColors } from '@forgeax/engine/geometry';
 import { definePack } from '@forgeax/engine/pack/source';
 import {
   Camera,
@@ -15,8 +15,9 @@ import {
 import { SPRITE_PREMULTIPLIED_ALPHA_BLEND } from '@forgeax/engine/render/authoring';
 import { ChildOf } from '@forgeax/engine/scene';
 import type { AssetGuid, MeshAsset, SceneAsset, SceneEntity } from '@forgeax/engine/types';
-import { ok } from '@forgeax/engine/types';
+import { ok, srgbChannelToLinear } from '@forgeax/engine/types';
 import { assetGuid, guidText, PACKAGE_IDS } from '../shared/asset-refs.ts';
+import { VISUAL_LAYERS } from './pixel-art-data.ts';
 import { GRID_SIZE, hash, PLAYER_COLORS } from './simulation.ts';
 
 function withMaterial(mesh: MeshAsset, material: AssetGuid, sourceKey: string): MeshAsset {
@@ -30,6 +31,19 @@ function hexToRgb(hex: string): [number, number, number] {
   const clean = hex.replace('#', '');
   const num = parseInt(clean, 16);
   return [(num >> 16) & 255, (num >> 8) & 255, num & 255];
+}
+
+export function withVerticalGradient(mesh: MeshAsset): MeshAsset {
+  const position = mesh.attributes.position as Float32Array;
+  let low = Infinity, high = -Infinity;
+  for (let i = 1; i < position.length; i += 3) { low = Math.min(low, position[i]!); high = Math.max(high, position[i]!); }
+  const color = new Float32Array(position.length / 3 * 4);
+  for (let i = 0; i < position.length / 3; i++) {
+    const h = (position[i * 3 + 1]! - low) / Math.max(0.001, high - low);
+    const value = 0.72 + 0.46 * h;
+    color.set([value, value, value, 1], i * 4);
+  }
+  return withVertexColors(mesh, color).unwrap();
 }
 
 export default definePack({
@@ -46,13 +60,13 @@ export default definePack({
     if (!shadowQuad.ok) return shadowQuad;
 
     // 体素角色部件 (Tier 2: 二头身大头剪影，宽高比 1.00:1.00:1.35，头部占 50%)
-    const charHead = createBoxGeometry(0.48, 0.48, 0.48);        // 放大头部至 50% 高度
+    const charHead = createBoxGeometry(0.62, 0.62, 0.58);        // 放大头部至 50% 高度
     if (!charHead.ok) return charHead;
-    const charHair = createBoxGeometry(0.52, 0.24, 0.48);        // 宽檐帽/装饰顶部
+    const charHair = createBoxGeometry(0.66, 0.16, 0.62);        // 宽檐帽/装饰顶部
     if (!charHair.ok) return charHair;
     const charEyes = createBoxGeometry(0.36, 0.12, 0.14);
     if (!charEyes.ok) return charEyes;
-    const charBody = createBoxGeometry(0.54, 0.48, 0.38);        // 缩小躯干占比
+    const charBody = createBoxGeometry(0.54, 0.38, 0.38);        // 缩小躯干占比
     if (!charBody.ok) return charBody;
     const charBelt = createBoxGeometry(0.56, 0.10, 0.40);
     if (!charBelt.ok) return charBelt;
@@ -65,22 +79,17 @@ export default definePack({
     const playerMarker = createBoxGeometry(0.24, 0.24, 0.24);
     if (!playerMarker.ok) return playerMarker;
 
-    // 脚底功能底盘 (视觉方向三：全员脚底锚定盘)
-    const playerFootRing = createPlaneGeometry(0.55, 0.55);       // 玩家绿环 + 朝向箭头
-    if (!playerFootRing.ok) return playerFootRing;
-    const teammateFootRing = createPlaneGeometry(0.50, 0.50);     // 盟友天蓝环
-    if (!teammateFootRing.ok) return teammateFootRing;
-    const rivalFootRing = createPlaneGeometry(0.48, 0.48);        // 敌对 AI 暖红警戒环
-    if (!rivalFootRing.ok) return rivalFootRing;
-    const grudgeFootRing = createPlaneGeometry(0.52, 0.52);       // 记仇 AI 紫红脉冲环
-    if (!grudgeFootRing.ok) return grudgeFootRing;
-    const monsterShadow = createPlaneGeometry(0.75, 0.75);        // 小怪深黑硬阴影
+    const footRing = createTorusGeometry(0.58, 0.035, 4, 24);
+    if (!footRing.ok) return footRing;
+    const monsterShadow = createCylinderGeometry(0.52, 0.52, 0.015, 16);
     if (!monsterShadow.ok) return monsterShadow;
-    const coverAoEdge = createPlaneGeometry(1.50, 1.50);          // 掩体底部 Fake AO 暗边
-    if (!coverAoEdge.ok) return coverAoEdge;
+    const coverAo = createCylinderGeometry(1, 1, 0.025, 8);
+    if (!coverAo.ok) return coverAo;
+    const directionArrow = createCylinderGeometry(0, 0.12, 0.3, 3);
+    if (!directionArrow.ok) return directionArrow;
 
     // 怪物部件 (Tier 1: 矮扁匍匐型，宽高比 1.25:1.25:0.60，高度仅为角色 60%)
-    const monsterBody = createBoxGeometry(0.75, 0.40, 0.75);     // 加宽底座、压扁主体
+    const monsterBody = createBoxGeometry(0.9, 0.4, 0.9);     // 加宽底座、压扁主体
     if (!monsterBody.ok) return monsterBody;
     const monsterEyes = createBoxGeometry(0.48, 0.14, 0.16);     // 亮核视觉焦点
     if (!monsterEyes.ok) return monsterEyes;
@@ -92,7 +101,7 @@ export default definePack({
     if (!bossBody.ok) return bossBody;
     const bossEyes = createBoxGeometry(1.1, 0.28, 0.32);         // 炽红核心眼
     if (!bossEyes.ok) return bossEyes;
-    const bossHorns = createBoxGeometry(2.4, 0.35, 0.60);        // 夸张横向双角
+    const bossHorns = createCylinderGeometry(0, 0.32, 1.1, 4);        // 夸张横向双角
     if (!bossHorns.ok) return bossHorns;
     const bossShadow = createPlaneGeometry(2.8, 2.2);            // 扩大 Boss 阴影
     if (!bossShadow.ok) return bossShadow;
@@ -106,13 +115,13 @@ export default definePack({
     if (!chestLock.ok) return chestLock;
 
     // 武器部件 (反写实放大 1.6~2.0 倍)
-    const knifeMesh = createBoxGeometry(0.18, 0.54, 0.08);        // 飞刀放大 1.8x，宽刃月牙
+    const knifeMesh = createTorusGeometry(0.32, 0.065, 3, 10);        // 飞刀放大 1.8x，宽刃月牙
     if (!knifeMesh.ok) return knifeMesh;
-    const arrowMesh = createBoxGeometry(0.12, 0.12, 0.96);        // 箭矢放大 1.7x，流线型棱锥
+    const arrowMesh = createCylinderGeometry(0, 0.13, 1.22, 4);        // 箭矢放大 1.7x，流线型棱锥
     if (!arrowMesh.ok) return arrowMesh;
-    const bombMesh = createBoxGeometry(0.48, 0.48, 0.48);         // 炸弹放大 1.8x，球体化
+    const bombMesh = createSphereGeometry(0.34, 8, 6);         // 炸弹放大 1.8x，球体化
     if (!bombMesh.ok) return bombMesh;
-    const blastMesh = createPlaneGeometry(3.0, 3.0);              // 冲击波环扩大
+    const blastMesh = createTorusGeometry(1, 0.035, 4, 32);              // 冲击波环扩大
     if (!blastMesh.ok) return blastMesh;
 
     // 战利品与场景道具部件
@@ -125,7 +134,7 @@ export default definePack({
     const bushMesh = createBoxGeometry(0.85, 0.70, 0.85);
     if (!bushMesh.ok) return bushMesh;
     // 中央岩石掩体 (Tier 3: 厚重梯形台柱，宽高比 2.60:2.60:1.50)
-    const rockMesh = createBoxGeometry(0.98, 0.72, 0.88);         // 加宽底座，顶部收窄梯形
+    const rockMesh = createCylinderGeometry(0.65, 1, 2, 4);         // 加宽底座，顶部收窄梯形
     if (!rockMesh.ok) return rockMesh;
     const crystalMesh = createBoxGeometry(0.38, 1.25, 0.38);
     if (!crystalMesh.ok) return crystalMesh;
@@ -133,10 +142,10 @@ export default definePack({
     // 2. 角色服装材质
     const charMaterials: Record<string, unknown> = {};
     for (let i = 0; i < 10; i++) {
-      const colorHex = PLAYER_COLORS[i] ?? '#ffffff';
+      const colorHex = i === 0 ? '#10B981' : [VISUAL_LAYERS.aiFriendlyBlue, VISUAL_LAYERS.aiGreedyGold, VISUAL_LAYERS.aiRaiderPurple][i % 3]!;
       const rgb = hexToRgb(colorHex);
       charMaterials[`material/char-${i}`] = Materials.standard({
-        baseColor: [rgb[0] / 255, rgb[1] / 255, rgb[2] / 255, 1],
+        baseColor: [srgbChannelToLinear(rgb[0] / 255), srgbChannelToLinear(rgb[1] / 255), srgbChannelToLinear(rgb[2] / 255), 1],
         roughness: 0.55,
         metallic: 0.15,
       });
@@ -211,18 +220,9 @@ export default definePack({
 
         if (isLand) {
           posY = -0.11;
-          if (r > 0.85) {
-            matKey = 'material/ground-sand';
-          } else if (n < 0.18) {
-            matKey = 'material/ground-moss';
-          } else if (n < 0.42) {
-            matKey = 'material/ground-light-grass';
-          } else {
-            matKey = 'material/ground-grass';
-          }
-          if (n > 0.86 && r < 0.78) {
-            decor = n > 0.96 ? 'crystal' : n > 0.91 ? 'bush' : 'rock';
-          }
+          const band = r < 0.7 ? 0 : Math.min(5, 1 + Math.floor((r - 0.7) / 0.05));
+          matKey = `material/ground-band-${band}`;
+          if (n > 0.985 && r < 0.78) decor = 'bush';
         }
 
         entities[`tile-${gx}-${gy}`] = {
@@ -286,6 +286,27 @@ export default definePack({
         },
       };
 
+      for (const state of ['player', 'ally', 'rival', 'grudge']) {
+        entities[`actor-${i}-ring-${state}`] = { components: {
+          Name: { value: `Actor ${i} Ring ${state}` },
+          Transform: { pos: [0, -999, 0], quat: [...SHADOW_QUAT] },
+          MeshFilter: { assetHandle: guidText(assetGuid(PACKAGE_IDS.islandArt, 'mesh/foot-ring')) },
+          MeshRenderer: { materials: [guidText(assetGuid(PACKAGE_IDS.islandArt, `material/ring-${state}`))] },
+        } };
+      }
+      if (i === 0) {
+        entities['player-direction'] = { components: {
+          Name: { value: 'Player Direction' }, Transform: { pos: [0, -999, 0] },
+          MeshFilter: { assetHandle: guidText(assetGuid(PACKAGE_IDS.islandArt, 'mesh/direction-arrow')) },
+          MeshRenderer: { materials: [guidText(assetGuid(PACKAGE_IDS.islandArt, 'material/ring-white'))] },
+        } };
+        entities['player-inner-ring'] = { components: {
+          Name: { value: 'Player Inner Ring' }, Transform: { pos: [0, -999, 0], quat: [...SHADOW_QUAT] },
+          MeshFilter: { assetHandle: guidText(assetGuid(PACKAGE_IDS.islandArt, 'mesh/foot-ring')) },
+          MeshRenderer: { materials: [guidText(assetGuid(PACKAGE_IDS.islandArt, 'material/ring-white'))] },
+        } };
+      }
+
       entities[`actor-${i}`] = {
         components: {
           Name: { value: `Actor ${i}` },
@@ -344,7 +365,7 @@ export default definePack({
       entities[`actor-${i}-head`] = {
         components: {
           Name: { value: `Actor ${i} Head` },
-          Transform: { pos: [0, 0.92, 0] },
+          Transform: { pos: [0, 0.94, 0] },
           ChildOf: { parent: `actor-${i}` },
           MeshFilter: { assetHandle: guidText(assetGuid(PACKAGE_IDS.islandArt, 'mesh/char-head')) },
           MeshRenderer: {
@@ -356,11 +377,11 @@ export default definePack({
       entities[`actor-${i}-hair`] = {
         components: {
           Name: { value: `Actor ${i} Hair` },
-          Transform: { pos: [0, 1.06, 0] },
+          Transform: { pos: [0, 1.28, 0] },
           ChildOf: { parent: `actor-${i}` },
           MeshFilter: { assetHandle: guidText(assetGuid(PACKAGE_IDS.islandArt, 'mesh/char-hair')) },
           MeshRenderer: {
-            materials: [guidText(assetGuid(PACKAGE_IDS.islandArt, 'material/hair'))],
+            materials: [guidText(assetGuid(PACKAGE_IDS.islandArt, `material/char-${i}`))],
           },
         },
       };
@@ -368,7 +389,7 @@ export default definePack({
       entities[`actor-${i}-eyes`] = {
         components: {
           Name: { value: `Actor ${i} Eyes` },
-          Transform: { pos: [0, 0.94, 0.23] },
+          Transform: { pos: [0, 0.98, 0.3] },
           ChildOf: { parent: `actor-${i}` },
           MeshFilter: { assetHandle: guidText(assetGuid(PACKAGE_IDS.islandArt, 'mesh/char-eyes')) },
           MeshRenderer: {
@@ -433,10 +454,10 @@ export default definePack({
           Name: { value: `Monster ${i} Shadow` },
           Transform: {
             pos: isInitial ? [mx + 0.14, 0.005, mz + 0.18] : [0, -999, 0],
-            quat: [SHADOW_QUAT[0], SHADOW_QUAT[1], SHADOW_QUAT[2], SHADOW_QUAT[3]],
+
           },
           MeshFilter: {
-            assetHandle: guidText(assetGuid(PACKAGE_IDS.islandArt, 'mesh/shadow-quad')),
+            assetHandle: guidText(assetGuid(PACKAGE_IDS.islandArt, 'mesh/monster-shadow')),
           },
           MeshRenderer: {
             materials: [guidText(assetGuid(PACKAGE_IDS.islandArt, 'material/shadow'))],
@@ -468,7 +489,7 @@ export default definePack({
       entities[`monster-${i}-horns`] = {
         components: {
           Name: { value: `Monster ${i} Horns` },
-          Transform: { pos: [0, 0.72, 0] },
+          Transform: { pos: [0, 0.62, 0] },
           ChildOf: { parent: `monster-${i}` },
           MeshFilter: {
             assetHandle: guidText(assetGuid(PACKAGE_IDS.islandArt, 'mesh/monster-horns')),
@@ -482,7 +503,7 @@ export default definePack({
       entities[`monster-${i}-eyes`] = {
         components: {
           Name: { value: `Monster ${i} Eyes` },
-          Transform: { pos: [0, 0.48, 0.35] },
+          Transform: { pos: [0, 0.48, 0.45] },
           ChildOf: { parent: `monster-${i}` },
           MeshFilter: {
             assetHandle: guidText(assetGuid(PACKAGE_IDS.islandArt, 'mesh/monster-eyes')),
@@ -512,7 +533,7 @@ export default definePack({
     entities['boss-body'] = {
       components: {
         Name: { value: 'Boss Body' },
-        Transform: { pos: [0, 0.85, 0] },
+        Transform: { pos: [0, 0.95, 0] },
         ChildOf: { parent: 'boss' },
         MeshFilter: { assetHandle: guidText(assetGuid(PACKAGE_IDS.islandArt, 'mesh/boss-body')) },
         MeshRenderer: { materials: [guidText(assetGuid(PACKAGE_IDS.islandArt, 'material/boss-body'))] },
@@ -530,12 +551,20 @@ export default definePack({
     entities['boss-horns'] = {
       components: {
         Name: { value: 'Boss Horns' },
-        Transform: { pos: [0, 1.65, 0] },
+        Transform: { pos: [-0.85, 2.05, 0], quat: [0, 0, 0.383, 0.924] },
         ChildOf: { parent: 'boss' },
         MeshFilter: { assetHandle: guidText(assetGuid(PACKAGE_IDS.islandArt, 'mesh/boss-horns')) },
-        MeshRenderer: { materials: [guidText(assetGuid(PACKAGE_IDS.islandArt, 'material/char-dark'))] },
+        MeshRenderer: { materials: [guidText(assetGuid(PACKAGE_IDS.islandArt, 'material/chest-gold'))] },
       },
     };
+
+    entities['boss-horn-right'] = { components: {
+      Name: { value: 'Boss Right Horn' },
+      Transform: { pos: [0.85, 2.05, 0], quat: [0, 0, -0.383, 0.924] },
+      ChildOf: { parent: 'boss' },
+      MeshFilter: { assetHandle: guidText(assetGuid(PACKAGE_IDS.islandArt, 'mesh/boss-horns')) },
+      MeshRenderer: { materials: [guidText(assetGuid(PACKAGE_IDS.islandArt, 'material/chest-gold'))] },
+    } };
 
     // 5 个队伍共享宝箱
     for (let i = 0; i < 5; i++) {
@@ -635,7 +664,7 @@ export default definePack({
     }
 
     // 30 把环绕飞刀（10 名角色 × 最多 3 把；保留 player-knife-0..2 兼容旧键）
-    for (let i = 0; i < 30; i++) {
+    for (let i = 0; i < 40; i++) {
       entities[`player-knife-${i}`] = {
         components: {
           Name: { value: `Knife ${i}` },
@@ -647,7 +676,7 @@ export default definePack({
     }
 
     // 24 支穿透箭矢（多人同时发射的可辨认实体池）
-    for (let i = 0; i < 24; i++) {
+    for (let i = 0; i < 64; i++) {
       entities[`arrow-${i}`] = {
         components: {
           Name: { value: `Arrow ${i}` },
@@ -659,7 +688,7 @@ export default definePack({
     }
 
     // 12 颗炸弹与冲击波
-    for (let i = 0; i < 12; i++) {
+    for (let i = 0; i < 32; i++) {
       entities[`bomb-${i}`] = {
         components: {
           Name: { value: `Bomb ${i}` },
@@ -678,6 +707,14 @@ export default definePack({
       };
     }
 
+    for (let i = 0; i < 64; i++) for (let tail = 0; tail < 2; tail++) {
+      entities[`arrow-${i}-tail-${tail}`] = { components: {
+        Name: { value: `Arrow ${i} Tail ${tail}` }, Transform: { pos: [0, -999, 0] },
+        MeshFilter: { assetHandle: guidText(assetGuid(PACKAGE_IDS.islandArt, 'mesh/weapon-arrow')) },
+        MeshRenderer: { materials: [guidText(assetGuid(PACKAGE_IDS.islandArt, 'material/ammo-trail'))] },
+      } };
+    }
+
     // 3 处中央岩石掩体（阻挡移动与视线，使用现有 mesh/rock）
     for (let i = 0; i < 3; i++) {
       entities[`cover-${i}`] = {
@@ -691,6 +728,24 @@ export default definePack({
     }
 
     // Boss 圈形预警环（可躲的范围攻击前摇）
+    for (let i = 0; i < 3; i++) {
+      entities[`cover-${i}-ao`] = { components: {
+        Name: { value: `Cover ${i} AO` }, Transform: { pos: [0, -999, 0] },
+        MeshFilter: { assetHandle: guidText(assetGuid(PACKAGE_IDS.islandArt, 'mesh/cover-ao')) },
+        MeshRenderer: { materials: [guidText(assetGuid(PACKAGE_IDS.islandArt, 'material/ao'))] },
+      } };
+      entities[`cover-${i}-top`] = { components: {
+        Name: { value: `Cover ${i} Top` }, Transform: { pos: [0, -999, 0] },
+        MeshFilter: { assetHandle: guidText(assetGuid(PACKAGE_IDS.islandArt, 'mesh/cover-ao')) },
+        MeshRenderer: { materials: [guidText(assetGuid(PACKAGE_IDS.islandArt, 'material/rock-top'))] },
+      } };
+    }
+    entities['shrink-boundary'] = { components: {
+      Name: { value: 'Shrink Warning Boundary' }, Transform: { pos: [0, -999, 0], quat: [...SHADOW_QUAT] },
+      MeshFilter: { assetHandle: guidText(assetGuid(PACKAGE_IDS.islandArt, 'mesh/blast-ring')) },
+      MeshRenderer: { materials: [guidText(assetGuid(PACKAGE_IDS.islandArt, 'material/danger-border'))] },
+    } };
+
     entities['raid-telegraph'] = {
       components: {
         Name: { value: 'Raid Telegraph Ring' },
@@ -733,25 +788,29 @@ export default definePack({
         assetGuid(PACKAGE_IDS.islandArt, 'material/ocean'),
         'island:ocean',
       ),
-      'mesh/shadow-quad': shadowQuad.value,
-      'mesh/char-head': charHead.value,
-      'mesh/char-hair': charHair.value,
-      'mesh/char-eyes': charEyes.value,
-      'mesh/char-body': charBody.value,
-      'mesh/char-belt': charBelt.value,
-      'mesh/char-arms': charArms.value,
-      'mesh/char-legs': charLegs.value,
-      'mesh/char-shoes': charShoes.value,
+      'mesh/foot-ring': footRing.value,
+      'mesh/direction-arrow': directionArrow.value,
+      'mesh/monster-shadow': withVerticalGradient(monsterShadow.value),
+      'mesh/cover-ao': coverAo.value,
+      'mesh/shadow-quad': monsterShadow.value,
+      'mesh/char-head': withVerticalGradient(charHead.value),
+      'mesh/char-hair': withVerticalGradient(charHair.value),
+      'mesh/char-eyes': withVerticalGradient(charEyes.value),
+      'mesh/char-body': withVerticalGradient(charBody.value),
+      'mesh/char-belt': withVerticalGradient(charBelt.value),
+      'mesh/char-arms': withVerticalGradient(charArms.value),
+      'mesh/char-legs': withVerticalGradient(charLegs.value),
+      'mesh/char-shoes': withVerticalGradient(charShoes.value),
       'mesh/player-marker': playerMarker.value,
 
-      'mesh/monster-body': monsterBody.value,
-      'mesh/monster-eyes': monsterEyes.value,
-      'mesh/monster-horns': monsterHorns.value,
+      'mesh/monster-body': withVerticalGradient(monsterBody.value),
+      'mesh/monster-eyes': withVerticalGradient(monsterEyes.value),
+      'mesh/monster-horns': withVerticalGradient(monsterHorns.value),
 
-      'mesh/boss-body': bossBody.value,
-      'mesh/boss-eyes': bossEyes.value,
-      'mesh/boss-horns': bossHorns.value,
-      'mesh/boss-shadow': bossShadow.value,
+      'mesh/boss-body': withVerticalGradient(bossBody.value),
+      'mesh/boss-eyes': withVerticalGradient(bossEyes.value),
+      'mesh/boss-horns': withVerticalGradient(bossHorns.value),
+      'mesh/boss-shadow': monsterShadow.value,
 
       'mesh/chest-body': chestBody.value,
       'mesh/chest-lid': chestLid.value,
@@ -783,7 +842,7 @@ export default definePack({
         'island:bush',
       ),
       'mesh/rock': withMaterial(
-        rockMesh.value,
+        withVerticalGradient(rockMesh.value),
         assetGuid(PACKAGE_IDS.islandArt, 'material/rock'),
         'island:rock',
       ),
@@ -794,23 +853,29 @@ export default definePack({
       ),
 
       // 地形材质
+      ...Object.fromEntries(Array.from({ length: 6 }, (_, band) => [
+        `material/ground-band-${band}`, Materials.standard({
+          baseColor: [0.075 - band * 0.002, 0.105 - band * 0.002, 0.073 - band * 0.002, 1],
+          roughness: 1, metallic: 0,
+        }),
+      ])),
       'material/ground-grass': Materials.standard({
-        baseColor: [0.36, 0.46, 0.25, 1],
+        baseColor: [0.28, 0.33, 0.29, 1],
         roughness: 0.90,
         metallic: 0.03,
       }),
       'material/ground-light-grass': Materials.standard({
-        baseColor: [0.42, 0.52, 0.30, 1],
+        baseColor: [0.29, 0.34, 0.30, 1],
         roughness: 0.90,
         metallic: 0.03,
       }),
       'material/ground-moss': Materials.standard({
-        baseColor: [0.31, 0.40, 0.22, 1],
+        baseColor: [0.28, 0.33, 0.29, 1],
         roughness: 0.92,
         metallic: 0.02,
       }),
       'material/ground-sand': Materials.standard({
-        baseColor: [0.75, 0.66, 0.44, 1],
+        baseColor: [0.33, 0.34, 0.30, 1],
         roughness: 0.85,
         metallic: 0.02,
       }),
@@ -822,7 +887,7 @@ export default definePack({
 
       // 角色材质
       'material/skin': Materials.standard({
-        baseColor: [0.96, 0.82, 0.68, 1],
+        baseColor: [0.969, 0.953, 0.91, 1],
         roughness: 0.65,
       }),
       'material/hair': Materials.standard({
@@ -849,29 +914,29 @@ export default definePack({
 
       // 怪物与 Boss 材质
       'material/monster': Materials.standard({
-        baseColor: [0.46, 0.20, 0.62, 1],
+        baseColor: [0.022, 0.015, 0.032, 1],
         roughness: 0.5,
         metallic: 0.15,
       }),
       'material/monster-eyes': Materials.standard({
         baseColor: [1.0, 0.15, 0.15, 1],
-        emissive: [1.0, 0.1, 0.1],
-        emissiveIntensity: 3.0,
+        emissive: [1.0, 0.02, 0],
+        emissiveIntensity: 0.8,
       }),
       'material/boss-body': Materials.standard({
-        baseColor: [0.62, 0.09, 0.16, 1],
+        baseColor: [0.015, 0.01, 0.02, 1],
         roughness: 0.4,
         metallic: 0.25,
       }),
       'material/boss-eyes': Materials.standard({
-        baseColor: [1.0, 0.38, 0.05, 1],
-        emissive: [1.0, 0.4, 0.1],
-        emissiveIntensity: 3.8,
+        baseColor: [1.0, 0.118, 0.259, 1],
+        emissive: [1.0, 0.01, 0.03],
+        emissiveIntensity: 0.8,
       }),
 
       // 宝箱材质
       'material/chest': Materials.standard({
-        baseColor: [0.65, 0.40, 0.18, 1],
+        baseColor: [1, 0.718, 0.012, 1],
         roughness: 0.65,
         metallic: 0.2,
       }),
@@ -890,7 +955,7 @@ export default definePack({
         emissiveIntensity: 1.5,
       }),
       'material/weapon-arrow': Materials.standard({
-        baseColor: [0.96, 0.75, 0.20, 1],
+        baseColor: [1, 0.94, 0.4, 1],
         roughness: 0.3,
         metallic: 0.8,
         emissive: [0.8, 0.5, 0.1],
@@ -925,7 +990,7 @@ export default definePack({
         metallic: 0.02,
       }),
       'material/rock': Materials.standard({
-        baseColor: [0.48, 0.52, 0.56, 1],
+        baseColor: [0.055, 0.075, 0.10, 1],
         roughness: 0.8,
         metallic: 0.1,
       }),
@@ -936,10 +1001,20 @@ export default definePack({
         emissive: [0.2, 0.5, 0.6],
         emissiveIntensity: 2.0,
       }),
-      'material/shadow': Materials.unlit([0.08, 0.14, 0.12, 0.52], {
+      'material/ammo-trail': Materials.unlit([0.35, 0.3, 0.08, 0.35], {
+        renderState: { blend: SPRITE_PREMULTIPLIED_ALPHA_BLEND, depthWriteEnabled: false },
+      }),
+      'material/ao': Materials.unlit([0.071, 0.086, 0.102, 1]),
+      'material/rock-top': Materials.standard({ baseColor: [0.20, 0.27, 0.34, 1], roughness: 0.9 }),
+      'material/ring-player': Materials.unlit([0.063, 0.725, 0.506, 1]),
+      'material/ring-ally': Materials.unlit([0.055, 0.647, 0.914, 1]),
+      'material/ring-rival': Materials.unlit([0.984, 0.4, 0.18, 1]),
+      'material/ring-grudge': Materials.unlit([0.85, 0.275, 0.937, 1]),
+      'material/ring-white': Materials.unlit([1, 1, 1, 1]),
+      'material/shadow': Materials.unlit([0.01, 0.01, 0.012, 0.65], {
         renderState: { blend: SPRITE_PREMULTIPLIED_ALPHA_BLEND },
       }),
-      'material/team-beam': Materials.unlit([0.42, 0.94, 0.65, 0.85], {
+      'material/team-beam': Materials.unlit([0.055, 0.647, 0.914, 1], {
         renderState: { blend: SPRITE_PREMULTIPLIED_ALPHA_BLEND },
       }),
       'material/danger-border': Materials.unlit([0.88, 0.28, 0.22, 0.75], {

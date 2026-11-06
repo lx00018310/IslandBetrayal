@@ -259,7 +259,7 @@ describe('game-3d starter', () => {
     const meta = JSON.parse(
       await readFile(new URL('../guide.ui.html.meta.json', import.meta.url), 'utf8'),
     );
-    expect(html).toContain('WASD move');
+    expect(html).toContain('WASD 移动');
     expect(html).toContain('\n');
     expect(css).toContain(':host {');
     expect(css).toContain('\n');

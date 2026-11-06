@@ -29,7 +29,7 @@
     <div class="mode-badge" data-ui-part="mode-badge">无限挑战</div>
     <div class="death-damage" data-ui-part="death-damage">淘汰 0 人 · 全伤 ×1.00</div>
     <div class="shrink-info" data-ui-part="shrink-info">缩圈 0/7 · 安全半径 98%</div>
-    <div class="shortcut-tip">WASD move · Space 组队/确认</div>
+    <div class="shortcut-tip">WASD 移动 · Space 结盟/背叛/确认</div>
   </div>
 </header>
 
@@ -41,10 +41,10 @@
 <!-- 存档恢复提示 -->
 <div class="save-notice hidden" data-ui-part="save-notice">已恢复无限挑战进度</div>
 
-<!-- 全员 Boss 团战 HUD -->
+<!-- 悬赏 Boss HUD -->
 <section class="raid-hud hidden" data-ui-part="raid-hud">
   <div class="raid-info-row">
-    <span class="raid-title" data-ui-part="raid-title">第 1 场全员 Boss 团战</span>
+    <span class="raid-title" data-ui-part="raid-title">第 1 场悬赏 Boss</span>
     <span class="raid-hp-text" data-ui-part="raid-hp-text">0 / 0 HP</span>
   </div>
   <div class="raid-hp-bar">
@@ -88,11 +88,7 @@
   <div class="player-hp-bar">
     <div class="hp-fill" data-ui-part="hp-fill"></div>
   </div>
-  <div class="player-status-hint" data-ui-part="player-status-hint">单人 · 靠近角色可邀请组队</div>
-  <div class="burden-row">
-    <span class="burden-info" data-ui-part="burden-info">个人负担 0/20 层 · -0%</span>
-    <div class="burden-bar"><div class="burden-fill" data-ui-part="burden-fill"></div></div>
-  </div>
+  <div class="player-status-hint" data-ui-part="player-status-hint">单人 · Space 结盟 / 结盟后 Space 背叛</div>
   <div class="distance-warning-hint hidden" data-ui-part="distance-warning-hint">⚠️ 距离过远！超 5.0m 断线爆箱！</div>
 </aside>
 
@@ -143,42 +139,15 @@
 <div class="endless-modal hidden" data-ui-part="endless-rule-modal">
   <div class="endless-dialog">
     <h2 class="endless-dialog-title">秘密决策 · 选择下局全场规则</h2>
-    <p class="endless-dialog-sub">影响下局所有角色并持续累乘生效。A/D 选属性，W/S 选倍率，Space 确认。</p>
+    <p class="endless-dialog-sub">10 人暗标，影响下一局全场博弈；历史秘策叠加并受安全边界约束。A/D 选秘策，Space 确认。</p>
     <div class="rule-cards" data-ui-part="rule-cards">
-      <button type="button" class="rule-card" data-stat-index="0" data-ui-part="rule-card-0">
-        <span class="rule-stat-name">最大血量</span>
-        <strong class="rule-stat-val" data-ui-part="rule-stat-val-0">+20%</strong>
-        <span class="rule-stat-sub">全员 HP 上限</span>
-      </button>
-      <button type="button" class="rule-card" data-stat-index="1" data-ui-part="rule-card-1">
-        <span class="rule-stat-name">攻击伤害</span>
-        <strong class="rule-stat-val" data-ui-part="rule-stat-val-1">+20%</strong>
-        <span class="rule-stat-sub">全员普攻伤害</span>
-      </button>
-      <button type="button" class="rule-card" data-stat-index="2" data-ui-part="rule-card-2">
-        <span class="rule-stat-name">移动速度</span>
-        <strong class="rule-stat-val" data-ui-part="rule-stat-val-2">+20%</strong>
-        <span class="rule-stat-sub">全员移动速度</span>
-      </button>
-      <button type="button" class="rule-card" data-stat-index="3" data-ui-part="rule-card-3">
-        <span class="rule-stat-name">攻击频率</span>
-        <strong class="rule-stat-val" data-ui-part="rule-stat-val-3">+20%</strong>
-        <span class="rule-stat-sub">普攻与武器CD</span>
-      </button>
-      <button type="button" class="rule-card" data-stat-index="4" data-ui-part="rule-card-4">
-        <span class="rule-stat-name">暴击概率</span>
-        <strong class="rule-stat-val" data-ui-part="rule-stat-val-4">+20%</strong>
-        <span class="rule-stat-sub">相对提升暴击</span>
-      </button>
-    </div>
-    <div class="factor-selector" data-ui-part="factor-selector">
-      <span class="factor-label">修正倍率：</span>
-      <div class="factor-pills" data-ui-part="factor-pills">
-        <button type="button" class="factor-pill selected" data-factor-index="0" data-ui-part="factor-pill-0">+20% (×1.20)</button>
-        <button type="button" class="factor-pill" data-factor-index="1" data-ui-part="factor-pill-1">+10% (×1.10)</button>
-        <button type="button" class="factor-pill" data-factor-index="2" data-ui-part="factor-pill-2">-10% (×0.90)</button>
-        <button type="button" class="factor-pill" data-factor-index="3" data-ui-part="factor-pill-3">-20% (×0.80)</button>
-      </div>
+      <button type="button" class="rule-card" data-ui-part="rule-card-0"><strong>猜疑短绳</strong><span class="rule-stat-sub">断线 -15% · 箱收入 +25%</span></button>
+      <button type="button" class="rule-card" data-ui-part="rule-card-1"><strong>铁索连环</strong><span class="rule-stat-sub">断线 +20% · 结盟移速 +10%</span></button>
+      <button type="button" class="rule-card" data-ui-part="rule-card-2"><strong>悬赏狂热</strong><span class="rule-stat-sub">Boss / 敌箱伤害 +25% · 散落 +30%</span></button>
+      <button type="button" class="rule-card" data-ui-part="rule-card-3"><strong>急速坍塌</strong><span class="rule-stat-sub">每圈再收紧 5% · 移速 +12%</span></button>
+      <button type="button" class="rule-card" data-ui-part="rule-card-4"><strong>近身肉搏</strong><span class="rule-stat-sub">飞刀伤害 / 范围 +20% · 箭射程 -15%</span></button>
+      <button type="button" class="rule-card" data-ui-part="rule-card-5"><strong>猎手视野</strong><span class="rule-stat-sub">箭 / 炸弹伤害 +20% · 普攻 / 飞刀 -10%</span></button>
+      <button type="button" class="rule-card" data-ui-part="rule-card-6"><strong>嗜血分赃</strong><span class="rule-stat-sub">淘汰增伤底数 1.20 → 1.25</span></button>
     </div>
     <button type="button" class="btn-confirm-rule" data-ui-part="btn-confirm-rule">确认全场秘策 (Space)</button>
   </div>
@@ -208,7 +177,6 @@
       <div class="stat-row"><span>淘汰人数</span><strong data-ui-part="stat-kills">0</strong></div>
       <div class="stat-row"><span>最终名次</span><strong data-ui-part="stat-rank">1 / 10</strong></div>
       <div class="stat-row"><span>本局淘汰增伤</span><strong data-ui-part="stat-death-damage">×1.00</strong></div>
-      <div class="stat-row"><span>个人失利负担</span><strong data-ui-part="stat-burden">0 / 20 层</strong></div>
       <div class="stat-row challenge-row"><span>连续挑战进度</span><strong data-ui-part="challenge-progress">00:00 / 15:00</strong></div>
     </div>
     <button type="button" class="btn-restart" data-ui-part="btn-restart">进入下局秘策选择 (Space)</button>

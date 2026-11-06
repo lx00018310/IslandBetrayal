@@ -197,7 +197,7 @@ export function createCharacterTexture(colorHex: string, style: number): Texture
     bmp.fillRect(5, 9, 22, 3, baseRgb[0], baseRgb[1], baseRgb[2]);
   } else if (style === 1) {
     // 金色战额带 / 王冠 - 贪财鬼 AI
-    bmp.fillRect(10, 8, 12, 3, VISUAL_LAYERS.aiGreedyGold.split('#')[1] || 'FFD166', 1);
+    bmp.fillRect(10, 8, 12, 3, ...hexToRgb(VISUAL_LAYERS.aiGreedyGold));
     bmp.setPixel(16, 6, 255, 240, 140);
   } else if (style === 2) {
     // 银质战士头盔 - 掠夺者 AI
@@ -256,7 +256,7 @@ export function createMonsterTexture(): TextureData {
 
   //【视觉方向二】矮扁匍匐剪影 (Y: 10..24) - 高度只有角色的 60%
   //【视觉方向一】暗体 #1E1B2E
-  bmp.fillEllipse(16, 17, 10, 6, VISUAL_LAYERS.monsterBodyDark.split('#')[1] || '1E1B2E', 1);
+  bmp.fillEllipse(16, 17, 10, 6, ...hexToRgb(VISUAL_LAYERS.monsterBodyDark));
   bmp.fillEllipse(16, 17, 8, 5, 50, 30, 60);
 
   // 顶部尖角/耳朵 - 简化大块面
@@ -265,8 +265,8 @@ export function createMonsterTexture(): TextureData {
 
   //【视觉方向一】亮核 #FF4D00 视觉焦点 (眼睛与高光)
   // 恶魔红眼
-  bmp.fillRect(11, 15, 4, 4, VISUAL_LAYERS.monsterGlow.split('#')[1] || 'FF4D00', 1);
-  bmp.fillRect(17, 15, 4, 4, VISUAL_LAYERS.monsterGlow.split('#')[1] || 'FF4D00', 1);
+  bmp.fillRect(11, 15, 4, 4, ...hexToRgb(VISUAL_LAYERS.monsterGlow));
+  bmp.fillRect(17, 15, 4, 4, ...hexToRgb(VISUAL_LAYERS.monsterGlow));
   bmp.setPixel(13, 15, 255, 200, 200);
   bmp.setPixel(19, 15, 255, 200, 200);
 
@@ -294,7 +294,7 @@ export function createChestTexture(): TextureData {
   const lightGoldRgb = adjustColor(chestGoldRgb, 1.25);
 
   // 箱盖 (Y: 6..14)
-  bmp.fillRect(6, 6, 20, 8, VISUAL_LAYERS.chestGold.split('#')[1] || 'FFB703', 1); // 主体金
+  bmp.fillRect(6, 6, 20, 8, ...hexToRgb(VISUAL_LAYERS.chestGold)); // 主体金
   bmp.fillRect(5, 7, 22, 2, lightGoldRgb[0], lightGoldRgb[1], lightGoldRgb[2]); // 铁箍顶高光
   bmp.fillRect(5, 13, 22, 2, darkGoldRgb[0], darkGoldRgb[1], darkGoldRgb[2]); // 铁箍底暗面
 

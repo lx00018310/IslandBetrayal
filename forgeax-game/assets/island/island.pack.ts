@@ -12,13 +12,15 @@ import { assetGuid, PACKAGE_IDS } from '../shared/asset-refs.ts';
 import { setupPresentation } from './presentation.ts';
 import {
   aggregateWorldMultipliers,
-  applyRoundOutcome,
+  chooseAiRule,
+  settleGrudges,
+  createEmptyGrudgeRecord,
+  RULE_KINDS,
+  RULE_KIND_NAMES,
+  type GlobalRuleKind,
   burdenFactor,
   createInitialEndlessProfile,
   MAX_LOSS_BURDEN,
-  STAT_FACTORS,
-  STAT_NAMES,
-  STAT_TARGETS,
   survivalDamageMultiplier,
   type CarryRelic,
   type EndlessProfile,
@@ -47,7 +49,6 @@ import {
   getNearbyCandidate,
   ignorePair,
   isPairIgnored,
-  landRadius,
   MATCH_SECONDS,
   partnerOf,
   type PlayerInputIntent,
@@ -87,6 +88,7 @@ export interface IslandTouchMessage {
   targetId?: number;
   inviteId?: number;
   choiceIndex?: number;
+  ruleKind?: GlobalRuleKind;
   stat?: StatTarget;
   factor?: StatFactor;
   relicKind?: 'knife' | 'arrow' | 'bomb' | null;
@@ -121,7 +123,7 @@ export const islandPlugin: Plugin = {
 
       // 初始化荒岛模拟与视觉呈现
       const sim = createInitialSimulation();
-      const presentation = setupPresentation(world, root, sim);
+      const presentation = setupPresentation(world, root, sim, host?.drawingBufferSize);
       yield () => presentation.dispose();
 
       // 无限模式角色 Profile 管理（各角色独立规则历史与携带宝物）
@@ -150,29 +152,24 @@ export const islandPlugin: Plugin = {
 
       let upgradeHighlight = 0;
       let ruleStatIndex = 0;
-      let ruleFactorIndex = 0;
       let relicHighlight = 0;
 
-      /** 每局最终结算：每人独立 +1 / -1 失利负担（幂等，仅一次） */
+      /** 局末结算记仇衰减（幂等，每局仅一次） */
       const settleRoundOutcome = () => {
         if (mode !== 'endless') return;
         if (lastSettledRound >= matchIndex) return;
         lastSettledRound = matchIndex;
-        const winnerId = sim.winner ? sim.winner.id : -1;
         for (const [id, profile] of endlessProfiles) {
-          const won = winnerId === id;
-          profile.lossBurden = applyRoundOutcome(profile.lossBurden, won);
+          profile.lossBurden = 0;
+          profile.grudge = sim.grudges.get(id) ?? profile.grudge ?? createEmptyGrudgeRecord();
+          settleGrudges(profile.grudge, sim.grudgeConflicts.get(id) ?? new Set());
         }
       };
 
       /** 无限模式敌人难度成长：按局数与实际有效战力简单缩放 */
       const computeEnemyScale = (): { hp: number; damage: number } => {
-        const roundFactor = 1 + Math.min(3.0, (matchIndex - 1) * 0.08);
-        const avgDamage =
-          sim.actors.reduce((acc, a) => acc + a.personalMultiplier, 0) / Math.max(1, sim.actors.length);
-        const hp = roundFactor * Math.max(0.6, Math.min(4.0, sim.effectiveMultipliers.damage * 0.8 + 0.2));
-        const damage = roundFactor * Math.max(0.6, Math.min(3.0, avgDamage));
-        return { hp, damage };
+        const scale = 1 + 0.12 * (matchIndex - 1);
+        return { hp: scale, damage: scale };
       };
 
       /** 汇总当前存档快照 */
@@ -230,7 +227,7 @@ export const islandPlugin: Plugin = {
         ruleAnnouncementTimer = 6.0;
       };
 
-      /** 应用下一局的世界倍率 / 个人失利乘区 / 携带宝物 / 敌人难度 */
+      /** 应用下一局的世界倍率 / 个人状态乘区 / 携带宝物 / 敌人难度 */
       const applyNextRoundWorld = () => {
         const allRules: GlobalRule[] = [];
         for (const p of endlessProfiles.values()) {
@@ -247,7 +244,9 @@ export const islandPlugin: Plugin = {
         }
 
         const enemyScale = computeEnemyScale();
-        restartSimulation(sim, { worldMultipliers, carryRelics, personalMultipliers, enemyScale });
+        restartSimulation(sim, { worldMultipliers, carryRelics, personalMultipliers, enemyScale,
+          rules: allRules, grudges: new Map(Array.from(endlessProfiles, ([id, p]) => [id, p.grudge ?? createEmptyGrudgeRecord()])),
+        });
         presentation.reset(sim);
         touchMoveX = 0;
         touchMoveY = 0;
@@ -256,9 +255,10 @@ export const islandPlugin: Plugin = {
         roundFinishedLogged = false;
         endlessPhase = 'playing';
 
-        const eff = sim.effectiveMultipliers;
-        const playerBurden = endlessProfiles.get(0)?.lossBurden ?? 0;
-        ruleAnnouncement = `第 ${matchIndex} 局开始！全场修正: 血量×${eff.maxHp.toFixed(2)} 伤害×${eff.damage.toFixed(2)} 移速×${eff.moveSpeed.toFixed(2)} 攻速×${eff.attackSpeed.toFixed(2)} 暴击×${eff.critChance.toFixed(2)} · 个人负担 -${playerBurden}%`;
+        const recent = allRules.filter(r => r.chosenAtRound === matchIndex - 1 && 'kind' in r);
+        const summary = RULE_KINDS.map(kind => `${RULE_KIND_NAMES[kind]}×${recent.filter(r => 'kind' in r && r.kind === kind).length}`).join(' · ');
+        const revenge = recent.filter(r => 'revengeTargetId' in r).map(r => 'kind' in r ? `${sim.actors[r.ownerId]?.name}记仇${sim.actors[r.revengeTargetId!]?.name}：${RULE_KIND_NAMES[r.kind]}` : '').join('；');
+        ruleAnnouncement = `第 ${matchIndex} 局 · ${summary}${revenge ? ' · ' + revenge : ''}`;
         ruleAnnouncementTimer = 5.0;
         // 局开场即落盘：中途刷新可从本局开场恢复
         persistSave();
@@ -278,125 +278,28 @@ export const islandPlugin: Plugin = {
         actorId: number,
         round: number,
       ): { rule: GlobalRule; relic: CarryRelic | null } => {
-        const actor = sim.actors[actorId];
-        const personality = actor?.ai ?? 'honest';
-        const profile = endlessProfiles.get(actorId);
-        
-        //【玩法支柱三·AI 记仇生态】R06: 仇恨 >=40 的 AI 有 70% 概率针对仇人宝物投克制秘策
-        let targetGrudgeId: number | null = null;
-        if (profile?.grudge) {
-          // 找最高仇恨对象且仇恨值>=40
-          for (const [aid, score] of Object.entries(profile.grudge.grudgeScoreByActor)) {
-            if (score >= 40 && Math.random() < 0.7) {
-              targetGrudgeId = parseInt(aid);
-              break;
-            }
-          }
-        }
-
-        // 三种性格各有正负倍率权重（R06 / E5）：正负 10%/20% 均可能被选，
-        // 掠夺者偏好压制性负面规则，形成真实博弈而不是单一正向膨胀。
-        let weightTable: Array<{ stat: StatTarget; factor: StatFactor; w: number }> = [
-          { stat: 'maxHp', factor: 1.2, w: 3 },
-          { stat: 'maxHp', factor: 1.1, w: 2 },
-          { stat: 'moveSpeed', factor: 1.1, w: 2 },
-          { stat: 'attackSpeed', factor: 1.1, w: 1 },
-          { stat: 'damage', factor: 0.9, w: 1 },
-          { stat: 'critChance', factor: 0.8, w: 1 },
-        ];
-        if (personality === 'greedy') {
-          weightTable = [
-            { stat: 'damage', factor: 1.2, w: 3 },
-            { stat: 'attackSpeed', factor: 1.2, w: 2 },
-            { stat: 'damage', factor: 1.1, w: 2 },
-            { stat: 'maxHp', factor: 0.9, w: 1 },
-            { stat: 'moveSpeed', factor: 0.8, w: 1 },
-            { stat: 'critChance', factor: 1.1, w: 1 },
-          ];
-        } else if (personality === 'raider') {
-          weightTable = [
-            { stat: 'critChance', factor: 1.2, w: 2 },
-            { stat: 'damage', factor: 1.2, w: 2 },
-            { stat: 'maxHp', factor: 0.9, w: 2 },
-            { stat: 'attackSpeed', factor: 0.8, w: 2 },
-            { stat: 'moveSpeed', factor: 0.9, w: 1 },
-            { stat: 'damage', factor: 0.8, w: 1 },
-          ];
-        }
-
-        // 如果仇恨了某个角色且有仇人宝物信息，针对性投克制秘策
-        if (targetGrudgeId !== null) {
-          const grudgeActor = sim.actors[targetGrudgeId];
-          if (grudgeActor) {
-            const owned: CarryRelic[] = [];
-            if (grudgeActor.weaponKnife > 0) owned.push({ kind: 'knife', level: grudgeActor.weaponKnife });
-            if (grudgeActor.weaponArrow > 0) owned.push({ kind: 'arrow', level: grudgeActor.weaponArrow });
-            if (grudgeActor.weaponBomb > 0) owned.push({ kind: 'bomb', level: grudgeActor.weaponBomb });
-            
-            if (owned.length > 0) {
-              owned.sort((a, b) => b.level - a.level);
-              const best = owned[0]!;
-              
-              // 针对性克制：带飞刀则投 ranged_snipe，带箭矢则投 close_combat，带炸弹也投 close_combat
-              let chosenStat: StatTarget = 'damage';
-              let chosenFactor: StatFactor = 1.1;
-              
-              if (best.kind === 'knife') {
-                chosenStat = 'critChance'; // 飞刀依赖暴击
-                chosenFactor = 0.9;
-              } else if (best.kind === 'arrow' || best.kind === 'bomb') {
-                chosenStat = 'damage'; // 远程/炸弹 -> 削弱伤害
-                chosenFactor = 0.8;
-              }
-              
-              return {
-                rule: {
-                  ownerId: actorId,
-                  stat: chosenStat,
-                  factor: chosenFactor,
-                  chosenAtRound: round,
-                },
-                relic: null,
-              };
-            }
-          }
-        }
-
-        const totalW = weightTable.reduce((acc, e) => acc + e.w, 0);
-        let pick = Math.random() * totalW;
-        let chosenEntry = weightTable[0]!;
-        for (const e of weightTable) {
-          pick -= e.w;
-          if (pick <= 0) {
-            chosenEntry = e;
-            break;
-          }
-        }
-
-        const rule: GlobalRule = {
-          ownerId: actorId,
-          stat: chosenEntry.stat,
-          factor: chosenEntry.factor,
-          chosenAtRound: round,
-        };
-
-        let relic: CarryRelic | null = null;
-        if (actor) {
-          const owned: CarryRelic[] = [];
-          if (actor.weaponKnife > 0) owned.push({ kind: 'knife', level: actor.weaponKnife });
-          if (actor.weaponArrow > 0) owned.push({ kind: 'arrow', level: actor.weaponArrow });
-          if (actor.weaponBomb > 0) owned.push({ kind: 'bomb', level: actor.weaponBomb });
-          if (owned.length > 0) {
-            owned.sort((a, b) => b.level - a.level);
-            const best = owned[0] ?? null;
-            relic = best ? { ...best, affix: best.affix ?? defaultRelicAffix(best.kind) } : null;
-          }
-        }
-
+        const actor = sim.actors[actorId]!;
+        const owned: CarryRelic[] = [];
+        if (actor.weaponKnife > 0) owned.push({ kind: 'knife', level: actor.weaponKnife });
+        if (actor.weaponArrow > 0) owned.push({ kind: 'arrow', level: actor.weaponArrow });
+        if (actor.weaponBomb > 0) owned.push({ kind: 'bomb', level: actor.weaponBomb });
+        owned.sort((a, b) => b.level - a.level);
+        const best = owned[0];
+        const relic = best ? { ...best, affix: defaultRelicAffix(best.kind) } : null;
+        const relics = new Map<number, CarryRelic | null>(sim.actors.map(a => {
+          const choices: CarryRelic[] = [{ kind: 'knife', level: a.weaponKnife }, { kind: 'arrow', level: a.weaponArrow }, { kind: 'bomb', level: a.weaponBomb }];
+          choices.sort((a, b) => b.level - a.level);
+          return [a.id, choices[0]!.level > 0 ? choices[0]! : null];
+        }));
+        relics.set(0, playerPendingRelic);
+        const rule = chooseAiRule(actorId, round, actor.ai, endlessProfiles.get(actorId)?.grudge,
+          relics, sim.winner?.id ?? null);
         return { rule, relic };
       };
 
       const startNextEndlessRound = () => {
+        // 等玩家选定真正携带的宝物后，再结算九名 AI 的秘密投票。
+        for (let i = 1; i < 10; i++) aiPendingDecisions.set(i, aiDecideNextRound(i, matchIndex));
         if (playerPendingRule) {
           const p0 = endlessProfiles.get(0)!;
           p0.rules.push(playerPendingRule);
@@ -442,7 +345,6 @@ export const islandPlugin: Plugin = {
         touchMoveY = 0;
         upgradeHighlight = 0;
         ruleStatIndex = 0;
-        ruleFactorIndex = 0;
         relicHighlight = 0;
         restartSimulation(sim);
         presentation.reset(sim);
@@ -506,23 +408,19 @@ export const islandPlugin: Plugin = {
               break;
             case 'rule_highlight':
               if (mode === 'endless' && sim.gameOver && endlessPhase === 'rule-pick') {
-                if (data.stat && STAT_TARGETS.includes(data.stat)) ruleStatIndex = STAT_TARGETS.indexOf(data.stat);
-                if (data.factor && STAT_FACTORS.includes(data.factor)) ruleFactorIndex = STAT_FACTORS.indexOf(data.factor);
+                if (data.ruleKind && RULE_KINDS.includes(data.ruleKind)) ruleStatIndex = RULE_KINDS.indexOf(data.ruleKind);
               }
               break;
             case 'rule_select':
               if (mode === 'endless' && sim.gameOver && endlessPhase === 'rule-pick' &&
-                  data.stat && STAT_TARGETS.includes(data.stat) && data.factor && STAT_FACTORS.includes(data.factor)) {
+                  data.ruleKind && RULE_KINDS.includes(data.ruleKind)) {
                 playerPendingRule = {
                   ownerId: 0,
-                  stat: data.stat,
-                  factor: data.factor,
+                  kind: data.ruleKind,
                   chosenAtRound: matchIndex,
                 };
                 aiPendingDecisions.clear();
-                for (let i = 1; i < 10; i++) {
-                  aiPendingDecisions.set(i, aiDecideNextRound(i, matchIndex));
-                }
+
                 endlessPhase = 'relic-pick';
                 persistSave();
               }
@@ -645,7 +543,7 @@ export const islandPlugin: Plugin = {
             progress: Number((sim.elapsed / MATCH_SECONDS).toFixed(3)),
             phase: sim.finalPhase ? 'final' : sim.shrink > 0 ? 'shrink' : 'normal',
             shrink: Number(sim.shrink.toFixed(3)),
-            landRadius: Number(landRadius(sim.shrink).toFixed(3)),
+            landRadius: Number(currentSafeRadius(sim).toFixed(3)),
             overtime: sim.overtime,
             overtimeResolution: sim.overtimeResolution,
             gameOver: sim.gameOver,
@@ -687,7 +585,8 @@ export const islandPlugin: Plugin = {
                   x: Number(partner.x.toFixed(2)),
                   y: Number(partner.y.toFixed(2)),
                   distance: Number(partnerDist?.toFixed(2) ?? 0),
-                  isWarning: (partnerDist ?? 0) >= TEAM_WARNING_DISTANCE,
+                  isWarning: (partnerDist ?? 0) >= TEAM_WARNING_DISTANCE * sim.rules.tetherModifier,
+                breakDistance: TEAM_BREAK_DISTANCE * sim.rules.tetherModifier,
                 }
               : null,
             candidate: candidate
@@ -755,7 +654,7 @@ export const islandPlugin: Plugin = {
             playerTreasure: sim.playerTreasure,
             // 单局死亡增伤（Plan 2B）
             eliminatedCount: sim.eliminatedCount,
-            survivalDamageMultiplier: Number(survivalDamageMultiplier(sim.eliminatedCount).toFixed(3)),
+            survivalDamageMultiplier: Number(survivalDamageMultiplier(sim.eliminatedCount, sim.rules.bloodFeudBase).toFixed(3)),
             // 分段缩圈（Plan 2C）
             shrinkStage: sim.shrinkStage,
             safeRadius: Number(currentSafeRadius(sim).toFixed(3)),
@@ -766,7 +665,7 @@ export const islandPlugin: Plugin = {
                   sim.elapsed,
               ).toFixed(1),
             ),
-            // 两次全员 Boss 团战（Plan A）
+            // 两次悬赏 Boss（Plan A）
             raid: {
               phase: sim.raidPhase,
               bossRound: sim.bossRound,
@@ -798,6 +697,7 @@ export const islandPlugin: Plugin = {
               roundIndex: matchIndex,
               isChallengeTargetReached: sessionChallengeElapsed >= 900,
             },
+            ruleEffects: { ...sim.rules },
             endless: {
               mode,
               roundIndex: matchIndex,
@@ -833,7 +733,8 @@ export const islandPlugin: Plugin = {
               profiles: Array.from(endlessProfiles.values()).map((p) => ({
                 actorId: p.actorId,
                 endlessRound: p.endlessRound,
-                lossBurden: p.lossBurden,
+                lossBurden: 0,
+                grudge: p.grudge ? { ...p.grudge, grudgeScoreByActor: { ...p.grudge.grudgeScoreByActor } } : null,
                 rulesCount: p.rules.length,
                 relic: p.carryRelic ? { ...p.carryRelic } : null,
               })),
@@ -932,28 +833,19 @@ export const islandPlugin: Plugin = {
                     }
                   } else if (endlessPhase === 'rule-pick') {
                     if (kb.justPressedCode('KeyA') || kb.justPressedCode('ArrowLeft')) {
-                      ruleStatIndex = (ruleStatIndex + 4) % 5;
+                      ruleStatIndex = (ruleStatIndex + RULE_KINDS.length - 1) % RULE_KINDS.length;
                     }
                     if (kb.justPressedCode('KeyD') || kb.justPressedCode('ArrowRight')) {
-                      ruleStatIndex = (ruleStatIndex + 1) % 5;
-                    }
-                    if (kb.justPressedCode('KeyW') || kb.justPressedCode('ArrowUp')) {
-                      ruleFactorIndex = (ruleFactorIndex + 3) % 4;
-                    }
-                    if (kb.justPressedCode('KeyS') || kb.justPressedCode('ArrowDown')) {
-                      ruleFactorIndex = (ruleFactorIndex + 1) % 4;
+                      ruleStatIndex = (ruleStatIndex + 1) % RULE_KINDS.length;
                     }
                     if (kb.justPressedCode('Space')) {
                       playerPendingRule = {
                         ownerId: 0,
-                        stat: STAT_TARGETS[ruleStatIndex] ?? 'damage',
-                        factor: STAT_FACTORS[ruleFactorIndex] ?? 1.2,
+                        kind: RULE_KINDS[ruleStatIndex]!,
                         chosenAtRound: matchIndex,
                       };
                       aiPendingDecisions.clear();
-                      for (let i = 1; i < 10; i++) {
-                        aiPendingDecisions.set(i, aiDecideNextRound(i, matchIndex));
-                      }
+
                       endlessPhase = 'relic-pick';
                       persistSave();
                     }
@@ -1074,7 +966,8 @@ export const islandPlugin: Plugin = {
                 kills: p.kills,
                 partnerName: partner?.name ?? null,
                 partnerDistance: partnerDist !== null ? Number(partnerDist.toFixed(1)) : null,
-                isWarning: (partnerDist ?? 0) >= TEAM_WARNING_DISTANCE,
+                isWarning: (partnerDist ?? 0) >= TEAM_WARNING_DISTANCE * sim.rules.tetherModifier,
+                breakDistance: TEAM_BREAK_DISTANCE * sim.rules.tetherModifier,
                 playerLevel: p.level,
                 playerXp: p.xp,
                 playerXpNext: p.xpNext,
@@ -1093,9 +986,10 @@ export const islandPlugin: Plugin = {
                 roundIndex: matchIndex,
                 isChallengeTargetReached: sessionChallengeElapsed >= 900,
                 eliminatedCount: sim.eliminatedCount,
-                survivalDamageMultiplier: Number(survivalDamageMultiplier(sim.eliminatedCount).toFixed(2)),
+                survivalDamageMultiplier: Number(survivalDamageMultiplier(sim.eliminatedCount, sim.rules.bloodFeudBase).toFixed(2)),
                 shrinkStage: sim.shrinkStage,
                 safeRadius: Number(currentSafeRadius(sim).toFixed(3)),
+                nextShrinkIn: Math.max(0, (SHRINK_THRESHOLD_SECONDS[sim.shrinkStage + 1] ?? sim.elapsed) - sim.elapsed),
                 raid: {
                   phase: sim.raidPhase,
                   bossRound: sim.bossRound,
@@ -1129,7 +1023,6 @@ export const islandPlugin: Plugin = {
                   ruleAnnouncement,
                   upgradeHighlight,
                   ruleStatIndex,
-                  ruleFactorIndex,
                   relicHighlight,
                   ownedRelics: getPlayerOwnedRelics(),
                   playerRelic: endlessProfiles.get(0)?.carryRelic ?? null,

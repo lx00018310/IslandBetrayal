@@ -3,15 +3,18 @@
 // 引擎域通过消息通道交接，不在纯模拟层直接调用 DOM/Storage API。
 
 import {
-  MAX_LOSS_BURDEN,
   STAT_FACTORS,
   STAT_TARGETS,
+  RULE_KINDS,
+  createEmptyGrudgeRecord,
   type CarryRelic,
   type EndlessProfile,
   type GlobalRule,
   type RelicAffix,
   type StatFactor,
   type StatTarget,
+  type GlobalRuleKind,
+  type GrudgeRecord,
 } from './stats.ts';
 
 export const ENDLESS_SAVE_KEY = 'island.endless.save.v1';
@@ -61,15 +64,37 @@ function sanitizeRule(raw: unknown): GlobalRule | null {
   if (!raw || typeof raw !== 'object') return null;
   const r = raw as Record<string, unknown>;
   if (!Number.isInteger(r.ownerId) || (r.ownerId as number) < 0 || (r.ownerId as number) > 9) return null;
-  if (!isStatTarget(r.stat)) return null;
-  if (!isStatFactor(r.factor)) return null;
   if (!Number.isInteger(r.chosenAtRound) || (r.chosenAtRound as number) < 1) return null;
+  if (typeof r.kind === 'string' && RULE_KINDS.includes(r.kind as GlobalRuleKind)) {
+    const revenge = Number.isInteger(r.revengeTargetId) && (r.revengeTargetId as number) >= 0 && (r.revengeTargetId as number) <= 9;
+    return { ownerId: r.ownerId as number, kind: r.kind as GlobalRuleKind,
+      chosenAtRound: r.chosenAtRound as number, ...(revenge ? { revengeTargetId: r.revengeTargetId as number } : {}) };
+  }
+  if (!isStatTarget(r.stat) || !isStatFactor(r.factor)) return null;
   return {
     ownerId: r.ownerId as number,
     stat: r.stat,
     factor: r.factor,
     chosenAtRound: r.chosenAtRound as number,
   };
+}
+
+function sanitizeGrudge(raw: unknown, ownerId: number): GrudgeRecord {
+  const result = createEmptyGrudgeRecord();
+  if (!raw || typeof raw !== 'object') return result; // 旧 v1 档案尚无记仇字段。
+  const r = raw as Record<string, unknown>;
+  const validId = (id: unknown): id is number => Number.isInteger(id) && (id as number) >= 0 && (id as number) <= 9 && id !== ownerId;
+  result.lastBetrayedById = validId(r.lastBetrayedById) ? r.lastBetrayedById : null;
+  result.lastKilledById = validId(r.lastKilledById) ? r.lastKilledById : null;
+  if (r.grudgeScoreByActor && typeof r.grudgeScoreByActor === 'object') {
+    for (const [key, score] of Object.entries(r.grudgeScoreByActor)) {
+      const id = Number(key);
+      if (validId(id) && typeof score === 'number' && Number.isFinite(score)) {
+        result.grudgeScoreByActor[id] = Math.max(0, Math.min(100, score));
+      }
+    }
+  }
+  return result;
 }
 
 function sanitizeRelic(raw: unknown): CarryRelic | null {
@@ -92,15 +117,12 @@ function sanitizeProfile(raw: unknown): EndlessProfile | null {
   if (!Number.isInteger(actorId) || actorId < 0 || actorId > 9) return null;
   const endlessRound = Number(r.endlessRound);
   if (!Number.isInteger(endlessRound) || endlessRound < 1) return null;
-  const lossBurdenRaw = Number(r.lossBurden ?? 0);
-  const lossBurden = Number.isFinite(lossBurdenRaw)
-    ? Math.max(0, Math.min(MAX_LOSS_BURDEN, Math.round(lossBurdenRaw)))
-    : 0;
+  const lossBurden = 0;
   const rules = Array.isArray(r.rules)
     ? r.rules.map(sanitizeRule).filter((x): x is GlobalRule => x !== null)
     : [];
   const carryRelic = sanitizeRelic(r.carryRelic);
-  return { actorId, endlessRound, rules, carryRelic, lossBurden };
+  return { actorId, endlessRound, rules, carryRelic, lossBurden, grudge: sanitizeGrudge(r.grudge, actorId) };
 }
 
 /** 序列化为可写入 localStorage 的 JSON 字符串 */

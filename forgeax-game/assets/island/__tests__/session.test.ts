@@ -17,6 +17,7 @@ afterEach(() => vi.clearAllMocks());
 async function session() {
   const ctx = new Context();
   const port = new EventTarget();
+  const writes: any[] = [];
   const pressed = new Set<string>();
   let step!: () => void;
   let read!: () => any;
@@ -35,7 +36,7 @@ async function session() {
     instantiate: () => ({ unwrap: () => ({}) }),
   } as never);
   ctx.provide('gameHost', {
-    port: Object.assign(port, { postMessage() {} }),
+    port: Object.assign(port, { postMessage(value: unknown) { writes.push(value); } }),
     gameProjection: { registerRead: (projection: { read: () => unknown }) => { read = projection.read; return () => {}; } },
   } as never);
   await ctx.plugin(islandPlugin);
@@ -44,6 +45,7 @@ async function session() {
   tick(); // 初始化玩家输入与单局模拟
   return {
     sim, read, tick,
+    saved: () => writes.filter(w => w.channel === 'island/save-write').at(-1)?.payload,
     press(code: string) { pressed.add(code); tick(); },
     send(data: Record<string, unknown>) {
       port.dispatchEvent(new MessageEvent('message', { data: { channel: ISLAND_CONTROL_CHANNEL, ...data } }));
@@ -65,7 +67,7 @@ describe('单局生命周期与无限挑战消息边界', () => {
     const s = await session();
     try {
       s.send({ kind: 'relic_select', relicKind: 'knife', relicLevel: 3 });
-      s.send({ kind: 'rule_select', stat: 'damage', factor: 1.2 });
+      s.send({ kind: 'rule_select', ruleKind: 'bounty_greed' });
       expect(s.read().endless.roundIndex).toBe(1);
       expect(s.read().endless.phase).toBe('playing');
       s.sim.actors[0]!.weaponArrow = 2;
@@ -75,7 +77,7 @@ describe('单局生命周期与无限挑战消息边界', () => {
       s.send({ kind: 'next_round' });
       s.send({ kind: 'rule_select', stat: 'damage', factor: 3 });
       expect(s.read().endless.phase).toBe('rule-pick');
-      s.send({ kind: 'rule_select', stat: 'damage', factor: 1.2 });
+      s.send({ kind: 'rule_select', ruleKind: 'bounty_greed' });
       s.send({ kind: 'relic_select', relicKind: 'knife', relicLevel: 3 });
       expect(s.read().endless.phase).toBe('relic-pick');
       s.send({ kind: 'relic_select', relicKind: 'arrow', relicLevel: 3 });
@@ -120,7 +122,7 @@ describe('单局生命周期与无限挑战消息边界', () => {
     } finally { await s.dispose(); }
   });
 
-  it('无限模式失败 +1 层、胜利 -1 层，且 10 人分别独立结算', async () => {
+  it('无限模式无失败负担，结算保持幂等', async () => {
     const s = await session();
     try {
       // 第 1 局：玩家 0 号获胜
@@ -130,20 +132,20 @@ describe('单局生命周期与无限挑战消息边界', () => {
       const profiles = s.read().endless.profiles as Array<{ actorId: number; lossBurden: number }>;
       expect(profiles.find((p) => p.actorId === 0)!.lossBurden).toBe(0);
       for (let i = 1; i < 10; i++) {
-        expect(profiles.find((p) => p.actorId === i)!.lossBurden).toBe(1);
+        expect(profiles.find((p) => p.actorId === i)!.lossBurden).toBe(0);
       }
 
       // 第 2 局：玩家 0 号落败，1 号获胜
       s.send({ kind: 'next_round' });
-      s.send({ kind: 'rule_select', stat: 'damage', factor: 1.2 });
+      s.send({ kind: 'rule_select', ruleKind: 'bounty_greed' });
       s.send({ kind: 'relic_select', relicKind: null });
       s.sim.winner = s.sim.actors[1]!;
       s.sim.gameOver = true;
       s.tick();
       const p2 = s.read().endless.profiles as Array<{ actorId: number; lossBurden: number }>;
-      expect(p2.find((p) => p.actorId === 0)!.lossBurden).toBe(1);
+      expect(p2.find((p) => p.actorId === 0)!.lossBurden).toBe(0);
       expect(p2.find((p) => p.actorId === 1)!.lossBurden).toBe(0);
-      expect(p2.find((p) => p.actorId === 2)!.lossBurden).toBe(2);
+      expect(p2.find((p) => p.actorId === 2)!.lossBurden).toBe(0);
     } finally { await s.dispose(); }
   });
 
@@ -155,23 +157,20 @@ describe('单局生命周期与无限挑战消息边界', () => {
       s.sim.gameOver = true;
       s.tick();
       s.send({ kind: 'next_round' });
-      s.send({ kind: 'rule_select', stat: 'maxHp', factor: 1.1 });
+      s.send({ kind: 'rule_select', ruleKind: 'tether_long' });
       s.send({ kind: 'relic_select', relicKind: null });
       expect(s.read().endless.roundIndex).toBe(2);
 
       // 构造存档并模拟“刷新后恢复”
-      const profiles = s.read().endless.profiles as Array<Record<string, unknown>>;
-      const save = JSON.stringify({
-        version: 1,
-        savedAt: '2026-11-06T00:00:00.000Z',
-        mode: 'endless',
-        roundIndex: 4,
-        completedRounds: 3,
-        challengeElapsed: 500,
-        lastSettledRound: 3,
-        profiles,
-        phase: 'round-start',
-      });
+      const save = JSON.stringify({ ...JSON.parse(s.saved()), roundIndex: 4, completedRounds: 3,
+        challengeElapsed: 500, lastSettledRound: 3 });
+      const restored = await session();
+      try {
+        restored.send({ kind: 'reset', save });
+        expect(restored.read().endless.roundIndex).toBe(4);
+        expect(restored.read().session.roundsCompleted).toBe(3);
+        expect(restored.read().endless.rulesCount).toBe(10);
+      } finally { await restored.dispose(); }
       s.send({ kind: 'clear_save' });
       expect(s.read().endless.roundIndex).toBe(1);
     } finally { await s.dispose(); }

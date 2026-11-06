@@ -40,10 +40,10 @@ describe('无限模式持久存档（序列化 / 校验 / 损坏处理）', () =
 
     const p0 = parsed.profiles.find((x) => x.actorId === 0)!;
     expect(p0.endlessRound).toBe(5);
-    expect(p0.lossBurden).toBe(3);
+    expect(p0.lossBurden).toBe(0);
     expect(p0.rules).toHaveLength(2);
     expect(p0.carryRelic).toEqual({ kind: 'knife', level: 3, affix: 'knifeArea' });
-    expect(parsed.profiles.find((x) => x.actorId === 1)!.lossBurden).toBe(20);
+    expect(parsed.profiles.find((x) => x.actorId === 1)!.lossBurden).toBe(0);
   });
 
   it('拒绝损坏 / 缺角色 / 版本错误的存档（不偷偷覆盖）', () => {
@@ -85,7 +85,7 @@ describe('无限模式持久存档（序列化 / 校验 / 损坏处理）', () =
     expect(parsed.profiles[0]!.carryRelic).toBeNull();
   });
 
-  it('失利负担被夹在 0..20（用户指定的独立规则上限）', () => {
+  it('旧存档的失利负担读入后归零', () => {
     const p = profiles();
     const raw = serializeEndlessSave({
       roundIndex: 1,
@@ -99,7 +99,7 @@ describe('无限模式持久存档（序列化 / 校验 / 损坏处理）', () =
     tampered.profiles[0].lossBurden = 999;
     tampered.profiles[1].lossBurden = -5;
     const parsed = parseEndlessSave(JSON.stringify(tampered))!;
-    expect(parsed.profiles[0]!.lossBurden).toBe(20);
+    expect(parsed.profiles[0]!.lossBurden).toBe(0);
     expect(parsed.profiles[1]!.lossBurden).toBe(0);
   });
 

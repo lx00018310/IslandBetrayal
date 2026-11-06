@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   activeCovers,
+  resolveHostileHit,
   calculateAttackDamage,
   chestOf,
   createInitialSimulation,
@@ -77,7 +78,7 @@ describe('两场 Boss / 死亡增伤 / 逐分钟缩圈与掩体 / 升级队列 /
     owner.y = 10;
     victim.x = 11;
     victim.y = 10;
-    // 角色直接伤害只在最终混战生效（终局前为掠夺宝箱主题）
+    // 选择终局完整伤害，隔离死亡增伤乘区的计算。
     sim.finalPhase = true;
     // 发射时基础伤害快照（不含死亡增伤）
     const base = Math.round(calculateAttackDamage(sim, owner, false) * 1.3);
@@ -101,29 +102,18 @@ describe('两场 Boss / 死亡增伤 / 逐分钟缩圈与掩体 / 升级队列 /
     expect(dealt).toBeGreaterThanOrEqual(Math.round(base * 1.44) - 1);
   });
 
-  it('2B: 终局前不直接扣角色 HP（主题为掠夺宝箱，保证能撑到两场团战）', () => {
-    const sim = createInitialSimulation();
-    sim.monsters.length = 0;
-    const attacker = sim.actors[1]!;
-    const victim = sim.actors[2]!;
-    attacker.x = 10;
-    attacker.y = 10;
-    victim.x = 10.8;
-    victim.y = 10;
-    attacker.team = -1;
-    victim.team = -1;
-    attacker.attackCd = 0;
-    victim.attackCd = 999;
-    sim.elapsed = 100;
-    const hpBefore = victim.hp;
-    stepSimulation(sim, 0.1, { moveX: 0, moveY: 0 });
-    expect(victim.hp).toBe(hpBefore);
-
-    // 终局混战恢复完整角色伤害
-    sim.finalPhase = true;
-    attacker.attackCd = 0;
-    stepSimulation(sim, 0.1, { moveX: 0, moveY: 0 });
-    expect(victim.hp).toBeLessThan(hpBefore);
+  it('Boss 在场仍可伤害敌人、队友免伤且共享箱优先承伤', () => {
+    const sim = createInitialSimulation({ rng: () => 0.99 });
+    sim.elapsed = 130;
+    sim.raidPhase = 'fight';
+    const attacker = sim.actors[1]!, victim = sim.actors[2]!;
+    const before = victim.hp;
+    resolveHostileHit(sim, victim, 10, attacker);
+    expect(victim.hp).toBe(before - 2);
+    attacker.x = 10; attacker.y = 10; victim.x = 11; victim.y = 10;
+    formTeam(sim, attacker, victim);
+    resolveHostileHit(sim, victim, 10, attacker);
+    expect(victim.hp).toBe(before - 2);
   });
 
   // -------------------------------------------------------------------------
