@@ -1,24 +1,57 @@
 // 《荒岛分赃》受管艺术资产包
-// 统一低对比自然平整草地、3D 体素角色、3 类怪物、Boss 巨兽、三武器（飞刀/箭矢/炸弹）、道具、光照与材质
+// 热带潮玩微缩体素：阶梯式海岛、Tibo 小狗、寄居宝箱蟹 Boss、青苔岩块掩体、
+// 共享宝箱、三武器（飞刀/箭矢/炸弹）、怪潮、掉落金砖、光照与材质。
+// 体素几何来自 voxel-art-data.ts（数据）+ voxel-builder.ts（隐藏面剔除与合并）。
 
-import { createBoxGeometry, createPlaneGeometry, createTorusGeometry, createCylinderGeometry, createSphereGeometry, withVertexColors } from '@forgeax/engine/geometry';
+import {
+  createBoxGeometry,
+  createCylinderGeometry,
+  createPlaneGeometry,
+  createTorusGeometry,
+} from '@forgeax/engine/geometry';
 import { definePack } from '@forgeax/engine/pack/source';
 import {
   Camera,
   DirectionalLight,
   Materials,
-  MeshFilter,
-  MeshRenderer,
   orthographic,
   Skylight,
 } from '@forgeax/engine/render';
 import { SPRITE_PREMULTIPLIED_ALPHA_BLEND } from '@forgeax/engine/render/authoring';
 import { ChildOf } from '@forgeax/engine/scene';
-import type { AssetGuid, MeshAsset, SceneAsset, SceneEntity } from '@forgeax/engine/types';
+import type { AssetError, AssetGuid, MeshAsset, Result, SceneAsset, SceneEntity } from '@forgeax/engine/types';
 import { ok, srgbChannelToLinear } from '@forgeax/engine/types';
 import { assetGuid, guidText, PACKAGE_IDS } from '../shared/asset-refs.ts';
 import { VISUAL_LAYERS } from './pixel-art-data.ts';
-import { GRID_SIZE, hash, PLAYER_COLORS } from './simulation.ts';
+import { GRID_SIZE, hash } from './simulation.ts';
+import {
+  bushProp,
+  coverRock,
+  crystalProp,
+  GROUND_BAND_COLORS,
+  groundTile,
+  lootBar,
+  mimicClaw,
+  mimicEyes,
+  mimicShell,
+  monsterBody,
+  monsterEyes,
+  rockProp,
+  teamChestBody,
+  teamChestCrack,
+  teamChestLid,
+  teamChestLock,
+  tiboBody,
+  tiboCollar,
+  tiboEar,
+  tiboHead,
+  tiboLegs,
+  tiboSack,
+  tiboTail,
+  weaponArrow,
+  weaponBomb,
+  weaponKnife,
+} from './voxel-art-data.ts';
 
 function withMaterial(mesh: MeshAsset, material: AssetGuid, sourceKey: string): MeshAsset {
   return {
@@ -33,113 +66,114 @@ function hexToRgb(hex: string): [number, number, number] {
   return [(num >> 16) & 255, (num >> 8) & 255, num & 255];
 }
 
-export function withVerticalGradient(mesh: MeshAsset): MeshAsset {
-  const position = mesh.attributes.position as Float32Array;
-  let low = Infinity, high = -Infinity;
-  for (let i = 1; i < position.length; i += 3) { low = Math.min(low, position[i]!); high = Math.max(high, position[i]!); }
-  const color = new Float32Array(position.length / 3 * 4);
-  for (let i = 0; i < position.length / 3; i++) {
-    const h = (position[i * 3 + 1]! - low) / Math.max(0.001, high - low);
-    const value = 0.72 + 0.46 * h;
-    color.set([value, value, value, 1], i * 4);
-  }
-  return withVertexColors(mesh, color).unwrap();
+function linearColor(hex: string, alpha = 1): [number, number, number, number] {
+  const [r, g, b] = hexToRgb(hex);
+  return [
+    srgbChannelToLinear(r / 255),
+    srgbChannelToLinear(g / 255),
+    srgbChannelToLinear(b / 255),
+    alpha,
+  ];
 }
+
+/** 体素部件枢轴（世界单位），与 voxel-art-data.ts 中的体素枢轴一一对应。 */
+const TIBO_PIVOT = {
+  head: [0, 0.7, 0] as const,
+  earLeft: [-0.4, 1.2, 0] as const,
+  earRight: [0.4, 1.2, 0] as const,
+  legs: [0, 0.3, 0] as const,
+  tail: [0, 0.6, -0.2] as const,
+  torsoTop: [0, 0.7, 0] as const,
+};
+
+const BOSS_PIVOT = {
+  clawLeft: [-0.7, 0.6, 0.3] as const,
+  clawRight: [0.7, 0.6, 0.3] as const,
+};
+
+/** 需要构建的体素网格（源键 → 构建函数），任一失败即整体失败。 */
+type MeshFactory = () => Result<MeshAsset, AssetError>;
 
 export default definePack({
   schemaVersion: '2.0.0',
   packageId: PACKAGE_IDS.islandArt,
   name: 'Island Art',
   build: () => {
-    // 1. 基础几何网格
-    const tileBox = createBoxGeometry(1.0, 0.22, 1.0);
-    if (!tileBox.ok) return tileBox;
-    const oceanBox = createBoxGeometry(60, 0.5, 60);
-    if (!oceanBox.ok) return oceanBox;
+    // 1. 非体素的辅助几何：阴影、脚底环、方向箭头、预警环
     const shadowQuad = createPlaneGeometry(1.25, 0.75);
     if (!shadowQuad.ok) return shadowQuad;
-
-    // 体素角色部件 (Tier 2: 二头身大头剪影，宽高比 1.00:1.00:1.35，头部占 50%)
-    const charHead = createBoxGeometry(0.62, 0.62, 0.58);        // 放大头部至 50% 高度
-    if (!charHead.ok) return charHead;
-    const charHair = createBoxGeometry(0.66, 0.16, 0.62);        // 宽檐帽/装饰顶部
-    if (!charHair.ok) return charHair;
-    const charEyes = createBoxGeometry(0.36, 0.12, 0.14);
-    if (!charEyes.ok) return charEyes;
-    const charBody = createBoxGeometry(0.54, 0.38, 0.38);        // 缩小躯干占比
-    if (!charBody.ok) return charBody;
-    const charBelt = createBoxGeometry(0.56, 0.10, 0.40);
-    if (!charBelt.ok) return charBelt;
-    const charArms = createBoxGeometry(0.68, 0.36, 0.26);
-    if (!charArms.ok) return charArms;
-    const charLegs = createBoxGeometry(0.44, 0.34, 0.30);        // 压低腿长
-    if (!charLegs.ok) return charLegs;
-    const charShoes = createBoxGeometry(0.46, 0.10, 0.34);
-    if (!charShoes.ok) return charShoes;
-    const playerMarker = createBoxGeometry(0.24, 0.24, 0.24);
-    if (!playerMarker.ok) return playerMarker;
-
-    const footRing = createTorusGeometry(0.58, 0.035, 4, 24);
-    if (!footRing.ok) return footRing;
     const monsterShadow = createCylinderGeometry(0.52, 0.52, 0.015, 16);
     if (!monsterShadow.ok) return monsterShadow;
-    const coverAo = createCylinderGeometry(1, 1, 0.025, 8);
-    if (!coverAo.ok) return coverAo;
+    const bossShadow = createPlaneGeometry(2.8, 2.2);
+    if (!bossShadow.ok) return bossShadow;
+    const footRing = createTorusGeometry(0.58, 0.035, 4, 24);
+    if (!footRing.ok) return footRing;
     const directionArrow = createCylinderGeometry(0, 0.12, 0.3, 3);
     if (!directionArrow.ok) return directionArrow;
-
-    // 怪物部件 (Tier 1: 矮扁匍匐型，宽高比 1.25:1.25:0.60，高度仅为角色 60%)
-    const monsterBody = createBoxGeometry(0.9, 0.4, 0.9);     // 加宽底座、压扁主体
-    if (!monsterBody.ok) return monsterBody;
-    const monsterEyes = createBoxGeometry(0.48, 0.14, 0.16);     // 亮核视觉焦点
-    if (!monsterEyes.ok) return monsterEyes;
-    const monsterHorns = createBoxGeometry(0.54, 0.20, 0.26);    // 顶部尖角
-    if (!monsterHorns.ok) return monsterHorns;
-
-    // Boss 部件 (Tier 4: 巨型异形，宽高比 2.40:2.20:2.80，带横向双角)
-    const bossBody = createBoxGeometry(1.6, 1.9, 1.7);           // 巨大厚重主体
-    if (!bossBody.ok) return bossBody;
-    const bossEyes = createBoxGeometry(1.1, 0.28, 0.32);         // 炽红核心眼
-    if (!bossEyes.ok) return bossEyes;
-    const bossHorns = createCylinderGeometry(0, 0.32, 1.1, 4);        // 夸张横向双角
-    if (!bossHorns.ok) return bossHorns;
-    const bossShadow = createPlaneGeometry(2.8, 2.2);            // 扩大 Boss 阴影
-    if (!bossShadow.ok) return bossShadow;
-
-    // 宝箱部件
-    const chestBody = createBoxGeometry(0.82, 0.54, 0.58);
-    if (!chestBody.ok) return chestBody;
-    const chestLid = createBoxGeometry(0.86, 0.20, 0.62);
-    if (!chestLid.ok) return chestLid;
-    const chestLock = createBoxGeometry(0.18, 0.24, 0.16);
-    if (!chestLock.ok) return chestLock;
-
-    // 武器部件 (反写实放大 1.6~2.0 倍)
-    const knifeMesh = createTorusGeometry(0.32, 0.065, 3, 10);        // 飞刀放大 1.8x，宽刃月牙
-    if (!knifeMesh.ok) return knifeMesh;
-    const arrowMesh = createCylinderGeometry(0, 0.13, 1.22, 4);        // 箭矢放大 1.7x，流线型棱锥
-    if (!arrowMesh.ok) return arrowMesh;
-    const bombMesh = createSphereGeometry(0.34, 8, 6);         // 炸弹放大 1.8x，球体化
-    if (!bombMesh.ok) return bombMesh;
-    const blastMesh = createTorusGeometry(1, 0.035, 4, 32);              // 冲击波环扩大
-    if (!blastMesh.ok) return blastMesh;
-
-    // 战利品与场景道具部件
-    const cubeMesh = createBoxGeometry(0.32, 0.32, 0.32);
-    if (!cubeMesh.ok) return cubeMesh;
-    const xpCrystalMesh = createBoxGeometry(0.24, 0.32, 0.24);
-    if (!xpCrystalMesh.ok) return xpCrystalMesh;
+    const coverAo = createCylinderGeometry(1, 1, 0.025, 8);
+    if (!coverAo.ok) return coverAo;
+    const blastRing = createTorusGeometry(1, 0.035, 4, 32);
+    if (!blastRing.ok) return blastRing;
+    // 缩圈边界半径可达 ~10 世界单位，若用同管径的环会被同步放大成一条粗带，
+    // 遮住地面与单位。单独用极细管径的环，保证放大后仍是细线。
+    const boundaryRing = createTorusGeometry(1, 0.0045, 4, 48);
+    if (!boundaryRing.ok) return boundaryRing;
+    const telegraphFill = createCylinderGeometry(1, 1, 0.02, 40);
+    if (!telegraphFill.ok) return telegraphFill;
+    const playerMarker = createBoxGeometry(0.24, 0.24, 0.24);
+    if (!playerMarker.ok) return playerMarker;
     const teamBeamMesh = createBoxGeometry(0.12, 0.12, 1.0);
     if (!teamBeamMesh.ok) return teamBeamMesh;
-    const bushMesh = createBoxGeometry(0.85, 0.70, 0.85);
-    if (!bushMesh.ok) return bushMesh;
-    // 中央岩石掩体 (Tier 3: 厚重梯形台柱，宽高比 2.60:2.60:1.50)
-    const rockMesh = createCylinderGeometry(0.65, 1, 2, 4);         // 加宽底座，顶部收窄梯形
-    if (!rockMesh.ok) return rockMesh;
-    const crystalMesh = createBoxGeometry(0.38, 1.25, 0.38);
-    if (!crystalMesh.ok) return crystalMesh;
+    const oceanBox = createBoxGeometry(60, 0.5, 60);
+    if (!oceanBox.ok) return oceanBox;
+    const debrisCube = createBoxGeometry(0.14, 0.14, 0.14);
+    if (!debrisCube.ok) return debrisCube;
+    const xpCrystalMesh = createBoxGeometry(0.24, 0.32, 0.24);
+    if (!xpCrystalMesh.ok) return xpCrystalMesh;
 
-    // 2. 角色服装材质
+    // 2. 体素网格（每个部件保持独立，动画绕真实关节枢轴）
+    const factories: Record<string, MeshFactory> = {
+      'mesh/char-body': tiboBody,
+      'mesh/char-head': tiboHead,
+      'mesh/char-ear-left': () => tiboEar(-1),
+      'mesh/char-ear-right': () => tiboEar(1),
+      'mesh/char-legs-front': () => tiboLegs(true),
+      'mesh/char-legs-back': () => tiboLegs(false),
+      'mesh/char-tail': tiboTail,
+      'mesh/char-sack': tiboSack,
+      'mesh/char-collar': tiboCollar,
+      'mesh/boss-shell': mimicShell,
+      'mesh/boss-claw': () => mimicClaw(-1),
+      'mesh/boss-claw-right': () => mimicClaw(1),
+      'mesh/boss-eyes': mimicEyes,
+      'mesh/cover-rock': coverRock,
+      'mesh/chest-body': teamChestBody,
+      'mesh/chest-lid': teamChestLid,
+      'mesh/chest-lock': teamChestLock,
+      'mesh/chest-crack': teamChestCrack,
+      'mesh/loot-bar': lootBar,
+      'mesh/weapon-knife': weaponKnife,
+      'mesh/weapon-arrow': weaponArrow,
+      'mesh/weapon-bomb': weaponBomb,
+      'mesh/monster-body': monsterBody,
+      'mesh/monster-eyes': monsterEyes,
+      'mesh/bush': bushProp,
+      'mesh/rock': rockProp,
+      'mesh/crystal': crystalProp,
+    };
+    // 阶梯地块按档位烘焙表层色差（6 档，与模拟层 band 一致）
+    for (let band = 0; band < GROUND_BAND_COLORS.length; band++) {
+      factories[`mesh/tile-${band}`] = () => groundTile(band);
+    }
+
+    const meshes: Record<string, MeshAsset> = {};
+    for (const [key, factory] of Object.entries(factories)) {
+      const built = factory();
+      if (!built.ok) return built;
+      meshes[key] = built.value;
+    }
+
+    // 3. 角色服装材质（躯干身份色；体素顶点色只提供明暗层次）
     const charMaterials: Record<string, unknown> = {};
     for (let i = 0; i < 10; i++) {
       const colorHex = i === 0 ? '#10B981' : [VISUAL_LAYERS.aiFriendlyBlue, VISUAL_LAYERS.aiGreedyGold, VISUAL_LAYERS.aiRaiderPurple][i % 3]!;
@@ -151,13 +185,15 @@ export default definePack({
       });
     }
 
-    // 3. 构建场景
+    // 4. 场景装配
     const SPRITE_QUAT = [-0.4617486, 0, 0, 0.8870108] as const;
     const SHADOW_QUAT = [-0.7071068, 0, 0, 0.7071068] as const;
     const center = (GRID_SIZE - 1) / 2;
     const entities: Record<string, SceneEntity> = {};
+    const meshRef = (key: string) => guidText(assetGuid(PACKAGE_IDS.islandArt, key));
+    const matRef = (key: string) => guidText(assetGuid(PACKAGE_IDS.islandArt, key));
 
-    // 主相机
+    // 主相机（保持原生正交投影与当前朝向）
     entities['camera'] = {
       components: {
         Name: { value: 'Main Camera' },
@@ -172,7 +208,7 @@ export default definePack({
       },
     };
 
-    // 阳光与天光
+    // 阳光与天光：顶面亮、侧面有区分
     entities['sun'] = {
       components: {
         Name: { value: 'Directional Sunlight' },
@@ -187,24 +223,21 @@ export default definePack({
     entities['skylight'] = {
       components: {
         Name: { value: 'Skylight' },
-        Skylight: {
-          color: [0.45, 0.60, 0.75],
-          intensity: 1.15,
-        },
+        Skylight: { color: [0.45, 0.60, 0.75], intensity: 1.15 },
       },
     };
 
-    // 岛下虚空水面
+    // 岛下水面（顶面 -0.2，正好接住阶梯地块的岩层底面）
     entities['ocean'] = {
       components: {
-        Name: { value: 'Ocean Floor' },
-        Transform: { pos: [center, -0.65, center] },
-        MeshFilter: { assetHandle: guidText(assetGuid(PACKAGE_IDS.islandArt, 'mesh/ocean')) },
-        MeshRenderer: { materials: [guidText(assetGuid(PACKAGE_IDS.islandArt, 'material/ocean'))] },
+        Name: { value: 'Ocean' },
+        Transform: { pos: [center, -0.45, center] },
+        MeshFilter: { assetHandle: meshRef('mesh/ocean') },
+        MeshRenderer: { materials: [matRef('material/ocean')] },
       },
     };
 
-    // 529 块地面地块
+    // 529 块阶梯地块：顶面严格 y = 0，随模拟层 falling / gone 一起下沉与隐藏
     for (let gy = 0; gy < GRID_SIZE; gy++) {
       for (let gx = 0; gx < GRID_SIZE; gx++) {
         const dx = (gx - center) / (center * 1.06);
@@ -214,14 +247,13 @@ export default definePack({
         const r = radial + wobble;
         const isLand = r < 0.98;
         const n = hash(gx, gy, 19);
-        let matKey = 'material/ocean';
+        let band = 0;
         let posY = -999;
         let decor = 'none';
 
         if (isLand) {
-          posY = -0.11;
-          const band = r < 0.7 ? 0 : Math.min(5, 1 + Math.floor((r - 0.7) / 0.05));
-          matKey = `material/ground-band-${band}`;
+          posY = 0;
+          band = r < 0.7 ? 0 : Math.min(5, 1 + Math.floor((r - 0.7) / 0.05));
           if (n > 0.985 && r < 0.78) decor = 'bush';
         }
 
@@ -229,41 +261,26 @@ export default definePack({
           components: {
             Name: { value: `Tile ${gx},${gy}` },
             Transform: { pos: [gx, posY, gy] },
-            MeshFilter: { assetHandle: guidText(assetGuid(PACKAGE_IDS.islandArt, 'mesh/tile')) },
-            MeshRenderer: { materials: [guidText(assetGuid(PACKAGE_IDS.islandArt, matKey))] },
+            MeshFilter: { assetHandle: meshRef(`mesh/tile-${band}`) },
+            MeshRenderer: { materials: [matRef('material/ground-voxel')] },
           },
         };
 
         if (decor !== 'none') {
-          const propMesh =
-            decor === 'bush'
-              ? 'mesh/bush'
-              : decor === 'rock'
-                ? 'mesh/rock'
-                : 'mesh/crystal';
-          const propMat =
-            decor === 'bush'
-              ? 'material/bush'
-              : decor === 'rock'
-                ? 'material/rock'
-                : 'material/crystal';
-          const propH = decor === 'crystal' ? 0.62 : decor === 'bush' ? 0.35 : 0.30;
-
+          const propKey = decor === 'bush' ? 'mesh/bush' : decor === 'rock' ? 'mesh/rock' : 'mesh/crystal';
           entities[`prop-${gx}-${gy}`] = {
             components: {
               Name: { value: `Prop ${decor} ${gx},${gy}` },
-              Transform: { pos: [gx, propH, gy] },
-              MeshFilter: {
-                assetHandle: guidText(assetGuid(PACKAGE_IDS.islandArt, propMesh)),
-              },
-              MeshRenderer: { materials: [guidText(assetGuid(PACKAGE_IDS.islandArt, propMat))] },
+              Transform: { pos: [gx, 0, gy] },
+              MeshFilter: { assetHandle: meshRef(propKey) },
+              MeshRenderer: { materials: [matRef(`material/${decor}`)] },
             },
           };
         }
       }
     }
 
-    // 10 名体素角色
+    // 10 名体素角色（Tibo 结构，躯干使用身份材质）
     for (let i = 0; i < 10; i++) {
       const a = 0.42 + (i / 10) * Math.PI * 2;
       const rad = 6.0 + (i % 3) * 1.2;
@@ -277,34 +294,38 @@ export default definePack({
             pos: [initX + 0.16, 0.005, initZ + 0.22],
             quat: [SHADOW_QUAT[0], SHADOW_QUAT[1], SHADOW_QUAT[2], SHADOW_QUAT[3]],
           },
-          MeshFilter: {
-            assetHandle: guidText(assetGuid(PACKAGE_IDS.islandArt, 'mesh/shadow-quad')),
-          },
-          MeshRenderer: {
-            materials: [guidText(assetGuid(PACKAGE_IDS.islandArt, 'material/shadow'))],
-          },
+          MeshFilter: { assetHandle: meshRef('mesh/shadow-quad') },
+          MeshRenderer: { materials: [matRef('material/shadow')] },
         },
       };
 
       for (const state of ['player', 'ally', 'rival', 'grudge']) {
-        entities[`actor-${i}-ring-${state}`] = { components: {
-          Name: { value: `Actor ${i} Ring ${state}` },
-          Transform: { pos: [0, -999, 0], quat: [...SHADOW_QUAT] },
-          MeshFilter: { assetHandle: guidText(assetGuid(PACKAGE_IDS.islandArt, 'mesh/foot-ring')) },
-          MeshRenderer: { materials: [guidText(assetGuid(PACKAGE_IDS.islandArt, `material/ring-${state}`))] },
-        } };
+        entities[`actor-${i}-ring-${state}`] = {
+          components: {
+            Name: { value: `Actor ${i} Ring ${state}` },
+            Transform: { pos: [0, -999, 0], quat: [...SHADOW_QUAT] },
+            MeshFilter: { assetHandle: meshRef('mesh/foot-ring') },
+            MeshRenderer: { materials: [matRef(`material/ring-${state}`)] },
+          },
+        };
       }
       if (i === 0) {
-        entities['player-direction'] = { components: {
-          Name: { value: 'Player Direction' }, Transform: { pos: [0, -999, 0] },
-          MeshFilter: { assetHandle: guidText(assetGuid(PACKAGE_IDS.islandArt, 'mesh/direction-arrow')) },
-          MeshRenderer: { materials: [guidText(assetGuid(PACKAGE_IDS.islandArt, 'material/ring-white'))] },
-        } };
-        entities['player-inner-ring'] = { components: {
-          Name: { value: 'Player Inner Ring' }, Transform: { pos: [0, -999, 0], quat: [...SHADOW_QUAT] },
-          MeshFilter: { assetHandle: guidText(assetGuid(PACKAGE_IDS.islandArt, 'mesh/foot-ring')) },
-          MeshRenderer: { materials: [guidText(assetGuid(PACKAGE_IDS.islandArt, 'material/ring-white'))] },
-        } };
+        entities['player-direction'] = {
+          components: {
+            Name: { value: 'Player Direction' },
+            Transform: { pos: [0, -999, 0] },
+            MeshFilter: { assetHandle: meshRef('mesh/direction-arrow') },
+            MeshRenderer: { materials: [matRef('material/ring-white')] },
+          },
+        };
+        entities['player-inner-ring'] = {
+          components: {
+            Name: { value: 'Player Inner Ring' },
+            Transform: { pos: [0, -999, 0], quat: [...SHADOW_QUAT] },
+            MeshFilter: { assetHandle: meshRef('mesh/foot-ring') },
+            MeshRenderer: { materials: [matRef('material/ring-white')] },
+          },
+        };
       }
 
       entities[`actor-${i}`] = {
@@ -314,135 +335,57 @@ export default definePack({
         },
       };
 
-      entities[`actor-${i}-body`] = {
-        components: {
-          Name: { value: `Actor ${i} Body` },
-          Transform: { pos: [0, 0.52, 0] },
-          ChildOf: { parent: `actor-${i}` },
-          MeshFilter: { assetHandle: guidText(assetGuid(PACKAGE_IDS.islandArt, 'mesh/char-body')) },
-          MeshRenderer: {
-            materials: [guidText(assetGuid(PACKAGE_IDS.islandArt, `material/char-${i}`))],
+      const part = (
+        key: string,
+        mesh: string,
+        material: string,
+        pos: readonly [number, number, number] = [0, 0, 0],
+      ) => {
+        entities[`actor-${i}-${key}`] = {
+          components: {
+            Name: { value: `Actor ${i} ${key}` },
+            Transform: { pos: [pos[0], pos[1], pos[2]] },
+            ChildOf: { parent: `actor-${i}` },
+            MeshFilter: { assetHandle: meshRef(mesh) },
+            MeshRenderer: { materials: [matRef(material)] },
           },
-        },
+        };
       };
 
+      part('body', 'mesh/char-body', `material/char-${i}`);
+      // 受击红闪覆盖层：与躯干同形，平时隐藏
       entities[`actor-${i}-hit`] = {
         components: {
           Name: { value: `Actor ${i} Hit Overlay` },
           Transform: { pos: [0, -999, 0] },
           ChildOf: { parent: `actor-${i}` },
-          MeshFilter: { assetHandle: guidText(assetGuid(PACKAGE_IDS.islandArt, 'mesh/char-body')) },
-          MeshRenderer: {
-            materials: [guidText(assetGuid(PACKAGE_IDS.islandArt, 'material/char-hit'))],
-          },
+          MeshFilter: { assetHandle: meshRef('mesh/char-body') },
+          MeshRenderer: { materials: [matRef('material/char-hit')] },
         },
       };
-
-      entities[`actor-${i}-belt`] = {
-        components: {
-          Name: { value: `Actor ${i} Belt` },
-          Transform: { pos: [0, 0.38, 0] },
-          ChildOf: { parent: `actor-${i}` },
-          MeshFilter: { assetHandle: guidText(assetGuid(PACKAGE_IDS.islandArt, 'mesh/char-belt')) },
-          MeshRenderer: {
-            materials: [guidText(assetGuid(PACKAGE_IDS.islandArt, 'material/char-dark'))],
-          },
-        },
-      };
-
-      entities[`actor-${i}-arms`] = {
-        components: {
-          Name: { value: `Actor ${i} Arms` },
-          Transform: { pos: [0, 0.54, 0] },
-          ChildOf: { parent: `actor-${i}` },
-          MeshFilter: { assetHandle: guidText(assetGuid(PACKAGE_IDS.islandArt, 'mesh/char-arms')) },
-          MeshRenderer: {
-            materials: [guidText(assetGuid(PACKAGE_IDS.islandArt, `material/char-${i}`))],
-          },
-        },
-      };
-
-      entities[`actor-${i}-head`] = {
-        components: {
-          Name: { value: `Actor ${i} Head` },
-          Transform: { pos: [0, 0.94, 0] },
-          ChildOf: { parent: `actor-${i}` },
-          MeshFilter: { assetHandle: guidText(assetGuid(PACKAGE_IDS.islandArt, 'mesh/char-head')) },
-          MeshRenderer: {
-            materials: [guidText(assetGuid(PACKAGE_IDS.islandArt, 'material/skin'))],
-          },
-        },
-      };
-
-      entities[`actor-${i}-hair`] = {
-        components: {
-          Name: { value: `Actor ${i} Hair` },
-          Transform: { pos: [0, 1.28, 0] },
-          ChildOf: { parent: `actor-${i}` },
-          MeshFilter: { assetHandle: guidText(assetGuid(PACKAGE_IDS.islandArt, 'mesh/char-hair')) },
-          MeshRenderer: {
-            materials: [guidText(assetGuid(PACKAGE_IDS.islandArt, `material/char-${i}`))],
-          },
-        },
-      };
-
-      entities[`actor-${i}-eyes`] = {
-        components: {
-          Name: { value: `Actor ${i} Eyes` },
-          Transform: { pos: [0, 0.98, 0.3] },
-          ChildOf: { parent: `actor-${i}` },
-          MeshFilter: { assetHandle: guidText(assetGuid(PACKAGE_IDS.islandArt, 'mesh/char-eyes')) },
-          MeshRenderer: {
-            materials: [guidText(assetGuid(PACKAGE_IDS.islandArt, 'material/char-dark'))],
-          },
-        },
-      };
-
-      entities[`actor-${i}-legs`] = {
-        components: {
-          Name: { value: `Actor ${i} Legs` },
-          Transform: { pos: [0, 0.20, 0] },
-          ChildOf: { parent: `actor-${i}` },
-          MeshFilter: { assetHandle: guidText(assetGuid(PACKAGE_IDS.islandArt, 'mesh/char-legs')) },
-          MeshRenderer: {
-            materials: [guidText(assetGuid(PACKAGE_IDS.islandArt, 'material/char-pants'))],
-          },
-        },
-      };
-
-      entities[`actor-${i}-shoes`] = {
-        components: {
-          Name: { value: `Actor ${i} Shoes` },
-          Transform: { pos: [0, 0.05, 0.02] },
-          ChildOf: { parent: `actor-${i}` },
-          MeshFilter: { assetHandle: guidText(assetGuid(PACKAGE_IDS.islandArt, 'mesh/char-shoes')) },
-          MeshRenderer: {
-            materials: [guidText(assetGuid(PACKAGE_IDS.islandArt, 'material/char-shoes'))],
-          },
-        },
-      };
+      part('head', 'mesh/char-head', 'material/char-fur', TIBO_PIVOT.head);
+      part('ear-left', 'mesh/char-ear-left', 'material/char-fur', TIBO_PIVOT.earLeft);
+      part('ear-right', 'mesh/char-ear-right', 'material/char-fur', TIBO_PIVOT.earRight);
+      part('legs-front', 'mesh/char-legs-front', 'material/char-fur', TIBO_PIVOT.legs);
+      part('legs-back', 'mesh/char-legs-back', 'material/char-fur', TIBO_PIVOT.legs);
+      part('tail', 'mesh/char-tail', 'material/char-fur', TIBO_PIVOT.tail);
+      part('sack', 'mesh/char-sack', 'material/char-sack', TIBO_PIVOT.torsoTop);
+      part('collar', 'mesh/char-collar', 'material/chest-gold', TIBO_PIVOT.torsoTop);
 
       if (i === 0) {
-        entities[`actor-0-marker`] = {
+        entities['actor-0-marker'] = {
           components: {
             Name: { value: 'Player Marker' },
-            Transform: {
-              pos: [0, 1.48, 0],
-              quat: [0.3826834, 0, 0, 0.9238795],
-            },
-            ChildOf: { parent: `actor-0` },
-            MeshFilter: {
-              assetHandle: guidText(assetGuid(PACKAGE_IDS.islandArt, 'mesh/player-marker')),
-            },
-            MeshRenderer: {
-              materials: [guidText(assetGuid(PACKAGE_IDS.islandArt, 'material/loot'))],
-            },
+            Transform: { pos: [0, 1.55, 0], quat: [0.3826834, 0, 0, 0.9238795] },
+            ChildOf: { parent: 'actor-0' },
+            MeshFilter: { assetHandle: meshRef('mesh/player-marker') },
+            MeshRenderer: { materials: [matRef('material/loot')] },
           },
         };
       }
     }
 
-    // 40 只体素怪物实体池（支持怪潮扩容）
+    // 40 只体素怪潮实体池（支持怪潮扩容）
     for (let i = 0; i < 40; i++) {
       const a = (i / 12) * Math.PI * 2 + 0.3;
       const mx = center + Math.cos(a) * (5 + (i % 3) * 1.5);
@@ -452,573 +395,421 @@ export default definePack({
       entities[`monster-${i}-shadow`] = {
         components: {
           Name: { value: `Monster ${i} Shadow` },
-          Transform: {
-            pos: isInitial ? [mx + 0.14, 0.005, mz + 0.18] : [0, -999, 0],
-
-          },
-          MeshFilter: {
-            assetHandle: guidText(assetGuid(PACKAGE_IDS.islandArt, 'mesh/monster-shadow')),
-          },
-          MeshRenderer: {
-            materials: [guidText(assetGuid(PACKAGE_IDS.islandArt, 'material/shadow'))],
-          },
+          Transform: { pos: isInitial ? [mx + 0.14, 0.005, mz + 0.18] : [0, -999, 0] },
+          MeshFilter: { assetHandle: meshRef('mesh/monster-shadow') },
+          MeshRenderer: { materials: [matRef('material/shadow')] },
         },
       };
-
       entities[`monster-${i}`] = {
         components: {
           Name: { value: `Monster ${i}` },
           Transform: { pos: isInitial ? [mx, 0, mz] : [0, -999, 0] },
         },
       };
-
       entities[`monster-${i}-body`] = {
         components: {
           Name: { value: `Monster ${i} Body` },
-          Transform: { pos: [0, 0.38, 0] },
+          Transform: { pos: [0, 0, 0] },
           ChildOf: { parent: `monster-${i}` },
-          MeshFilter: {
-            assetHandle: guidText(assetGuid(PACKAGE_IDS.islandArt, 'mesh/monster-body')),
-          },
-          MeshRenderer: {
-            materials: [guidText(assetGuid(PACKAGE_IDS.islandArt, 'material/monster'))],
-          },
+          MeshFilter: { assetHandle: meshRef('mesh/monster-body') },
+          MeshRenderer: { materials: [matRef('material/monster')] },
         },
       };
-
-      entities[`monster-${i}-horns`] = {
-        components: {
-          Name: { value: `Monster ${i} Horns` },
-          Transform: { pos: [0, 0.62, 0] },
-          ChildOf: { parent: `monster-${i}` },
-          MeshFilter: {
-            assetHandle: guidText(assetGuid(PACKAGE_IDS.islandArt, 'mesh/monster-horns')),
-          },
-          MeshRenderer: {
-            materials: [guidText(assetGuid(PACKAGE_IDS.islandArt, 'material/char-dark'))],
-          },
-        },
-      };
-
       entities[`monster-${i}-eyes`] = {
         components: {
           Name: { value: `Monster ${i} Eyes` },
-          Transform: { pos: [0, 0.48, 0.45] },
+          Transform: { pos: [0, 0, 0] },
           ChildOf: { parent: `monster-${i}` },
-          MeshFilter: {
-            assetHandle: guidText(assetGuid(PACKAGE_IDS.islandArt, 'mesh/monster-eyes')),
-          },
-          MeshRenderer: {
-            materials: [guidText(assetGuid(PACKAGE_IDS.islandArt, 'material/monster-eyes'))],
-          },
+          MeshFilter: { assetHandle: meshRef('mesh/monster-eyes') },
+          MeshRenderer: { materials: [matRef('material/monster-eyes')] },
         },
       };
     }
 
-    // 1 只混沌体素 Boss
+    // 寄居宝箱蟹 Boss（两次出场复用同一模型）
     entities['boss-shadow'] = {
       components: {
         Name: { value: 'Boss Shadow' },
-        Transform: { pos: [0, -999, 0], quat: [SHADOW_QUAT[0], SHADOW_QUAT[1], SHADOW_QUAT[2], SHADOW_QUAT[3]] },
-        MeshFilter: { assetHandle: guidText(assetGuid(PACKAGE_IDS.islandArt, 'mesh/boss-shadow')) },
-        MeshRenderer: { materials: [guidText(assetGuid(PACKAGE_IDS.islandArt, 'material/shadow'))] },
+        Transform: { pos: [0, -999, 0], quat: [...SHADOW_QUAT] },
+        MeshFilter: { assetHandle: meshRef('mesh/boss-shadow') },
+        MeshRenderer: { materials: [matRef('material/shadow')] },
       },
     };
     entities['boss'] = {
-      components: {
-        Name: { value: 'Chaos Boss' },
-        Transform: { pos: [0, -999, 0] },
-      },
+      components: { Name: { value: 'Mimic Crab Boss' }, Transform: { pos: [0, -999, 0] } },
     };
     entities['boss-body'] = {
       components: {
-        Name: { value: 'Boss Body' },
-        Transform: { pos: [0, 0.95, 0] },
+        Name: { value: 'Boss Shell' },
+        Transform: { pos: [0, 0, 0] },
         ChildOf: { parent: 'boss' },
-        MeshFilter: { assetHandle: guidText(assetGuid(PACKAGE_IDS.islandArt, 'mesh/boss-body')) },
-        MeshRenderer: { materials: [guidText(assetGuid(PACKAGE_IDS.islandArt, 'material/boss-body'))] },
+        MeshFilter: { assetHandle: meshRef('mesh/boss-shell') },
+        MeshRenderer: { materials: [matRef('material/boss-shell')] },
       },
     };
     entities['boss-eyes'] = {
       components: {
         Name: { value: 'Boss Eyes' },
-        Transform: { pos: [0, 1.1, 0.78] },
+        Transform: { pos: [0, 0, 0] },
         ChildOf: { parent: 'boss' },
-        MeshFilter: { assetHandle: guidText(assetGuid(PACKAGE_IDS.islandArt, 'mesh/boss-eyes')) },
-        MeshRenderer: { materials: [guidText(assetGuid(PACKAGE_IDS.islandArt, 'material/boss-eyes'))] },
+        MeshFilter: { assetHandle: meshRef('mesh/boss-eyes') },
+        MeshRenderer: { materials: [matRef('material/boss-eyes')] },
       },
     };
-    entities['boss-horns'] = {
+    entities['boss-claw-left'] = {
       components: {
-        Name: { value: 'Boss Horns' },
-        Transform: { pos: [-0.85, 2.05, 0], quat: [0, 0, 0.383, 0.924] },
+        Name: { value: 'Boss Left Claw' },
+        Transform: { pos: [BOSS_PIVOT.clawLeft[0], BOSS_PIVOT.clawLeft[1], BOSS_PIVOT.clawLeft[2]] },
         ChildOf: { parent: 'boss' },
-        MeshFilter: { assetHandle: guidText(assetGuid(PACKAGE_IDS.islandArt, 'mesh/boss-horns')) },
-        MeshRenderer: { materials: [guidText(assetGuid(PACKAGE_IDS.islandArt, 'material/chest-gold'))] },
+        MeshFilter: { assetHandle: meshRef('mesh/boss-claw') },
+        MeshRenderer: { materials: [matRef('material/boss-claw')] },
       },
     };
-
-    entities['boss-horn-right'] = { components: {
-      Name: { value: 'Boss Right Horn' },
-      Transform: { pos: [0.85, 2.05, 0], quat: [0, 0, -0.383, 0.924] },
-      ChildOf: { parent: 'boss' },
-      MeshFilter: { assetHandle: guidText(assetGuid(PACKAGE_IDS.islandArt, 'mesh/boss-horns')) },
-      MeshRenderer: { materials: [guidText(assetGuid(PACKAGE_IDS.islandArt, 'material/chest-gold'))] },
-    } };
+    entities['boss-claw-right'] = {
+      components: {
+        Name: { value: 'Boss Right Claw' },
+        Transform: { pos: [BOSS_PIVOT.clawRight[0], BOSS_PIVOT.clawRight[1], BOSS_PIVOT.clawRight[2]] },
+        ChildOf: { parent: 'boss' },
+        MeshFilter: { assetHandle: meshRef('mesh/boss-claw-right') },
+        MeshRenderer: { materials: [matRef('material/boss-claw')] },
+      },
+    };
 
     // 5 个队伍共享宝箱
     for (let i = 0; i < 5; i++) {
       entities[`chest-${i}-shadow`] = {
         components: {
           Name: { value: `Chest ${i} Shadow` },
-          Transform: {
-            pos: [0, -999, 0],
-            quat: [SHADOW_QUAT[0], SHADOW_QUAT[1], SHADOW_QUAT[2], SHADOW_QUAT[3]],
-          },
-          MeshFilter: {
-            assetHandle: guidText(assetGuid(PACKAGE_IDS.islandArt, 'mesh/shadow-quad')),
-          },
-          MeshRenderer: {
-            materials: [guidText(assetGuid(PACKAGE_IDS.islandArt, 'material/shadow'))],
-          },
+          Transform: { pos: [0, -999, 0], quat: [...SHADOW_QUAT] },
+          MeshFilter: { assetHandle: meshRef('mesh/shadow-quad') },
+          MeshRenderer: { materials: [matRef('material/shadow')] },
         },
       };
-
       entities[`chest-${i}`] = {
-        components: {
-          Name: { value: `Chest ${i}` },
-          Transform: { pos: [0, -999, 0] },
-        },
+        components: { Name: { value: `Chest ${i}` }, Transform: { pos: [0, -999, 0] } },
       };
-
       entities[`chest-${i}-body`] = {
         components: {
           Name: { value: `Chest ${i} Body` },
-          Transform: { pos: [0, 0.27, 0] },
+          Transform: { pos: [0, 0, 0] },
           ChildOf: { parent: `chest-${i}` },
-          MeshFilter: {
-            assetHandle: guidText(assetGuid(PACKAGE_IDS.islandArt, 'mesh/chest-body')),
-          },
-          MeshRenderer: {
-            materials: [guidText(assetGuid(PACKAGE_IDS.islandArt, 'material/chest'))],
-          },
+          MeshFilter: { assetHandle: meshRef('mesh/chest-body') },
+          MeshRenderer: { materials: [matRef('material/chest-gold')] },
         },
       };
-
       entities[`chest-${i}-lid`] = {
         components: {
           Name: { value: `Chest ${i} Lid` },
-          Transform: { pos: [0, 0.60, 0] },
+          Transform: { pos: [0, 0.5, 0] },
           ChildOf: { parent: `chest-${i}` },
-          MeshFilter: {
-            assetHandle: guidText(assetGuid(PACKAGE_IDS.islandArt, 'mesh/chest-lid')),
-          },
-          MeshRenderer: {
-            materials: [guidText(assetGuid(PACKAGE_IDS.islandArt, 'material/chest-gold'))],
-          },
+          MeshFilter: { assetHandle: meshRef('mesh/chest-lid') },
+          MeshRenderer: { materials: [matRef('material/chest-gold')] },
         },
       };
-
       entities[`chest-${i}-lock`] = {
         components: {
           Name: { value: `Chest ${i} Lock` },
-          Transform: { pos: [0, 0.44, 0.30] },
+          Transform: { pos: [0, 0.3, 0.3] },
           ChildOf: { parent: `chest-${i}` },
-          MeshFilter: {
-            assetHandle: guidText(assetGuid(PACKAGE_IDS.islandArt, 'mesh/chest-lock')),
-          },
-          MeshRenderer: {
-            materials: [guidText(assetGuid(PACKAGE_IDS.islandArt, 'material/chest-gold'))],
-          },
+          MeshFilter: { assetHandle: meshRef('mesh/chest-lock') },
+          MeshRenderer: { materials: [matRef('material/chest-gold')] },
+        },
+      };
+      entities[`chest-${i}-crack`] = {
+        components: {
+          Name: { value: `Chest ${i} Crack` },
+          Transform: { pos: [0, 0, 0] },
+          ChildOf: { parent: `chest-${i}` },
+          MeshFilter: { assetHandle: meshRef('mesh/chest-crack') },
+          MeshRenderer: { materials: [matRef('material/char-dark')] },
         },
       };
     }
 
-    // 5 条队伍连线束
+    // 5 条队伍连线束（正常与超距预警）
     for (let i = 0; i < 5; i++) {
-      entities[`team-beam-${i}`] = {
-        components: {
-          Name: { value: `Team Beam ${i}` },
-          Transform: { pos: [0, -999, 0] },
-          MeshFilter: {
-            assetHandle: guidText(assetGuid(PACKAGE_IDS.islandArt, 'mesh/team-beam')),
+      for (const [key, material] of [['team-beam', 'material/team-beam'], ['team-beam-warn', 'material/danger-border']] as const) {
+        entities[`${key}-${i}`] = {
+          components: {
+            Name: { value: `${key} ${i}` },
+            Transform: { pos: [0, -999, 0] },
+            MeshFilter: { assetHandle: meshRef('mesh/team-beam') },
+            MeshRenderer: { materials: [matRef(material)] },
           },
-          MeshRenderer: {
-            materials: [guidText(assetGuid(PACKAGE_IDS.islandArt, 'material/team-beam'))],
-          },
-        },
-      };
-
-      entities[`team-beam-warn-${i}`] = {
-        components: {
-          Name: { value: `Team Beam Warning ${i}` },
-          Transform: { pos: [0, -999, 0] },
-          MeshFilter: {
-            assetHandle: guidText(assetGuid(PACKAGE_IDS.islandArt, 'mesh/team-beam')),
-          },
-          MeshRenderer: {
-            materials: [guidText(assetGuid(PACKAGE_IDS.islandArt, 'material/danger-border'))],
-          },
-        },
-      };
+        };
+      }
     }
 
-    // 30 把环绕飞刀（10 名角色 × 最多 3 把；保留 player-knife-0..2 兼容旧键）
+    // 40 把环绕飞刀
     for (let i = 0; i < 40; i++) {
       entities[`player-knife-${i}`] = {
         components: {
           Name: { value: `Knife ${i}` },
           Transform: { pos: [0, -999, 0] },
-          MeshFilter: { assetHandle: guidText(assetGuid(PACKAGE_IDS.islandArt, 'mesh/weapon-knife')) },
-          MeshRenderer: { materials: [guidText(assetGuid(PACKAGE_IDS.islandArt, 'material/weapon-knife'))] },
+          MeshFilter: { assetHandle: meshRef('mesh/weapon-knife') },
+          MeshRenderer: { materials: [matRef('material/weapon-knife')] },
         },
       };
     }
 
-    // 24 支穿透箭矢（多人同时发射的可辨认实体池）
+    // 64 支穿透箭矢与拖尾
     for (let i = 0; i < 64; i++) {
       entities[`arrow-${i}`] = {
         components: {
           Name: { value: `Arrow ${i}` },
           Transform: { pos: [0, -999, 0] },
-          MeshFilter: { assetHandle: guidText(assetGuid(PACKAGE_IDS.islandArt, 'mesh/weapon-arrow')) },
-          MeshRenderer: { materials: [guidText(assetGuid(PACKAGE_IDS.islandArt, 'material/weapon-arrow'))] },
+          MeshFilter: { assetHandle: meshRef('mesh/weapon-arrow') },
+          MeshRenderer: { materials: [matRef('material/weapon-arrow')] },
         },
       };
+      for (let tail = 0; tail < 2; tail++) {
+        entities[`arrow-${i}-tail-${tail}`] = {
+          components: {
+            Name: { value: `Arrow ${i} Tail ${tail}` },
+            Transform: { pos: [0, -999, 0] },
+            MeshFilter: { assetHandle: meshRef('mesh/weapon-arrow') },
+            MeshRenderer: { materials: [matRef('material/ammo-trail')] },
+          },
+        };
+      }
     }
 
-    // 12 颗炸弹与冲击波
+    // 32 颗炸弹与冲击波
     for (let i = 0; i < 32; i++) {
       entities[`bomb-${i}`] = {
         components: {
           Name: { value: `Bomb ${i}` },
           Transform: { pos: [0, -999, 0] },
-          MeshFilter: { assetHandle: guidText(assetGuid(PACKAGE_IDS.islandArt, 'mesh/weapon-bomb')) },
-          MeshRenderer: { materials: [guidText(assetGuid(PACKAGE_IDS.islandArt, 'material/weapon-bomb'))] },
+          MeshFilter: { assetHandle: meshRef('mesh/weapon-bomb') },
+          MeshRenderer: { materials: [matRef('material/weapon-bomb')] },
         },
       };
       entities[`blast-${i}`] = {
         components: {
           Name: { value: `Blast Wave ${i}` },
-          Transform: { pos: [0, -999, 0], quat: [SHADOW_QUAT[0], SHADOW_QUAT[1], SHADOW_QUAT[2], SHADOW_QUAT[3]] },
-          MeshFilter: { assetHandle: guidText(assetGuid(PACKAGE_IDS.islandArt, 'mesh/blast-ring')) },
-          MeshRenderer: { materials: [guidText(assetGuid(PACKAGE_IDS.islandArt, 'material/danger-border'))] },
+          Transform: { pos: [0, -999, 0], quat: [...SHADOW_QUAT] },
+          MeshFilter: { assetHandle: meshRef('mesh/blast-ring') },
+          MeshRenderer: { materials: [matRef('material/danger-border')] },
         },
       };
     }
 
-    for (let i = 0; i < 64; i++) for (let tail = 0; tail < 2; tail++) {
-      entities[`arrow-${i}-tail-${tail}`] = { components: {
-        Name: { value: `Arrow ${i} Tail ${tail}` }, Transform: { pos: [0, -999, 0] },
-        MeshFilter: { assetHandle: guidText(assetGuid(PACKAGE_IDS.islandArt, 'mesh/weapon-arrow')) },
-        MeshRenderer: { materials: [guidText(assetGuid(PACKAGE_IDS.islandArt, 'material/ammo-trail'))] },
-      } };
-    }
-
-    // 3 处中央岩石掩体（阻挡移动与视线，使用现有 mesh/rock）
+    // 3 处青苔岩块掩体（位置与半径严格读 activeCovers）
     for (let i = 0; i < 3; i++) {
       entities[`cover-${i}`] = {
         components: {
           Name: { value: `Cover Rock ${i}` },
-          Transform: { pos: [0, -999, 0], scale: [1.6, 1.4, 1.6] },
-          MeshFilter: { assetHandle: guidText(assetGuid(PACKAGE_IDS.islandArt, 'mesh/rock')) },
-          MeshRenderer: { materials: [guidText(assetGuid(PACKAGE_IDS.islandArt, 'material/rock'))] },
+          Transform: { pos: [0, -999, 0] },
+          MeshFilter: { assetHandle: meshRef('mesh/cover-rock') },
+          MeshRenderer: { materials: [matRef('material/rock')] },
+        },
+      };
+      entities[`cover-${i}-ao`] = {
+        components: {
+          Name: { value: `Cover ${i} AO` },
+          Transform: { pos: [0, -999, 0] },
+          MeshFilter: { assetHandle: meshRef('mesh/cover-ao') },
+          MeshRenderer: { materials: [matRef('material/ao')] },
+        },
+      };
+      entities[`cover-${i}-top`] = {
+        components: {
+          Name: { value: `Cover ${i} Top` },
+          Transform: { pos: [0, -999, 0] },
+          MeshFilter: { assetHandle: meshRef('mesh/cover-ao') },
+          MeshRenderer: { materials: [matRef('material/rock-top')] },
         },
       };
     }
 
-    // Boss 圈形预警环（可躲的范围攻击前摇）
-    for (let i = 0; i < 3; i++) {
-      entities[`cover-${i}-ao`] = { components: {
-        Name: { value: `Cover ${i} AO` }, Transform: { pos: [0, -999, 0] },
-        MeshFilter: { assetHandle: guidText(assetGuid(PACKAGE_IDS.islandArt, 'mesh/cover-ao')) },
-        MeshRenderer: { materials: [guidText(assetGuid(PACKAGE_IDS.islandArt, 'material/ao'))] },
-      } };
-      entities[`cover-${i}-top`] = { components: {
-        Name: { value: `Cover ${i} Top` }, Transform: { pos: [0, -999, 0] },
-        MeshFilter: { assetHandle: guidText(assetGuid(PACKAGE_IDS.islandArt, 'mesh/cover-ao')) },
-        MeshRenderer: { materials: [guidText(assetGuid(PACKAGE_IDS.islandArt, 'material/rock-top'))] },
-      } };
-    }
-    entities['shrink-boundary'] = { components: {
-      Name: { value: 'Shrink Warning Boundary' }, Transform: { pos: [0, -999, 0], quat: [...SHADOW_QUAT] },
-      MeshFilter: { assetHandle: guidText(assetGuid(PACKAGE_IDS.islandArt, 'mesh/blast-ring')) },
-      MeshRenderer: { materials: [guidText(assetGuid(PACKAGE_IDS.islandArt, 'material/danger-border'))] },
-    } };
-
+    // 缩圈边界与 Boss 圆形预警（准确圆边 + 辅助填充，不改命中形状）
+    entities['shrink-boundary'] = {
+      components: {
+        Name: { value: 'Shrink Warning Boundary' },
+        Transform: { pos: [0, -999, 0], quat: [...SHADOW_QUAT] },
+        MeshFilter: { assetHandle: meshRef('mesh/boundary-ring') },
+        MeshRenderer: { materials: [matRef('material/danger-border')] },
+      },
+    };
     entities['raid-telegraph'] = {
       components: {
         Name: { value: 'Raid Telegraph Ring' },
-        Transform: { pos: [0, -999, 0], quat: [SHADOW_QUAT[0], SHADOW_QUAT[1], SHADOW_QUAT[2], SHADOW_QUAT[3]] },
-        MeshFilter: { assetHandle: guidText(assetGuid(PACKAGE_IDS.islandArt, 'mesh/blast-ring')) },
-        MeshRenderer: { materials: [guidText(assetGuid(PACKAGE_IDS.islandArt, 'material/danger-border'))] },
+        Transform: { pos: [0, -999, 0], quat: [...SHADOW_QUAT] },
+        MeshFilter: { assetHandle: meshRef('mesh/blast-ring') },
+        MeshRenderer: { materials: [matRef('material/danger-border')] },
+      },
+    };
+    entities['raid-telegraph-fill'] = {
+      components: {
+        Name: { value: 'Raid Telegraph Fill' },
+        Transform: { pos: [0, -999, 0] },
+        MeshFilter: { assetHandle: meshRef('mesh/telegraph-fill') },
+        MeshRenderer: { materials: [matRef('material/danger-fill')] },
       },
     };
 
-    // 72 个公共散落金宝物实体池
+    // 72 个掉落金砖实体池
     for (let i = 0; i < 72; i++) {
       entities[`loot-${i}`] = {
         components: {
           Name: { value: `Loot ${i}` },
           Transform: { pos: [0, -999, 0] },
-          MeshFilter: {
-            assetHandle: guidText(assetGuid(PACKAGE_IDS.islandArt, 'mesh/cube')),
-          },
-          MeshRenderer: {
-            materials: [guidText(assetGuid(PACKAGE_IDS.islandArt, 'material/loot'))],
-          },
+          MeshFilter: { assetHandle: meshRef('mesh/loot-bar') },
+          MeshRenderer: { materials: [matRef('material/loot')] },
         },
       };
     }
 
-    const sceneAsset: SceneAsset = {
-      kind: 'scene',
-      entities,
-    };
+    // 24 块一次性破箱碎屑（表现层有界装饰池，不进入模拟层）
+    for (let i = 0; i < 24; i++) {
+      entities[`debris-${i}`] = {
+        components: {
+          Name: { value: `Debris ${i}` },
+          Transform: { pos: [0, -999, 0] },
+          MeshFilter: { assetHandle: meshRef('mesh/debris') },
+          MeshRenderer: { materials: [matRef('material/chest-gold')] },
+        },
+      };
+    }
 
-    return ok({
-      // 网格
-      'mesh/tile': withMaterial(
-        tileBox.value,
-        assetGuid(PACKAGE_IDS.islandArt, 'material/ground-grass'),
-        'island:tile',
-      ),
-      'mesh/ocean': withMaterial(
-        oceanBox.value,
-        assetGuid(PACKAGE_IDS.islandArt, 'material/ocean'),
-        'island:ocean',
-      ),
+    const sceneAsset: SceneAsset = { kind: 'scene', entities };
+
+    // 5. 输出网格与材质
+    const meshOutput: Record<string, MeshAsset> = {
+      'mesh/ocean': withMaterial(oceanBox.value, assetGuid(PACKAGE_IDS.islandArt, 'material/ocean'), 'island:ocean'),
+      'mesh/shadow-quad': monsterShadow.value,
+      'mesh/monster-shadow': monsterShadow.value,
+      'mesh/boss-shadow': bossShadow.value,
       'mesh/foot-ring': footRing.value,
       'mesh/direction-arrow': directionArrow.value,
-      'mesh/monster-shadow': withVerticalGradient(monsterShadow.value),
       'mesh/cover-ao': coverAo.value,
-      'mesh/shadow-quad': monsterShadow.value,
-      'mesh/char-head': withVerticalGradient(charHead.value),
-      'mesh/char-hair': withVerticalGradient(charHair.value),
-      'mesh/char-eyes': withVerticalGradient(charEyes.value),
-      'mesh/char-body': withVerticalGradient(charBody.value),
-      'mesh/char-belt': withVerticalGradient(charBelt.value),
-      'mesh/char-arms': withVerticalGradient(charArms.value),
-      'mesh/char-legs': withVerticalGradient(charLegs.value),
-      'mesh/char-shoes': withVerticalGradient(charShoes.value),
+      'mesh/blast-ring': blastRing.value,
+      'mesh/boundary-ring': boundaryRing.value,
+      'mesh/telegraph-fill': telegraphFill.value,
       'mesh/player-marker': playerMarker.value,
+      'mesh/team-beam': withMaterial(teamBeamMesh.value, assetGuid(PACKAGE_IDS.islandArt, 'material/team-beam'), 'island:team-beam'),
+      'mesh/debris': debrisCube.value,
+      'mesh/xp-crystal': withMaterial(xpCrystalMesh.value, assetGuid(PACKAGE_IDS.islandArt, 'material/xp-crystal'), 'island:xp-crystal'),
+    };
+    for (const [key, mesh] of Object.entries(meshes)) {
+      meshOutput[key] = withMaterial(mesh, assetGuid(PACKAGE_IDS.islandArt, 'material/ground-voxel'), `island:${key}`);
+    }
 
-      'mesh/monster-body': withVerticalGradient(monsterBody.value),
-      'mesh/monster-eyes': withVerticalGradient(monsterEyes.value),
-      'mesh/monster-horns': withVerticalGradient(monsterHorns.value),
+    return ok({
+      ...meshOutput,
 
-      'mesh/boss-body': withVerticalGradient(bossBody.value),
-      'mesh/boss-eyes': withVerticalGradient(bossEyes.value),
-      'mesh/boss-horns': withVerticalGradient(bossHorns.value),
-      'mesh/boss-shadow': monsterShadow.value,
-
-      'mesh/chest-body': chestBody.value,
-      'mesh/chest-lid': chestLid.value,
-      'mesh/chest-lock': chestLock.value,
-
-      'mesh/weapon-knife': knifeMesh.value,
-      'mesh/weapon-arrow': arrowMesh.value,
-      'mesh/weapon-bomb': bombMesh.value,
-      'mesh/blast-ring': blastMesh.value,
-
-      'mesh/cube': withMaterial(
-        cubeMesh.value,
-        assetGuid(PACKAGE_IDS.islandArt, 'material/loot'),
-        'island:cube',
-      ),
-      'mesh/xp-crystal': withMaterial(
-        xpCrystalMesh.value,
-        assetGuid(PACKAGE_IDS.islandArt, 'material/xp-crystal'),
-        'island:xp-crystal',
-      ),
-      'mesh/team-beam': withMaterial(
-        teamBeamMesh.value,
-        assetGuid(PACKAGE_IDS.islandArt, 'material/team-beam'),
-        'island:team-beam',
-      ),
-      'mesh/bush': withMaterial(
-        bushMesh.value,
-        assetGuid(PACKAGE_IDS.islandArt, 'material/bush'),
-        'island:bush',
-      ),
-      'mesh/rock': withMaterial(
-        withVerticalGradient(rockMesh.value),
-        assetGuid(PACKAGE_IDS.islandArt, 'material/rock'),
-        'island:rock',
-      ),
-      'mesh/crystal': withMaterial(
-        crystalMesh.value,
-        assetGuid(PACKAGE_IDS.islandArt, 'material/crystal'),
-        'island:crystal',
-      ),
-
-      // 地形材质
-      ...Object.fromEntries(Array.from({ length: 6 }, (_, band) => [
-        `material/ground-band-${band}`, Materials.standard({
-          baseColor: [0.075 - band * 0.002, 0.105 - band * 0.002, 0.073 - band * 0.002, 1],
-          roughness: 1, metallic: 0,
-        }),
-      ])),
-      'material/ground-grass': Materials.standard({
-        baseColor: [0.28, 0.33, 0.29, 1],
-        roughness: 0.90,
-        metallic: 0.03,
-      }),
-      'material/ground-light-grass': Materials.standard({
-        baseColor: [0.29, 0.34, 0.30, 1],
-        roughness: 0.90,
-        metallic: 0.03,
-      }),
-      'material/ground-moss': Materials.standard({
-        baseColor: [0.28, 0.33, 0.29, 1],
+      // 地形与通用体素材质（顶点色承载体素颜色，这里保持中性白）
+      'material/ground-voxel': Materials.standard({
+        baseColor: [1, 1, 1, 1],
         roughness: 0.92,
         metallic: 0.02,
       }),
-      'material/ground-sand': Materials.standard({
-        baseColor: [0.33, 0.34, 0.30, 1],
-        roughness: 0.85,
-        metallic: 0.02,
-      }),
+      'material/ground-grass': Materials.standard({ baseColor: [1, 1, 1, 1], roughness: 0.92, metallic: 0.02 }),
       'material/ocean': Materials.standard({
-        baseColor: [0.06, 0.11, 0.17, 1],
-        roughness: 0.25,
-        metallic: 0.4,
+        baseColor: linearColor('#16374A'),
+        roughness: 0.22,
+        metallic: 0.35,
       }),
 
       // 角色材质
-      'material/skin': Materials.standard({
-        baseColor: [0.969, 0.953, 0.91, 1],
-        roughness: 0.65,
-      }),
-      'material/hair': Materials.standard({
-        baseColor: [0.18, 0.13, 0.10, 1],
-        roughness: 0.8,
-      }),
-      'material/char-dark': Materials.standard({
-        baseColor: [0.14, 0.16, 0.18, 1],
-        roughness: 0.8,
-      }),
-      'material/char-pants': Materials.standard({
-        baseColor: [0.22, 0.26, 0.32, 1],
-        roughness: 0.75,
-      }),
-      'material/char-shoes': Materials.standard({
-        baseColor: [0.88, 0.88, 0.88, 1],
-        roughness: 0.5,
-      }),
+      'material/char-fur': Materials.standard({ baseColor: [1, 1, 1, 1], roughness: 0.72, metallic: 0.02 }),
+      'material/char-sack': Materials.standard({ baseColor: [1, 1, 1, 1], roughness: 0.9, metallic: 0.02 }),
+      'material/char-dark': Materials.standard({ baseColor: linearColor('#2A2320'), roughness: 0.8 }),
       'material/char-hit': Materials.standard({
-        baseColor: [1.0, 0.3, 0.3, 1],
+        baseColor: linearColor('#FF6A5A'),
         emissive: [0.8, 0.1, 0.1],
-        emissiveIntensity: 2.5,
-      }),
-
-      // 怪物与 Boss 材质
-      'material/monster': Materials.standard({
-        baseColor: [0.022, 0.015, 0.032, 1],
-        roughness: 0.5,
-        metallic: 0.15,
-      }),
-      'material/monster-eyes': Materials.standard({
-        baseColor: [1.0, 0.15, 0.15, 1],
-        emissive: [1.0, 0.02, 0],
-        emissiveIntensity: 0.8,
-      }),
-      'material/boss-body': Materials.standard({
-        baseColor: [0.015, 0.01, 0.02, 1],
-        roughness: 0.4,
-        metallic: 0.25,
-      }),
-      'material/boss-eyes': Materials.standard({
-        baseColor: [1.0, 0.118, 0.259, 1],
-        emissive: [1.0, 0.01, 0.03],
-        emissiveIntensity: 0.8,
-      }),
-
-      // 宝箱材质
-      'material/chest': Materials.standard({
-        baseColor: [1, 0.718, 0.012, 1],
-        roughness: 0.65,
-        metallic: 0.2,
-      }),
-      'material/chest-gold': Materials.standard({
-        baseColor: [0.96, 0.76, 0.22, 1],
-        roughness: 0.3,
-        metallic: 0.75,
-      }),
-
-      // 武器材质
-      'material/weapon-knife': Materials.standard({
-        baseColor: [0.90, 0.95, 1.0, 1],
-        roughness: 0.15,
-        metallic: 0.9,
-        emissive: [0.3, 0.7, 0.9],
-        emissiveIntensity: 1.5,
-      }),
-      'material/weapon-arrow': Materials.standard({
-        baseColor: [1, 0.94, 0.4, 1],
-        roughness: 0.3,
-        metallic: 0.8,
-        emissive: [0.8, 0.5, 0.1],
-        emissiveIntensity: 2.0,
-      }),
-      'material/weapon-bomb': Materials.standard({
-        baseColor: [0.15, 0.18, 0.22, 1],
-        roughness: 0.7,
-        metallic: 0.3,
-        emissive: [0.9, 0.2, 0.1],
-        emissiveIntensity: 1.2,
-      }),
-
-      // 道具材质
-      'material/loot': Materials.standard({
-        baseColor: [1.0, 0.85, 0.25, 1],
-        roughness: 0.2,
-        metallic: 0.8,
-        emissive: [0.45, 0.35, 0.1],
-        emissiveIntensity: 1.5,
-      }),
-      'material/xp-crystal': Materials.standard({
-        baseColor: [0.38, 0.85, 0.68, 1],
-        roughness: 0.25,
-        metallic: 0.7,
-        emissive: [0.25, 0.75, 0.55],
         emissiveIntensity: 2.2,
       }),
-      'material/bush': Materials.standard({
-        baseColor: [0.20, 0.42, 0.18, 1],
-        roughness: 0.88,
-        metallic: 0.02,
+
+      // 怪物与 Boss
+      'material/monster': Materials.standard({ baseColor: [1, 1, 1, 1], roughness: 0.5, metallic: 0.12 }),
+      'material/monster-eyes': Materials.standard({
+        baseColor: linearColor('#FF5A1E'),
+        emissive: [1.0, 0.18, 0.02],
+        emissiveIntensity: 1.6,
       }),
-      'material/rock': Materials.standard({
-        baseColor: [0.055, 0.075, 0.10, 1],
-        roughness: 0.8,
-        metallic: 0.1,
+      'material/boss-shell': Materials.standard({ baseColor: [1, 1, 1, 1], roughness: 0.6, metallic: 0.12 }),
+      'material/boss-claw': Materials.standard({ baseColor: [1, 1, 1, 1], roughness: 0.42, metallic: 0.2 }),
+      'material/boss-eyes': Materials.standard({
+        baseColor: linearColor('#FF3A2E'),
+        emissive: [1.0, 0.06, 0.04],
+        emissiveIntensity: 2.2,
       }),
-      'material/crystal': Materials.standard({
-        baseColor: [0.35, 0.78, 0.85, 1],
+
+      // 宝箱
+      'material/chest-gold': Materials.standard({ baseColor: [1, 1, 1, 1], roughness: 0.34, metallic: 0.6 }),
+      'material/chest': Materials.standard({ baseColor: [1, 1, 1, 1], roughness: 0.5, metallic: 0.35 }),
+
+      // 武器
+      'material/weapon-knife': Materials.standard({
+        baseColor: linearColor('#EAF4FF'),
+        roughness: 0.16,
+        metallic: 0.85,
+        emissive: [0.22, 0.55, 0.75],
+        emissiveIntensity: 1.1,
+      }),
+      'material/weapon-arrow': Materials.standard({
+        baseColor: linearColor('#FFF0A8'),
+        roughness: 0.32,
+        metallic: 0.6,
+        emissive: [0.55, 0.4, 0.06],
+        emissiveIntensity: 1.2,
+      }),
+      'material/weapon-bomb': Materials.standard({
+        baseColor: linearColor('#2A3038'),
+        roughness: 0.68,
+        metallic: 0.25,
+        emissive: [0.7, 0.16, 0.05],
+        emissiveIntensity: 0.9,
+      }),
+
+      // 道具
+      'material/loot': Materials.standard({
+        baseColor: [1, 1, 1, 1],
+        roughness: 0.24,
+        metallic: 0.7,
+        emissive: [0.32, 0.24, 0.05],
+        emissiveIntensity: 1.2,
+      }),
+      'material/xp-crystal': Materials.standard({
+        baseColor: linearColor('#61D9AE'),
         roughness: 0.25,
-        metallic: 0.3,
-        emissive: [0.2, 0.5, 0.6],
-        emissiveIntensity: 2.0,
+        metallic: 0.6,
+        emissive: [0.2, 0.6, 0.45],
+        emissiveIntensity: 1.6,
       }),
+      'material/bush': Materials.standard({ baseColor: [1, 1, 1, 1], roughness: 0.88, metallic: 0.02 }),
+      'material/rock': Materials.standard({ baseColor: [1, 1, 1, 1], roughness: 0.85, metallic: 0.06 }),
+      'material/crystal': Materials.standard({
+        baseColor: [1, 1, 1, 1],
+        roughness: 0.24,
+        metallic: 0.3,
+        emissive: [0.1, 0.28, 0.34],
+        emissiveIntensity: 1.4,
+      }),
+
+      // 无光照辅助层
       'material/ammo-trail': Materials.unlit([0.35, 0.3, 0.08, 0.35], {
         renderState: { blend: SPRITE_PREMULTIPLIED_ALPHA_BLEND, depthWriteEnabled: false },
       }),
       'material/ao': Materials.unlit([0.071, 0.086, 0.102, 1]),
-      'material/rock-top': Materials.standard({ baseColor: [0.20, 0.27, 0.34, 1], roughness: 0.9 }),
+      'material/rock-top': Materials.standard({ baseColor: [1, 1, 1, 1], roughness: 0.9 }),
       'material/ring-player': Materials.unlit([0.063, 0.725, 0.506, 1]),
       'material/ring-ally': Materials.unlit([0.055, 0.647, 0.914, 1]),
       'material/ring-rival': Materials.unlit([0.984, 0.4, 0.18, 1]),
       'material/ring-grudge': Materials.unlit([0.85, 0.275, 0.937, 1]),
       'material/ring-white': Materials.unlit([1, 1, 1, 1]),
-      'material/shadow': Materials.unlit([0.01, 0.01, 0.012, 0.65], {
+      'material/shadow': Materials.unlit([0.01, 0.01, 0.012, 0.6], {
         renderState: { blend: SPRITE_PREMULTIPLIED_ALPHA_BLEND },
       }),
-      'material/team-beam': Materials.unlit([0.055, 0.647, 0.914, 1], {
+      'material/team-beam': Materials.unlit([0.055, 0.647, 0.914, 0.75], {
         renderState: { blend: SPRITE_PREMULTIPLIED_ALPHA_BLEND },
       }),
       'material/danger-border': Materials.unlit([0.88, 0.28, 0.22, 0.75], {
         renderState: { blend: SPRITE_PREMULTIPLIED_ALPHA_BLEND },
+      }),
+      'material/danger-fill': Materials.unlit([0.88, 0.24, 0.18, 0.22], {
+        renderState: { blend: SPRITE_PREMULTIPLIED_ALPHA_BLEND, depthWriteEnabled: false },
       }),
       'scene/island': sceneAsset,
       ...charMaterials,

@@ -94,9 +94,19 @@ export default async function playthrough(play) {
       const after = await read(play);
       assert(after.gameOver || after.pendingUpgrade || after.elapsed > before.elapsed, 'Boss froze the main clock');
     }
-    if (s.raid.telegraph && !covered.telegraph) {
-      covered.telegraph = true;
-      await play.screenshot('boss-red-telegraph');
+    if (!covered.telegraph && s.raid.bossRound > 0) {
+      // 圆形预警只持续 1.5s、每 4.5s 触发一次：只要团战还在进行，就小步推进轮询真实状态，
+      // 出现即截图（只读 + advance，不写模拟层）。
+      for (let guard = 0; guard < 20; guard++) {
+        const t = await read(play);
+        if (t.gameOver || t.raid.phase === 'none' || t.raid.phase === 'result') break;
+        if (t.raid.telegraph) {
+          covered.telegraph = true;
+          await play.screenshot('boss-red-telegraph');
+          break;
+        }
+        await play.advance(0.3);
+      }
     }
     if (!shrinkSeen.has(s.shrinkStage)) {
       shrinkSeen.add(s.shrinkStage);
@@ -117,11 +127,56 @@ export default async function playthrough(play) {
         return s;
       }
       if (s.player.alive) {
+        // 组队是真实的减伤机制：队内受击先由共享宝箱承伤（60 + 财富×6 HP），
+        // 因此存活期用真实 Space 结盟，才能活到 120s / 240s 的两次 Boss 出场。
+        // 背叛覆盖已在 round-1 专项步骤中完成，这里不再主动拆队。
+        if (!s.partner) {
+          if (s.incomingInvite || (s.candidate?.canInvite && !s.outgoingInvite)) {
+            await play.keyboard.press('Space');
+            await play.advance(0.2);
+          } else if (s.nearestActor && s.nearestActor.distance > 1.2) {
+            // 没有可结盟对象时，先真实靠近最近的参赛者再按 Space 尝试结盟。
+            const ndx = s.nearestActor.x - s.player.x;
+            const ndy = s.nearestActor.y - s.player.y;
+            const nkeys = [];
+            if (Math.abs(ndx) > 0.5) nkeys.push(ndx > 0 ? 'KeyD' : 'KeyA');
+            if (Math.abs(ndy) > 0.5) nkeys.push(ndy > 0 ? 'KeyS' : 'KeyW');
+            for (const key of nkeys) await play.page.keyboard.down(key);
+            try { await play.advance(0.4); }
+            finally { for (const key of nkeys) await play.page.keyboard.up(key); }
+          }
+        }
         // 持续使用真实 WASD 绕安全区走位；advance 只推进时间，不写模拟状态。
         const radius = s.safeRadius * 11 * 0.72;
         const angle = 0.42 + s.elapsed * 0.35;
-        const dx = 11 + Math.cos(angle) * radius - s.player.x;
-        const dy = 11 + Math.sin(angle) * radius * 0.94 - s.player.y;
+        // 走位（真实 WASD，只读状态，不改任何玩法数值）：
+        // 后期死亡增伤会放大 AI 环绕飞刀的伤害，因此常态要主动远离最近参赛者：
+        // 在当前安全圆上取「离所有参赛者最远」的角度，而不是被动等它贴近。
+        let targetX = 11 + Math.cos(angle) * radius;
+        let targetY = 11 + Math.sin(angle) * radius * 0.94;
+        const raidLive = s.raid.phase === 'warning' || s.raid.phase === 'fight';
+        if (raidLive) {
+          // 团战时靠近战场中心（Boss 固定 11,11），让 Boss 轮廓与圆形预警真实入镜。
+          targetX = 11;
+          targetY = 14.2;
+        } else if ((s.nearestRivals ?? []).length > 0) {
+          let bestAngle = angle;
+          let bestScore = -Infinity;
+          for (let step = 0; step < 16; step++) {
+            const a2 = (step / 16) * Math.PI * 2;
+            const px = 11 + Math.cos(a2) * radius;
+            const py = 11 + Math.sin(a2) * radius * 0.94;
+            let nearest = Infinity;
+            for (const o of s.nearestRivals) nearest = Math.min(nearest, Math.hypot(o.x - px, o.y - py));
+            // 同时略微偏好继续沿原方向移动，避免原地来回抖动
+            const score = Math.min(nearest, 6) + 0.9 * Math.cos(a2 - angle);
+            if (score > bestScore) { bestScore = score; bestAngle = a2; }
+          }
+          targetX = 11 + Math.cos(bestAngle) * radius;
+          targetY = 11 + Math.sin(bestAngle) * radius * 0.94;
+        }
+        const dx = targetX - s.player.x;
+        const dy = targetY - s.player.y;
         const keys = [];
         if (Math.abs(dx) > 0.4) keys.push(dx > 0 ? 'KeyD' : 'KeyA');
         if (Math.abs(dy) > 0.4) keys.push(dy > 0 ? 'KeyS' : 'KeyW');
@@ -163,7 +218,7 @@ export default async function playthrough(play) {
     if (!covered.betrayal) await play.step(`team-attempt-round-${index + 1}`, () => teamAndBetray());
   }
 
-  for (let index = 1; index <= 6; index++) {
+  for (let index = 1; index <= 9; index++) {
     await play.step(`round-${index}-combat-and-result`, () => finishRound());
     await play.step(`round-${index}-secret-votes-and-inheritance`, () => nextRound(index));
     if (index >= 2 && bossSeen.has(1) && bossSeen.has(2) && covered.upgrade && covered.betrayal) break;

@@ -145,7 +145,7 @@ describe('三大机制计划的运行链路', () => {
 });
 
 describe('视觉资产闭包', () => {
-  it('脚底环、AO、预警、40 把飞刀都真实绑定在场景中，角色网格有纵向颜色梯度', async () => {
+  it('脚底环、AO、预警、40 把飞刀都真实绑定在场景中，体素部件带面亮度与折角 AO', async () => {
     const built = await art.build(undefined as never);
     if (!built.ok) throw built.error;
     const assets = built.value as Record<string, any>;
@@ -157,8 +157,41 @@ describe('视觉资产闭包', () => {
     expect(entities['player-knife-39']).toBeDefined();
     expect(entities['cover-0-ao']).toBeDefined();
     expect(entities['shrink-boundary']).toBeDefined();
-    const colors = assets['mesh/char-head'].attributes.color as Float32Array;
-    expect(Math.min(...colors)).toBeCloseTo(0.72);
-    expect(Math.max(...colors)).toBeCloseTo(1.18);
+    expect(entities['raid-telegraph-fill']).toBeDefined();
+    expect(entities['debris-23']).toBeDefined();
+
+    // Tibo 的动画部件各自独立，枢轴实体存在且由角色根节点挂载
+    for (const part of ['head', 'ear-left', 'ear-right', 'legs-front', 'legs-back', 'tail', 'sack']) {
+      expect(entities[`actor-0-${part}`].components.ChildOf.parent).toBe('actor-0');
+    }
+    expect(entities['boss-claw-left'].components.ChildOf.parent).toBe('boss');
+    expect(entities['chest-0-crack'].components.ChildOf.parent).toBe('chest-0');
+
+    // 顶点色承载体素颜色：躯干纯白部件既有顶面亮值也有侧面/AO 暗值，且没有死黑
+    const colors = assets['mesh/char-body'].attributes.color as Float32Array;
+    const rgb = Array.from(colors).filter((_, index) => index % 4 !== 3);
+    const min = Math.min(...rgb);
+    const max = Math.max(...rgb);
+    expect(max).toBeGreaterThan(0.5);
+    expect(min).toBeLessThan(max * 0.75);
+    expect(min).toBeGreaterThan(0.2);
+    // 头部含亮黑鼻头与眼睛，但不允许出现纯 0 的死黑块
+    const headColors = assets['mesh/char-head'].attributes.color as Float32Array;
+    expect(Math.min(...Array.from(headColors))).toBeGreaterThan(0);
+  });
+
+  it('体素网格剔除内部隐藏面并输出有效三角形', async () => {
+    const built = await art.build(undefined as never);
+    if (!built.ok) throw built.error;
+    const assets = built.value as Record<string, any>;
+    for (const key of ['mesh/char-head', 'mesh/boss-shell', 'mesh/cover-rock', 'mesh/tile-0']) {
+      const mesh = assets[key];
+      expect(mesh.kind).toBe('mesh');
+      expect(mesh.indices.length).toBeGreaterThan(0);
+      expect(mesh.indices.length % 3).toBe(0);
+      expect(mesh.aabb).toBeDefined();
+      // 隐藏面剔除：三角形数远小于「每体素 12 个三角形」的上界
+      expect(mesh.indices.length / 3).toBeLessThan(mesh.attributes.position.length / 3);
+    }
   });
 });

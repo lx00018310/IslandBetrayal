@@ -376,6 +376,29 @@ export const islandPlugin: Plugin = {
       let touchSpeedToggle = false;
       let touchRestart = false;
 
+      // 模态按键边沿锁存：同一物理按键只允许触发一次模态动作。
+      // 固定步长下同一个输入快照可能被多个 tick 读取，justPressedCode 会连续为 true；
+      // 若不加锁存，一次 Space 会连跳两级（结算 → 秘策 → 宝物）。
+      // 只有「键已松开且本快照不再是按下边沿」才释放锁存，避免同一次按下被反复重触发。
+      const heldLatch = new Set<string>();
+      const edgePressed = (kb: { justPressedCode(code: string): boolean }, ...codes: string[]): boolean => {
+        for (const code of codes) {
+          if (!kb.justPressedCode(code)) continue;
+          if (heldLatch.has(code)) continue;
+          heldLatch.add(code);
+          return true;
+        }
+        return false;
+      };
+      const releaseLatch = (
+        kb: { downCode(code: string): boolean; justPressedCode(code: string): boolean },
+        ...codes: string[]
+      ): void => {
+        for (const code of codes) {
+          if (!kb.downCode(code) && !kb.justPressedCode(code)) heldLatch.delete(code);
+        }
+      };
+
       // 监听来自前端 UI 的控制消息
       const port = host?.port;
       if (port) {
@@ -646,7 +669,30 @@ export const islandPlugin: Plugin = {
                   }
                 : null,
             chestsCount: sim.chests.filter((c) => c.hp > 0 || c.treasure > 0).length,
+            // 最近三名非同队参赛者的真实距离（只读投影；供自动化脚本用真实输入走位，
+            // 不参与任何玩法判定）
+            nearestRivals: sim.actors
+              .filter((o) => o.alive && o.id !== p.id && o.team !== p.id)
+              .map((o) => ({
+                id: o.id,
+                x: Number(o.x.toFixed(2)),
+                y: Number(o.y.toFixed(2)),
+                distance: Number(dist(p, o).toFixed(2)),
+              }))
+              .sort((a, b) => a.distance - b.distance)
+              .slice(0, 3),
             monstersCount: sim.monsters.filter((m) => m.alive).length,
+            // 最近三只怪物的真实位置（只读投影，供自动化脚本用真实输入走位）
+            nearestMonsters: sim.monsters
+              .filter((m) => m.alive && m.kind !== 'boss')
+              .map((m) => ({
+                id: m.id,
+                x: Number(m.x.toFixed(2)),
+                y: Number(m.y.toFixed(2)),
+                distance: Number(Math.hypot(m.x - p.x, m.y - p.y).toFixed(2)),
+              }))
+              .sort((a, b) => a.distance - b.distance)
+              .slice(0, 3),
             lootsCount: sim.loots.filter((l) => l.value > 0).length,
             playerDisbands: sim.playerDisbands,
             betrayals: sim.playerDisbands,
@@ -810,35 +856,37 @@ export const islandPlugin: Plugin = {
                 moveY = ky / len;
               }
 
+              // 松开即释放锁存，保证每次真实按键只结算一次
+              releaseLatch(kb, 'Space', 'KeyA', 'KeyD', 'ArrowLeft', 'ArrowRight');
               // 模态上下文独占 Space 按键
               if (sim.pendingUpgrade && !sim.gameOver) {
-                if (kb.justPressedCode('KeyA') || kb.justPressedCode('ArrowLeft')) {
+                if (edgePressed(kb, 'KeyA', 'ArrowLeft')) {
                   upgradeHighlight = (upgradeHighlight + 2) % 3;
                 }
-                if (kb.justPressedCode('KeyD') || kb.justPressedCode('ArrowRight')) {
+                if (edgePressed(kb, 'KeyD', 'ArrowRight')) {
                   upgradeHighlight = (upgradeHighlight + 1) % 3;
                 }
-                if (kb.justPressedCode('Space')) {
+                if (edgePressed(kb, 'Space')) {
                   upgradeChoiceIndex = upgradeHighlight;
                 }
               } else if (sim.gameOver) {
                 if (mode === 'normal') {
-                  if (kb.justPressedCode('Space')) {
+                  if (edgePressed(kb, 'Space')) {
                     startNextNormalRound();
                   }
                 } else {
                   if (endlessPhase === 'round-result') {
-                    if (kb.justPressedCode('Space')) {
+                    if (edgePressed(kb, 'Space')) {
                       endlessPhase = 'rule-pick';
                     }
                   } else if (endlessPhase === 'rule-pick') {
-                    if (kb.justPressedCode('KeyA') || kb.justPressedCode('ArrowLeft')) {
+                    if (edgePressed(kb, 'KeyA', 'ArrowLeft')) {
                       ruleStatIndex = (ruleStatIndex + RULE_KINDS.length - 1) % RULE_KINDS.length;
                     }
-                    if (kb.justPressedCode('KeyD') || kb.justPressedCode('ArrowRight')) {
+                    if (edgePressed(kb, 'KeyD', 'ArrowRight')) {
                       ruleStatIndex = (ruleStatIndex + 1) % RULE_KINDS.length;
                     }
-                    if (kb.justPressedCode('Space')) {
+                    if (edgePressed(kb, 'Space')) {
                       playerPendingRule = {
                         ownerId: 0,
                         kind: RULE_KINDS[ruleStatIndex]!,
@@ -852,13 +900,13 @@ export const islandPlugin: Plugin = {
                   } else if (endlessPhase === 'relic-pick') {
                     const owned = getPlayerOwnedRelics();
                     const totalOptions = owned.length + 1;
-                    if (kb.justPressedCode('KeyA') || kb.justPressedCode('ArrowLeft')) {
+                    if (edgePressed(kb, 'KeyA', 'ArrowLeft')) {
                       relicHighlight = (relicHighlight + totalOptions - 1) % totalOptions;
                     }
-                    if (kb.justPressedCode('KeyD') || kb.justPressedCode('ArrowRight')) {
+                    if (edgePressed(kb, 'KeyD', 'ArrowRight')) {
                       relicHighlight = (relicHighlight + 1) % totalOptions;
                     }
-                    if (kb.justPressedCode('Space')) {
+                    if (edgePressed(kb, 'Space')) {
                       playerPendingRelic = owned[relicHighlight] ?? null;
                       startNextEndlessRound();
                     }
@@ -866,7 +914,7 @@ export const islandPlugin: Plugin = {
                 }
               } else {
                 // 战斗状态：Space 触发队伍邀请或接受
-                if (kb.justPressedCode('Space')) {
+                if (edgePressed(kb, 'Space')) {
                   teamAction = true;
                 }
               }

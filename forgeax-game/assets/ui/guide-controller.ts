@@ -289,6 +289,13 @@ export async function createGuideUi(
     const worldBannerText = shadow?.querySelector<HTMLElement>('[data-ui-part="world-banner-text"]');
     const modeBadge = shadow?.querySelector<HTMLElement>('[data-ui-part="mode-badge"]');
 
+    // 模态按钮点击后主动失焦：否则按钮保留 DOM 焦点，之后按 Space 会同时触发
+    // 游戏输入与该按钮的默认激活，一次按键连跳两级（结算 → 秘策 → 宝物）。
+    // blur 可能不存在于测试桩，故按可选方法调用。
+    const blurAfterClick = (button: HTMLButtonElement | null) => {
+      button?.addEventListener('click', () => button.blur?.());
+    };
+
     if (shadow) {
       // 秘策属性卡片点击
       for (let s = 0; s < RULE_KINDS.length; s++) {
@@ -306,6 +313,7 @@ export async function createGuideUi(
         btnConfirmRule.addEventListener('click', () => {
           sendTouch({ kind: 'rule_select', ruleKind: RULE_KINDS[selectedStatIndex] });
         });
+        blurAfterClick(btnConfirmRule);
       }
 
       if (btnConfirmRelic) {
@@ -317,6 +325,7 @@ export async function createGuideUi(
             relicLevel: chosen?.level ?? 1,
           });
         });
+        blurAfterClick(btnConfirmRelic);
       }
 
       if (btnResetEndless) {
@@ -399,6 +408,7 @@ export async function createGuideUi(
         btnRestart.setAttribute('disabled', '');
         sendTouch({ kind: 'next_round' });
       });
+      blurAfterClick(btnRestart);
     }
 
     if (port) {
