@@ -30,14 +30,15 @@
 }
 
 .hud-col {
-  background: rgba(12, 24, 38, 0.88);
-  border: 1px solid rgba(150, 200, 225, 0.28);
-  border-radius: 6px;
+  /* 波普积木卡片：粗黑描边 + 实心底部厚度阴影 + 小切角 */
+  background: #17263a;
+  border: 3px solid #1E293B;
+  border-radius: 4px;
   padding: 6px 12px;
   display: flex;
   flex-direction: column;
   justify-content: center;
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+  box-shadow: 0 5px 0 #0F172A, 0 8px 0 rgba(0, 0, 0, 0.25);
 }
 
 .hud-title-col {
@@ -416,7 +417,7 @@
   bottom: 28px;
   width: 110px;
   height: 110px;
-  border-radius: 50%;
+  border-radius: 3px;
   background: rgba(15, 30, 48, 0.45);
   border: 2px solid rgba(160, 210, 240, 0.35);
   pointer-events: auto;
@@ -428,7 +429,7 @@
 .move-thumb {
   width: 44px;
   height: 44px;
-  border-radius: 50%;
+  border-radius: 3px;
   background: rgba(200, 230, 250, 0.65);
   pointer-events: none;
   box-shadow: 0 2px 8px rgba(0, 0, 0, 0.35);
@@ -452,7 +453,7 @@
 .action-btn {
   width: 60px;
   height: 60px;
-  border-radius: 50%;
+  border-radius: 3px;
   border: 2px solid rgba(255, 255, 255, 0.5);
   color: #ffffff;
   display: flex;
@@ -886,4 +887,139 @@
   .hud-speed-col { display: none; }
   .survivors-count { font-size: 12px; }
   .match-phase { text-align: center; font-size: 9px; }
+}
+
+/* ===========================================================================
+   波普积木风覆盖层（v2.1）
+   目标：让 2D HUD 与 3D 体素画面语言统一 —— 粗黑描边 + 实心底边厚度 + 高饱和撞色。
+   仅改视觉，不改任何布局尺寸、操作入口或交互行为。
+   =========================================================================== */
+
+/* 所有面板 / 弹窗 / 卡片统一积木外观 */
+.hud-col,
+.choice-banner,
+.result-card,
+.endless-rule-modal,
+.endless-relic-modal,
+.upgrade-modal > *,
+[data-ui-part="endless-rule-modal"] > *,
+[data-ui-part="endless-relic-modal"] > * {
+  border: 3px solid #1E293B !important;
+  border-radius: 4px !important;
+  box-shadow: 0 5px 0 #0F172A, 0 8px 0 rgba(0, 0, 0, 0.25) !important;
+  background: #17263a !important;
+}
+
+/* 进度条 / 血条：直角 + 硬边描边 */
+.hp-fill,
+.xp-fill,
+.boss-hp-fill,
+.raid-hp-fill,
+.challenge-fill,
+[data-ui-part$="-fill"] {
+  border-radius: 0 !important;
+  box-shadow: inset 0 -2px 0 rgba(0, 0, 0, 0.35);
+}
+
+/* 按钮：积木按压手感 */
+.btn-restart,
+.btn-choice-main,
+.btn-choice-ignore,
+.btn-confirm-rule,
+.btn-confirm-relic,
+.btn-reset-endless,
+.btn-switch-mode,
+.btn-speed,
+[data-ui-part^="btn-"] {
+  border: 3px solid #1E293B !important;
+  border-radius: 4px !important;
+  box-shadow: 0 5px 0 #0F172A !important;
+  transition: transform 60ms steps(2, end), box-shadow 60ms steps(2, end) !important;
+  font-weight: 700;
+}
+
+.btn-restart:active,
+.btn-choice-main:active,
+.btn-choice-ignore:active,
+.btn-confirm-rule:active,
+.btn-confirm-relic:active,
+.btn-reset-endless:active,
+.btn-switch-mode:active,
+.btn-speed:active,
+[data-ui-part^="btn-"]:active {
+  transform: translateY(4px);
+  box-shadow: 0 1px 0 #0F172A !important;
+}
+
+/* 功能撞色：合作绿 / 背叛红 / 金币黄 */
+.btn-ally,
+[data-ui-part="btn-choice-main"] {
+  background: #4ADE80 !important;
+  color: #0B2A16 !important;
+  box-shadow: 0 5px 0 #166534 !important;
+}
+
+.btn-ignore {
+  background: #94A3B8 !important;
+  color: #0F172A !important;
+  box-shadow: 0 5px 0 #475569 !important;
+}
+
+[data-ui-part="btn-restart"],
+[data-ui-part="btn-confirm-rule"],
+[data-ui-part="btn-confirm-relic"] {
+  background: #4ADE80 !important;
+  color: #0B2A16 !important;
+  box-shadow: 0 5px 0 #166534 !important;
+}
+
+[data-ui-part="btn-reset-endless"] {
+  background: #FF3B5C !important;
+  color: #FFFFFF !important;
+  box-shadow: 0 5px 0 #881337 !important;
+}
+
+/* 危险 / 背叛警示横幅：波普猩红 + 阶梯跳动 */
+.distance-warning-hint,
+[data-ui-part="distance-warning-hint"],
+[data-ui-part="raid-title"] {
+  color: #FF3B5C !important;
+  font-weight: 800;
+  text-shadow: 2px 2px 0 #0F172A;
+  animation: pop-tick 520ms steps(2, end) infinite;
+}
+
+@keyframes pop-tick {
+  0%, 100% { transform: translateY(0); }
+  50% { transform: translateY(-2px); }
+}
+
+/* 金币 / 战利品计数器：暖金黄 + 硬边文字描边 */
+[data-ui-part="stat-treasure"],
+[data-ui-part="player-treasure"],
+.treasure-value,
+[data-ui-part="stat-kills"] {
+  color: #FACC15 !important;
+  font-weight: 800;
+  text-shadow: 2px 2px 0 #0F172A;
+}
+
+/* 身份状态与标题：统一硬边文字，去掉柔和发光 */
+[data-ui-part="result-title"],
+[data-ui-part="mode-badge"],
+.game-title {
+  text-shadow: 2px 2px 0 #0F172A;
+  font-weight: 800;
+}
+
+/* 尊重用户的减少动效偏好 */
+@media (prefers-reduced-motion: reduce) {
+  .distance-warning-hint,
+  [data-ui-part="distance-warning-hint"],
+  [data-ui-part="raid-title"] {
+    animation: none !important;
+  }
+  [data-ui-part^="btn-"] {
+    transition: none !important;
+  }
 }

@@ -80,7 +80,7 @@ export default async function playthrough(play) {
   await play.step('team-attempt-round-1', () => teamAndBetray());
 
   async function observe() {
-    const s = await read(play);
+    let s = await read(play);
     if (s.pendingUpgrade && !s.gameOver) {
       if (!covered.upgrade) await play.screenshot('05-upgrade-queue');
       covered.upgrade = true;
@@ -94,10 +94,11 @@ export default async function playthrough(play) {
       const after = await read(play);
       assert(after.gameOver || after.pendingUpgrade || after.elapsed > before.elapsed, 'Boss froze the main clock');
     }
-    if (!covered.telegraph && s.raid.bossRound > 0) {
-      // 圆形预警只持续 1.5s、每 4.5s 触发一次：只要团战还在进行，就小步推进轮询真实状态，
+    if (!covered.telegraph && (s.raid.phase === 'fight' || s.raid.phase === 'warning')) {
+      // 圆形预警只持续 1.5s、每 4.5s 触发一次：在团战窗口内小步推进轮询真实状态，
       // 出现即截图（只读 + advance，不写模拟层）。
-      for (let guard = 0; guard < 20; guard++) {
+      // 只在团战阶段轮询，否则会把脚本预算耗在非团战帧上、导致后续局次跑不完。
+      for (let guard = 0; guard < 24; guard++) {
         const t = await read(play);
         if (t.gameOver || t.raid.phase === 'none' || t.raid.phase === 'result') break;
         if (t.raid.telegraph) {
@@ -105,8 +106,10 @@ export default async function playthrough(play) {
           await play.screenshot('boss-red-telegraph');
           break;
         }
-        await play.advance(0.3);
+        await play.advance(0.25);
       }
+      // 轮询会推进时间，重新读一次，避免后续截图与断言用过期的 s
+      s = await read(play);
     }
     if (!shrinkSeen.has(s.shrinkStage)) {
       shrinkSeen.add(s.shrinkStage);

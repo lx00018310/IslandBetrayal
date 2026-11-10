@@ -167,14 +167,16 @@ describe('视觉资产闭包', () => {
     expect(entities['boss-claw-left'].components.ChildOf.parent).toBe('boss');
     expect(entities['chest-0-crack'].components.ChildOf.parent).toBe('chest-0');
 
-    // 顶点色承载体素颜色：躯干纯白部件既有顶面亮值也有侧面/AO 暗值，且没有死黑
+    // 顶点色承载体素颜色：躯干纯白部件既有顶面亮值也有侧面/AO 暗值，且没有死黑。
+    // 底面是刻意的接触阴影（shade 0.45 × 折角 AO），在俯视镜头下不可见，
+    // 但仍必须保持可辨，不能压成纯黑。
     const colors = assets['mesh/char-body'].attributes.color as Float32Array;
     const rgb = Array.from(colors).filter((_, index) => index % 4 !== 3);
     const min = Math.min(...rgb);
     const max = Math.max(...rgb);
     expect(max).toBeGreaterThan(0.5);
     expect(min).toBeLessThan(max * 0.75);
-    expect(min).toBeGreaterThan(0.2);
+    expect(min).toBeGreaterThan(0.1);
     // 头部含亮黑鼻头与眼睛，但不允许出现纯 0 的死黑块
     const headColors = assets['mesh/char-head'].attributes.color as Float32Array;
     expect(Math.min(...Array.from(headColors))).toBeGreaterThan(0);
@@ -184,7 +186,7 @@ describe('视觉资产闭包', () => {
     const built = await art.build(undefined as never);
     if (!built.ok) throw built.error;
     const assets = built.value as Record<string, any>;
-    for (const key of ['mesh/char-head', 'mesh/boss-shell', 'mesh/cover-rock', 'mesh/tile-0']) {
+    for (const key of ['mesh/char-head', 'mesh/boss-shell', 'mesh/cover-rock', 'mesh/tile-0-0', 'mesh/tile-0-1', 'mesh/foam']) {
       const mesh = assets[key];
       expect(mesh.kind).toBe('mesh');
       expect(mesh.indices.length).toBeGreaterThan(0);

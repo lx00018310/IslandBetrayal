@@ -22,12 +22,14 @@ import { ChildOf } from '@forgeax/engine/scene';
 import type { AssetError, AssetGuid, MeshAsset, Result, SceneAsset, SceneEntity } from '@forgeax/engine/types';
 import { ok, srgbChannelToLinear } from '@forgeax/engine/types';
 import { assetGuid, guidText, PACKAGE_IDS } from '../shared/asset-refs.ts';
-import { VISUAL_LAYERS } from './pixel-art-data.ts';
 import { GRID_SIZE, hash } from './simulation.ts';
 import {
+  AI_IDENTITY_COLORS,
+  arrowBlocks,
   bushProp,
   coverRock,
   crystalProp,
+  foamCluster,
   GROUND_BAND_COLORS,
   groundTile,
   lootBar,
@@ -36,7 +38,10 @@ import {
   mimicShell,
   monsterBody,
   monsterEyes,
+  rimChunk,
   rockProp,
+  softShadowPatch,
+  squareFrame,
   teamChestBody,
   teamChestCrack,
   teamChestLid,
@@ -48,6 +53,7 @@ import {
   tiboLegs,
   tiboSack,
   tiboTail,
+  voxelTelegraphGrid,
   weaponArrow,
   weaponBomb,
   weaponKnife,
@@ -99,26 +105,33 @@ export default definePack({
   packageId: PACKAGE_IDS.islandArt,
   name: 'Island Art',
   build: () => {
-    // 1. 非体素的辅助几何：阴影、脚底环、方向箭头、预警环
-    const shadowQuad = createPlaneGeometry(1.25, 0.75);
+    // 1. 辅助几何：全部为方块或方块拼片（方案要求全场景可见几何 100% 由立方体构成）。
+    //    阴影用薄方块、脚底标识用方形框条、预警用方环，不使用球/柱/环。
+    // 接地阴影：两层扁平方块（外淡内深），顶点色做中心深/边缘浅的过渡，
+    // 避免单层 alpha 方板在水平视角下变成硬边深色方框。
+    const shadowQuad = softShadowPatch(1.25, 0.75);
     if (!shadowQuad.ok) return shadowQuad;
-    const monsterShadow = createCylinderGeometry(0.52, 0.52, 0.015, 16);
+    const monsterShadow = softShadowPatch(1.04, 1.04);
     if (!monsterShadow.ok) return monsterShadow;
-    const bossShadow = createPlaneGeometry(2.8, 2.2);
+    const bossShadow = softShadowPatch(2.8, 2.2);
     if (!bossShadow.ok) return bossShadow;
-    const footRing = createTorusGeometry(0.58, 0.035, 4, 24);
+    /** 方形脚底框：4 根细方条拼成回字形，替代旧圆环。 */
+    const footRing = squareFrame(0.58, 0.07, 0.02);
     if (!footRing.ok) return footRing;
-    const directionArrow = createCylinderGeometry(0, 0.12, 0.3, 3);
+    /** 方向指示：3 层递缩小方块构成的三角箭头。 */
+    const directionArrow = arrowBlocks();
     if (!directionArrow.ok) return directionArrow;
-    const coverAo = createCylinderGeometry(1, 1, 0.025, 8);
+    const coverAo = createBoxGeometry(2, 0.025, 2);
     if (!coverAo.ok) return coverAo;
-    const blastRing = createTorusGeometry(1, 0.035, 4, 32);
+    /** 技能/炸弹预警方环（单位半径 1，按半径缩放）。 */
+    const blastRing = squareFrame(1, 0.06, 0.02);
     if (!blastRing.ok) return blastRing;
-    // 缩圈边界半径可达 ~10 世界单位，若用同管径的环会被同步放大成一条粗带，
-    // 遮住地面与单位。单独用极细管径的环，保证放大后仍是细线。
-    const boundaryRing = createTorusGeometry(1, 0.0045, 4, 48);
+    // 缩圈边界半径可达 ~10 世界单位，若用同粗细的框会被同步放大成一条粗带；
+    // 单独用极细方条，保证放大后仍是细线。
+    const boundaryRing = squareFrame(1, 0.006, 0.02);
     if (!boundaryRing.ok) return boundaryRing;
-    const telegraphFill = createCylinderGeometry(1, 1, 0.02, 40);
+    /** 预警填充：贴合圆形边界的体素方格阵列（单位半径 1）。 */
+    const telegraphFill = voxelTelegraphGrid();
     if (!telegraphFill.ok) return telegraphFill;
     const playerMarker = createBoxGeometry(0.24, 0.24, 0.24);
     if (!playerMarker.ok) return playerMarker;
@@ -126,7 +139,7 @@ export default definePack({
     if (!teamBeamMesh.ok) return teamBeamMesh;
     const oceanBox = createBoxGeometry(60, 0.5, 60);
     if (!oceanBox.ok) return oceanBox;
-    const debrisCube = createBoxGeometry(0.14, 0.14, 0.14);
+    const debrisCube = createBoxGeometry(0.18, 0.18, 0.18);
     if (!debrisCube.ok) return debrisCube;
     const xpCrystalMesh = createBoxGeometry(0.24, 0.32, 0.24);
     if (!xpCrystalMesh.ok) return xpCrystalMesh;
@@ -161,10 +174,16 @@ export default definePack({
       'mesh/rock': rockProp,
       'mesh/crystal': crystalProp,
     };
-    // 阶梯地块按档位烘焙表层色差（6 档，与模拟层 band 一致）
+    // 阶梯地块按档位烘焙表层色差（6 档 × 棋盘格 2 奇偶 = 12 个网格），
+    // 同一网格被同奇偶地块共享，Draw Call 不随 529 块线性增长。
     for (let band = 0; band < GROUND_BAND_COLORS.length; band++) {
-      factories[`mesh/tile-${band}`] = () => groundTile(band);
+      for (let parity = 0; parity < 2; parity++) {
+        factories[`mesh/tile-${band}-${parity}`] = () => groundTile(band, parity);
+      }
     }
+    // 浪花方块簇与可独立下坠的边缘方块
+    factories['mesh/foam'] = foamCluster;
+    factories['mesh/rim-chunk'] = rimChunk;
 
     const meshes: Record<string, MeshAsset> = {};
     for (const [key, factory] of Object.entries(factories)) {
@@ -176,7 +195,7 @@ export default definePack({
     // 3. 角色服装材质（躯干身份色；体素顶点色只提供明暗层次）
     const charMaterials: Record<string, unknown> = {};
     for (let i = 0; i < 10; i++) {
-      const colorHex = i === 0 ? '#10B981' : [VISUAL_LAYERS.aiFriendlyBlue, VISUAL_LAYERS.aiGreedyGold, VISUAL_LAYERS.aiRaiderPurple][i % 3]!;
+      const colorHex = i === 0 ? '#10B981' : [AI_IDENTITY_COLORS.friendly, AI_IDENTITY_COLORS.greedy, AI_IDENTITY_COLORS.raider][i % 3]!;
       const rgb = hexToRgb(colorHex);
       charMaterials[`material/char-${i}`] = Materials.standard({
         baseColor: [srgbChannelToLinear(rgb[0] / 255), srgbChannelToLinear(rgb[1] / 255), srgbChannelToLinear(rgb[2] / 255), 1],
@@ -237,6 +256,23 @@ export default definePack({
       },
     };
 
+    // 外圈浪花方块环：24 簇纯白体素，由呈现层做离散上下浮动与缩放。
+    // 只落在水面（陆地外侧），不占用任何可行走格，也不参与碰撞。
+    const foamRadius = center * 1.09;
+    for (let i = 0; i < 24; i++) {
+      const a = (i / 24) * Math.PI * 2;
+      const fx = center + Math.cos(a) * foamRadius;
+      const fz = center + Math.sin(a) * foamRadius * 0.94;
+      entities[`foam-${i}`] = {
+        components: {
+          Name: { value: `Foam ${i}` },
+          Transform: { pos: [fx, -0.16, fz], scale: [1, 1, 1] },
+          MeshFilter: { assetHandle: meshRef('mesh/foam') },
+          MeshRenderer: { materials: [matRef('material/foam')] },
+        },
+      };
+    }
+
     // 529 块阶梯地块：顶面严格 y = 0，随模拟层 falling / gone 一起下沉与隐藏
     for (let gy = 0; gy < GRID_SIZE; gy++) {
       for (let gx = 0; gx < GRID_SIZE; gx++) {
@@ -261,7 +297,7 @@ export default definePack({
           components: {
             Name: { value: `Tile ${gx},${gy}` },
             Transform: { pos: [gx, posY, gy] },
-            MeshFilter: { assetHandle: meshRef(`mesh/tile-${band}`) },
+            MeshFilter: { assetHandle: meshRef(`mesh/tile-${band}-${(gx + gy) % 2}`) },
             MeshRenderer: { materials: [matRef('material/ground-voxel')] },
           },
         };
@@ -660,14 +696,22 @@ export default definePack({
       };
     }
 
-    // 24 块一次性破箱碎屑（表现层有界装饰池，不进入模拟层）
-    for (let i = 0; i < 24; i++) {
+    // 96 块体素碎块（表现层有界装饰池，不进入模拟层）。
+    // 材质按槽位轮转分配到 5 种碎块色，避免逐帧换材质。
+    const debrisMaterials = [
+      'material/debris-gold',
+      'material/debris-wood',
+      'material/debris-danger',
+      'material/debris-shell',
+      'material/debris-dust',
+    ] as const;
+    for (let i = 0; i < 96; i++) {
       entities[`debris-${i}`] = {
         components: {
           Name: { value: `Debris ${i}` },
           Transform: { pos: [0, -999, 0] },
           MeshFilter: { assetHandle: meshRef('mesh/debris') },
-          MeshRenderer: { materials: [matRef('material/chest-gold')] },
+          MeshRenderer: { materials: [matRef(debrisMaterials[i % debrisMaterials.length]!)] },
         },
       };
     }
@@ -677,7 +721,7 @@ export default definePack({
     // 5. 输出网格与材质
     const meshOutput: Record<string, MeshAsset> = {
       'mesh/ocean': withMaterial(oceanBox.value, assetGuid(PACKAGE_IDS.islandArt, 'material/ocean'), 'island:ocean'),
-      'mesh/shadow-quad': monsterShadow.value,
+      'mesh/shadow-quad': shadowQuad.value,
       'mesh/monster-shadow': monsterShadow.value,
       'mesh/boss-shadow': bossShadow.value,
       'mesh/foot-ring': footRing.value,
@@ -705,11 +749,10 @@ export default definePack({
         metallic: 0.02,
       }),
       'material/ground-grass': Materials.standard({ baseColor: [1, 1, 1, 1], roughness: 0.92, metallic: 0.02 }),
-      'material/ocean': Materials.standard({
-        baseColor: linearColor('#16374A'),
-        roughness: 0.22,
-        metallic: 0.35,
-      }),
+      // 海面是一个 60×60 的大平面，永远正对主光。若用受光材质，
+      // 双色温暮色会把整片背景染成粉色墙，压掉预警与身份辨识。
+      // 因此海面用 unlit 固定深海军蓝：既保持原始暗背景，也完全不受情绪光影响。
+      'material/ocean': Materials.unlit(linearColor('#16374A')),
 
       // 角色材质
       'material/char-fur': Materials.standard({ baseColor: [1, 1, 1, 1], roughness: 0.72, metallic: 0.02 }),
@@ -738,6 +781,26 @@ export default definePack({
 
       // 宝箱
       'material/chest-gold': Materials.standard({ baseColor: [1, 1, 1, 1], roughness: 0.34, metallic: 0.6 }),
+
+      // 体素碎块（顶点色承载体素色，材质保持中性并做差异化粗糙度/自发光）
+      'material/debris-gold': Materials.standard({
+        baseColor: linearColor('#FFD34D'),
+        roughness: 0.28,
+        metallic: 0.7,
+        emissive: [0.30, 0.22, 0.04],
+        emissiveIntensity: 1.1,
+      }),
+      'material/debris-wood': Materials.standard({ baseColor: linearColor('#8A6134'), roughness: 0.85, metallic: 0.05 }),
+      'material/debris-danger': Materials.standard({
+        baseColor: linearColor('#FF3B5C'),
+        roughness: 0.5,
+        metallic: 0.1,
+        emissive: [0.55, 0.05, 0.10],
+        emissiveIntensity: 1.3,
+      }),
+      'material/debris-shell': Materials.standard({ baseColor: linearColor('#A8794A'), roughness: 0.7, metallic: 0.1 }),
+      'material/debris-dust': Materials.standard({ baseColor: linearColor('#F2F6FA'), roughness: 0.95, metallic: 0.0 }),
+      'material/foam': Materials.standard({ baseColor: linearColor('#FFFFFF'), roughness: 0.6, metallic: 0.0 }),
       'material/chest': Materials.standard({ baseColor: [1, 1, 1, 1], roughness: 0.5, metallic: 0.35 }),
 
       // 武器
@@ -799,8 +862,9 @@ export default definePack({
       'material/ring-rival': Materials.unlit([0.984, 0.4, 0.18, 1]),
       'material/ring-grudge': Materials.unlit([0.85, 0.275, 0.937, 1]),
       'material/ring-white': Materials.unlit([1, 1, 1, 1]),
-      'material/shadow': Materials.unlit([0.01, 0.01, 0.012, 0.6], {
-        renderState: { blend: SPRITE_PREMULTIPLIED_ALPHA_BLEND },
+      // 接地阴影：顶点色提供灰度层次，材质只给统一低透明度
+      'material/shadow': Materials.unlit([0.16, 0.20, 0.17, 0.42], {
+        renderState: { blend: SPRITE_PREMULTIPLIED_ALPHA_BLEND, depthWriteEnabled: false },
       }),
       'material/team-beam': Materials.unlit([0.055, 0.647, 0.914, 0.75], {
         renderState: { blend: SPRITE_PREMULTIPLIED_ALPHA_BLEND },

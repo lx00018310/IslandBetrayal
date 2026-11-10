@@ -18,22 +18,30 @@ interface FaceDir {
   /** 面内第二轴 */
   readonly v: Axis;
   readonly normal: readonly [number, number, number];
-  /** 面亮度（与真实平行光叠加，只做轻微层次区分） */
+  /**
+   * 面亮度系数（烘焙进顶点色，不依赖引擎漫反射）：
+   * 顶面提亮、左前主面居中、右后背光面压暗并偏冷。
+   */
   readonly shade: number;
+  /** 背光面的冷色偏移量（加到蓝通道，sRGB 0..1） */
+  readonly coolShift: number;
 }
 
-/** 六个面方向：顶面最亮，向下与背向依次压暗。 */
+/**
+ * 六面方向光阶：模拟固定「左上偏前」的主光。
+ * 顶面 1.06 / 前 0.84 / 右 0.64（+冷偏移）/ 底 0.45，形成《天天过马路》的刀切切面感。
+ */
 const FACE_DIRS: readonly FaceDir[] = [
-  { axis: 1, sign: 1, u: 2, v: 0, normal: [0, 1, 0], shade: 1.0 },
-  { axis: 1, sign: -1, u: 0, v: 2, normal: [0, -1, 0], shade: 0.62 },
-  { axis: 2, sign: 1, u: 0, v: 1, normal: [0, 0, 1], shade: 0.95 },
-  { axis: 2, sign: -1, u: 1, v: 0, normal: [0, 0, -1], shade: 0.82 },
-  { axis: 0, sign: 1, u: 1, v: 2, normal: [1, 0, 0], shade: 0.88 },
-  { axis: 0, sign: -1, u: 2, v: 1, normal: [-1, 0, 0], shade: 0.76 },
+  { axis: 1, sign: 1, u: 2, v: 0, normal: [0, 1, 0], shade: 1.06, coolShift: 0 },
+  { axis: 1, sign: -1, u: 0, v: 2, normal: [0, -1, 0], shade: 0.45, coolShift: 0 },
+  { axis: 2, sign: 1, u: 0, v: 1, normal: [0, 0, 1], shade: 0.84, coolShift: 0 },
+  { axis: 2, sign: -1, u: 1, v: 0, normal: [0, 0, -1], shade: 0.64, coolShift: 0.05 },
+  { axis: 0, sign: -1, u: 2, v: 1, normal: [-1, 0, 0], shade: 0.84, coolShift: 0 },
+  { axis: 0, sign: 1, u: 1, v: 2, normal: [1, 0, 0], shade: 0.64, coolShift: 0.05 },
 ];
 
-/** 折角 AO 四档亮度：0 最暗（两侧都被挡），3 最亮。 */
-const DEFAULT_AO_SHADE = [0.60, 0.76, 0.89, 1.0] as const;
+/** 折角 AO 四档亮度：0 最暗（两侧都被挡），3 最亮。每级约 -12%。 */
+const DEFAULT_AO_SHADE = [0.66, 0.78, 0.89, 1.0] as const;
 
 const GRID_MIN = -64;
 const GRID_SPAN = 128;
@@ -278,7 +286,11 @@ export function createVoxelModel(options: VoxelModelOptions = {}): VoxelModel {
               corners[corner]!,
               dir.normal,
               cornerUv[corner]!,
-              [rgb[0] * brightness, rgb[1] * brightness, rgb[2] * brightness],
+              [
+                rgb[0] * brightness,
+                rgb[1] * brightness,
+                Math.min(1, rgb[2] * brightness + dir.coolShift * brightness),
+              ],
             );
           }
           indices.push(first, first + 1, first + 2, first, first + 2, first + 3);

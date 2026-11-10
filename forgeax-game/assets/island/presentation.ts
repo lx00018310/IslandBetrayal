@@ -7,7 +7,7 @@
 
 import type { EntityHandle, World } from '@forgeax/engine/ecs';
 import { quat } from '@forgeax/engine/math';
-import { Camera } from '@forgeax/engine/render';
+import { Camera, DirectionalLight, Skylight } from '@forgeax/engine/render';
 import { sceneEntity, Transform, worldResolveSceneEntity } from '@forgeax/engine/scene';
 import { assetGuid, guidText, PACKAGE_IDS } from '../shared/asset-refs.ts';
 import { getGrudgeScore } from './stats.ts';
@@ -27,9 +27,37 @@ const VISUAL_MAX_BLAST_SCALE = 6.0;
 const SPRITE_QUAT = [-0.4617486, 0, 0, 0.8870108] as const;
 const SHADOW_QUAT = [-0.7071068, 0, 0, 0.7071068] as const;
 
-/** 破箱碎屑装饰池容量（有界；容量不足只少粒子，不影响真实掉落与判定） */
-const DEBRIS_POOL = 24;
-const DEBRIS_LIFE = 0.55;
+/** 体素碎块装饰池容量（有界；容量不足只少粒子，不影响真实掉落与判定） */
+const DEBRIS_POOL = 96;
+const DEBRIS_LIFE = 0.9;
+/** 碎块物理：重力与落地反弹系数（纯表现层，不参与任何玩法判定） */
+const DEBRIS_GRAVITY = -18;
+const DEBRIS_BOUNCE = 0.45;
+
+/**
+ * 双色温情绪光：只在真实背叛/终局状态之间插值，不新增玩法状态。
+ * 冷色温 = 晴日波普；暖色温 = 背叛暮色（霓虹紫红主光 + 暗紫环境光）。
+ */
+const MOOD_CALM = {
+  sunColor: [1.0, 0.97, 0.90] as const,
+  sunIntensity: 2.6,
+  skyColor: [0.45, 0.60, 0.75] as const,
+  skyIntensity: 1.15,
+};
+// 背叛暮色：只做「色温偏移」而不是「整体染色」。
+// 早期版本用 [1.0, 0.62, 0.72] + 2.35 强度，把海面染成大片粉色、压掉了预警与身份辨识，
+// 按方案「若明暗变化遮蔽预警或混淆身份标识则删除该效果」的红线，改为克制版本：
+// 保留接近白的主光，只让环境光偏紫，并在下面用 MOOD_MAX_BLEND 限制最大混合度。
+const MOOD_BETRAYAL = {
+  sunColor: [1.0, 0.86, 0.90] as const,
+  sunIntensity: 2.45,
+  skyColor: [0.40, 0.38, 0.62] as const,
+  skyIntensity: 1.02,
+};
+/** 情绪光最大混合度：留一部分晴天色温，保证预警与身份标识始终清晰。 */
+const MOOD_MAX_BLEND = 0.7;
+/** 情绪过渡时长（秒）；暂停/结算/重开时按当前目标重新收敛。 */
+const MOOD_BLEND_SECONDS = 0.8;
 
 export interface PresentationController {
   update(sim: SimulationState, dt: number): void;
@@ -52,6 +80,52 @@ export function sackTierFor(treasure: number): 0 | 1 | 2 {
   return 0;
 }
 
+/** 体素碎块池容量（供测试与场景装配共享同一数字）。 */
+export function debrisPoolSize(): number {
+  return DEBRIS_POOL;
+}
+
+/**
+ * 双色温情绪等级：0 = 晴日，1 = 背叛暮色。
+ * 只读取模拟层既有字段，不新增玩法状态；结算后回落晴天，避免残留暮色。
+ */
+export function moodLevelFor(state: {
+  playerDisbands: number;
+  finalPhase: boolean;
+  gameOver: boolean;
+}): 0 | 1 {
+  if (state.gameOver) return 0;
+  return state.playerDisbands > 0 || state.finalPhase ? 1 : 0;
+}
+
+export interface HopPose {
+  /** Y 轴缩放（>1 拉长，<1 挤压） */
+  scaleY: number;
+  /** X/Z 轴缩放（与 Y 互补，保持体积感） */
+  scaleXZ: number;
+  /** 离地高度（世界单位） */
+  height: number;
+}
+
+/**
+ * Crossy Hop 姿态：`hop` 为 0..1 的腾空高度比，`moving` 为是否在移动。
+ * 起跳拉长、落地挤压，静止时完全回归 1:1，避免残留形变。
+ */
+export function hopPose(hop: number, moving: boolean): HopPose {
+  if (!moving) return { scaleY: 1, scaleXZ: 1, height: 0 };
+  const clamped = Math.max(0, Math.min(1, hop));
+  const stretch = 1 + clamped * 0.18;
+  const squeeze = 1 - clamped * 0.12;
+  // 触地瞬间（hop 接近 0）做一次挤压脉冲：Y 压扁、XZ 同时膨胀，
+  // 保持体积感并读成"落地"，而不是整体缩小。
+  const landAmount = clamped < 0.12 ? (0.12 - clamped) / 0.12 : 0;
+  return {
+    scaleY: stretch * (1 - landAmount * 0.2),
+    scaleXZ: squeeze * (1 + landAmount * 0.16),
+    height: clamped * 0.14,
+  };
+}
+
 interface DebrisPiece {
   x: number;
   y: number;
@@ -60,7 +134,12 @@ interface DebrisPiece {
   vy: number;
   vz: number;
   life: number;
+  maxLife: number;
   spin: number;
+  /** 已经反弹过的次数：最多弹 1 次，之后贴地缩小消失 */
+  bounces: number;
+  /** 碎块材质键（金 / 木 / 铁 / 白尘 / 猩红），池内复用，不逐帧分配 */
+  material: string;
 }
 
 /** 破箱 / 背叛碎屑池：固定槽位，不依赖数组 splice，容量与实体一一对应。 */
@@ -90,6 +169,8 @@ export function setupPresentation(
   const coverTopEntities = [0, 1, 2].map(i => resolve(`cover-${i}-top`));
   const shrinkBoundary = resolve('shrink-boundary');
   const cameraEntity = resolve('camera');
+  const sunEntity = resolve('sun');
+  const skylightEntity = resolve('skylight');
   const center = (GRID_SIZE - 1) / 2;
 
   // 缓存 529 块地块实体（顶面 y = 0，随 falling / gone 下沉与隐藏）
@@ -196,6 +277,10 @@ export function setupPresentation(
   const debrisEntities: EntityHandle[] = [];
   for (let i = 0; i < DEBRIS_POOL; i++) debrisEntities.push(resolve(`debris-${i}`));
 
+  // 外圈浪花方块环（纯装饰，不参与碰撞与判定）
+  const foamEntities: EntityHandle[] = [];
+  for (let i = 0; i < 24; i++) foamEntities.push(resolve(`foam-${i}`));
+
   let camX = center;
   let camZ = center + 9.8;
   const initialPlayer = initialSim.actors[0];
@@ -224,24 +309,41 @@ export function setupPresentation(
   let lastBreakSeq = initialSim.lastBreakEvent?.seq ?? 0;
   let lastChestBreaks = initialSim.chestBreaks;
   let lastBossRound = initialSim.bossRound;
+  let lastBossHp = initialSim.raidBossHp;
+  const lastHitFlash: number[] = new Array(10).fill(0);
+  /** 上一帧的跳跃相位（用于检测落地帧，避免每帧重复生成尘土）。 */
+  const lastHopPhase: number[] = new Array(10).fill(0);
   let initialized = false;
   /** 固定槽位碎屑池：null 表示该槽位空闲。 */
   const debris: Array<DebrisPiece | null> = new Array(DEBRIS_SLOTS).fill(null);
 
-  /** 一次性局部反馈：真实破箱 / 背叛事件才产生碎屑（容量不足只少粒子）。 */
-  const spawnDebris = (x: number, y: number, count: number): void => {
+  /**
+   * 体素碎块迸裂：从固定槽位池取空闲槽，赋初速与重力后交给每帧积分。
+   * 只做表现，容量不足时少粒子，绝不影响真实掉落、判定或模拟结果。
+   */
+  const spawnDebris = (
+    x: number,
+    y: number,
+    count: number,
+    material: string,
+    speed = 2.4,
+    upward = 1.8,
+  ): void => {
     let spawned = 0;
     for (let slot = 0; slot < DEBRIS_SLOTS && spawned < count; slot++) {
       if (debris[slot]) continue;
       debris[slot] = {
         x,
         y,
-        z: 0.24 + Math.random() * 0.2,
-        vx: (Math.random() - 0.5) * 2.4,
-        vy: (Math.random() - 0.5) * 2.4,
-        vz: 1.2 + Math.random() * 1.8,
+        z: 0.22 + Math.random() * 0.18,
+        vx: (Math.random() - 0.5) * speed,
+        vy: (Math.random() - 0.5) * speed,
+        vz: upward * (0.6 + Math.random() * 0.8),
         life: DEBRIS_LIFE,
+        maxLife: DEBRIS_LIFE,
         spin: Math.random() * Math.PI * 2,
+        bounces: 0,
+        material,
       };
       spawned++;
     }
@@ -328,6 +430,14 @@ export function setupPresentation(
     lastBreakSeq = sim.lastBreakEvent?.seq ?? 0;
     lastChestBreaks = sim.chestBreaks;
     lastBossRound = sim.bossRound;
+    lastBossHp = sim.raidBossHp;
+    lastHitFlash.fill(0);
+    lastHopPhase.fill(0);
+    lastMoodBetraySeq = sim.lastBreakEvent?.seq ?? 0;
+    moodActive = false;
+    moodTarget = 0;
+    moodBlend = 0;
+    applyMood(0);
     initialized = true;
     updateCovers(sim);
   };
@@ -365,6 +475,38 @@ export function setupPresentation(
   let wasGameOver = false;
   let viewportWidth = 0;
   let viewportHeight = 0;
+
+  /**
+   * 双色温情绪光（0 = 晴日，1 = 背叛暮色）。
+   * 触发源全部来自模拟层既有字段：玩家主动背叛次数、断线事件、终局阶段。
+   * 只影响光照颜色/强度，不改变任何玩法判定。
+   */
+  let moodTarget = 0;
+  let moodBlend = 0;
+  let lastMoodBetraySeq = initialSim.lastBreakEvent?.seq ?? 0;
+  let moodActive = false;
+
+  const applyMood = (value: number) => {
+    const lerp = (a: number, b: number) => a + (b - a) * value;
+    world.set(sunEntity, DirectionalLight, {
+      color: [
+        lerp(MOOD_CALM.sunColor[0], MOOD_BETRAYAL.sunColor[0]),
+        lerp(MOOD_CALM.sunColor[1], MOOD_BETRAYAL.sunColor[1]),
+        lerp(MOOD_CALM.sunColor[2], MOOD_BETRAYAL.sunColor[2]),
+      ],
+      intensity: lerp(MOOD_CALM.sunIntensity, MOOD_BETRAYAL.sunIntensity),
+      direction: [-0.35, -0.82, -0.45],
+    }).unwrap();
+    world.set(skylightEntity, Skylight, {
+      color: [
+        lerp(MOOD_CALM.skyColor[0], MOOD_BETRAYAL.skyColor[0]),
+        lerp(MOOD_CALM.skyColor[1], MOOD_BETRAYAL.skyColor[1]),
+        lerp(MOOD_CALM.skyColor[2], MOOD_BETRAYAL.skyColor[2]),
+      ],
+      intensity: lerp(MOOD_CALM.skyIntensity, MOOD_BETRAYAL.skyIntensity),
+    }).unwrap();
+  };
+  applyMood(0);
 
   return {
     reset(sim: SimulationState): void {
@@ -473,17 +615,23 @@ export function setupPresentation(
         const hop = isMoving ? Math.abs(Math.sin(phase)) : 0;
         const airborne = isMoving ? Math.sin(phase) : 0;
 
+        // 落地帧：相位从「腾空」跨到「触地」时，脚底扬起 3 颗白色方块尘土。
+        // 用相位跨越判定而非每帧判定，避免落地瞬间重复生成粒子。
+        const prevSin = Math.sin(lastHopPhase[i]!);
+        lastHopPhase[i] = phase;
+        if (isMoving && airborne <= 0 && prevSin > 0.25) {
+          spawnDebris(a.x, a.y, 3, 'debris-dust', 1.1, 0.9);
+        }
+
         // 起跳拉长 / 落地挤压（只影响视觉，不改模拟坐标与碰撞）
-        const stretchY = isMoving ? 1 + hop * 0.18 : 1;
-        const squeezeXZ = isMoving ? 1 - hop * 0.12 : 1;
-        const landSquash = isMoving && hop < 0.12 ? 1 - (0.12 - hop) * 1.2 : 1;
+        const pose = hopPose(hop, isMoving);
 
         world.set(e.root, Transform, {
-          pos: [a.x, isMoving ? hop * 0.14 : 0, a.y],
+          pos: [a.x, pose.height, a.y],
           scale: [dirSign, 1, 1],
         }).unwrap();
         world.set(e.body, Transform, {
-          scale: [squeezeXZ * landSquash, stretchY * landSquash, squeezeXZ * landSquash],
+          scale: [pose.scaleXZ, pose.scaleY, pose.scaleXZ],
         }).unwrap();
         // 头部：滞空时轻微前倾
         quat.fromEuler(partQ, airborne * 0.21, 0, 0, 'XYZ');
@@ -598,10 +746,12 @@ export function setupPresentation(
           scale: [scale, scale, 1],
           quat: [...SHADOW_QUAT],
         }).unwrap();
-        const pulseAlpha = 0.85 + Math.sin(sim.elapsed * 18) * 0.15;
+        // 体素方格填充严格与圆环同半径（格子已按圆裁剪），只做轻微脉冲，
+        // 绝不放大到圆外，避免把真实危险范围画大。
+        const pulseScale = scale * (1 + Math.sin(sim.elapsed * 18) * 0.015);
         world.set(raidTelegraphFillEntity, Transform, {
           pos: [sim.raidTelegraphX, 0.024, sim.raidTelegraphY],
-          scale: [scale * pulseAlpha, 1, scale * pulseAlpha],
+          scale: [pulseScale, 1, pulseScale],
         }).unwrap();
       } else {
         world.set(raidTelegraphEntity, Transform, { pos: [0, -999, 0] }).unwrap();
@@ -771,28 +921,85 @@ export function setupPresentation(
         }).unwrap();
       }
 
+      // 11b. 双色温情绪光：只在真实背叛/终局状态间平滑过渡
+      // 触发源（全部来自模拟层既有字段）：
+      //   - 玩家主动背叛次数增加（sim.playerDisbands）
+      //   - 新的断线事件（sim.lastBreakEvent.seq 增长）
+      //   - 终局阶段（sim.finalPhase）
+      // 只改光照颜色与强度；暂停、结算、重开都会按目标重新收敛，不留残留。
+      const betraySeq = sim.lastBreakEvent?.seq ?? 0;
+      const betrayalJustHappened = betraySeq > lastMoodBetraySeq;
+      if (betrayalJustHappened) lastMoodBetraySeq = betraySeq;
+      if (betrayalJustHappened || sim.playerDisbands > 0 || sim.finalPhase) moodActive = true;
+      moodTarget = moodActive && !sim.gameOver ? 1 : 0;
+      const blendStep = dt / MOOD_BLEND_SECONDS;
+      const target = moodTarget * MOOD_MAX_BLEND;
+      if (Math.abs(moodBlend - target) > 1e-4) {
+        moodBlend = target > moodBlend
+          ? Math.min(target, moodBlend + blendStep)
+          : Math.max(target, moodBlend - blendStep);
+        applyMood(moodBlend);
+      }
+
+      // 11c. 外圈浪花方块环：离散上下浮动 + 轻微缩放，纯装饰。
+      for (let i = 0; i < foamEntities.length; i++) {
+        const wave = Math.sin(sim.elapsed * 1.7 + i * 0.62);
+        const bob = wave > 0.2 ? 0.06 : wave < -0.4 ? -0.04 : 0;
+        const scale = 0.85 + (wave + 1) * 0.11;
+        const a = (i / foamEntities.length) * Math.PI * 2;
+        const foamRadius = ((GRID_SIZE - 1) / 2) * 1.09;
+        world.set(foamEntities[i]!, Transform, {
+          pos: [
+            center + Math.cos(a) * foamRadius,
+            -0.16 + bob,
+            center + Math.sin(a) * foamRadius * 0.94,
+          ],
+          scale: [scale, scale, scale],
+        }).unwrap();
+      }
+
       // 12. 一次性真实事件反馈：破箱碎屑与背叛标记
       if (!initialized) {
         lastBreakSeq = sim.lastBreakEvent?.seq ?? 0;
         lastChestBreaks = sim.chestBreaks;
         lastBossRound = sim.bossRound;
+        lastBossHp = sim.raidBossHp;
+        lastHitFlash.fill(0);
         initialized = true;
       }
       if (sim.chestBreaks > lastChestBreaks) {
+        // 真实破箱：木框 + 铁铆钉 + 金币三色碎块，抛物线迸裂。
         const grown = Math.min(6, sim.chestBreaks - lastChestBreaks);
         const event = sim.lastBreakEvent;
-        if (event) spawnDebris(event.x, event.y, 4 + grown * 2);
+        if (event) {
+          spawnDebris(event.x, event.y, 8 + grown * 2, 'debris-wood', 3.2, 3.0);
+          spawnDebris(event.x, event.y, 4, 'debris-gold', 2.6, 2.4);
+        }
         lastChestBreaks = sim.chestBreaks;
       }
       const breakSeq = sim.lastBreakEvent?.seq ?? 0;
       if (breakSeq > lastBreakSeq) {
         const event = sim.lastBreakEvent!;
         lastBreakSeq = breakSeq;
-        // 背叛 / 断线标记：真实事件几何中点的方块标记，而非全场暮色
-        spawnDebris(event.x, event.y, 5);
+        // 背叛 / 断线：真实事件几何中点的猩红碎块标记，而非全场暮色。
+        spawnDebris(event.x, event.y, 8, 'debris-danger', 2.8, 2.6);
       }
       if (sim.bossRound > lastBossRound) {
         lastBossRound = sim.bossRound;
+      }
+
+      // 真实受击反馈：Boss / 角色 hitFlash 上升沿各迸一次碎块（不新增玩法事件）。
+      if (sim.raidBossHp < lastBossHp) {
+        spawnDebris(sim.raidBossX, sim.raidBossY, 3, 'debris-shell', 2.2, 2.0);
+      }
+      lastBossHp = sim.raidBossHp;
+      for (let i = 0; i < 10; i++) {
+        const a = sim.actors[i]!;
+        const wasHit = lastHitFlash[i] ?? 0;
+        lastHitFlash[i] = a.hitFlash;
+        if (a.alive && a.hitFlash > wasHit + 0.05) {
+          spawnDebris(a.x, a.y, 3, 'debris-danger', 1.8, 1.6);
+        }
       }
 
       // 碎屑装饰池推进（固定槽位，有界；与模拟层粒子互不影响）
@@ -812,12 +1019,22 @@ export function setupPresentation(
         piece.x += piece.vx * dt;
         piece.y += piece.vy * dt;
         piece.z += piece.vz * dt;
-        piece.vz -= 9.5 * dt;
-        if (piece.z < 0.02) {
-          piece.z = 0.02;
-          piece.vz = 0;
+        piece.vz += DEBRIS_GRAVITY * dt;
+        if (piece.z <= 0.06) {
+          piece.z = 0.06;
+          if (piece.bounces < 1) {
+            // 落地反弹一次（能量衰减），之后贴地滑行到消失
+            piece.vz = Math.abs(piece.vz) * DEBRIS_BOUNCE;
+            piece.bounces += 1;
+            piece.vx *= 0.6;
+            piece.vy *= 0.6;
+          } else {
+            piece.vz = 0;
+            piece.vx *= 0.82;
+            piece.vy *= 0.82;
+          }
         }
-        const shrink = Math.max(0.05, piece.life / DEBRIS_LIFE);
+        const shrink = Math.max(0.05, piece.life / piece.maxLife);
         quat.fromEuler(partQ, piece.spin, piece.spin * 1.7, 0, 'XYZ');
         world.set(handle, Transform, {
           pos: [piece.x, piece.z, piece.y],

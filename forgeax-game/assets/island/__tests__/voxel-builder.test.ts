@@ -106,9 +106,9 @@ describe('体素构建器', () => {
       max = Math.max(max, colors[i]!);
     }
     // 顶面最亮档与凹角最暗档必须同时存在，且暗档不是死黑
-    expect(max).toBeCloseTo(1, 5);
-    expect(min).toBeLessThan(max * 0.8);
-    expect(min).toBeGreaterThan(0.5);
+    expect(max).toBeCloseTo(1.06, 5);
+    expect(min).toBeLessThan(max * 0.7);
+    expect(min).toBeGreaterThan(0.4);
   });
 
   it('体素颜色按 sRGB 解码为线性值，面亮度给出三面明暗', () => {
@@ -116,14 +116,29 @@ describe('体素构建器', () => {
     const colors = asset.attributes.color as Float32Array;
     const normals = asset.attributes.normal as Float32Array;
     const byAxis = new Map<string, number>();
+    const byAxisBlue = new Map<string, number>();
     for (let v = 0; v < normals.length / 3; v++) {
       const key = `${normals[v * 3]!},${normals[v * 3 + 1]!},${normals[v * 3 + 2]!}`;
       byAxis.set(key, colors[v * 4]!);
+      byAxisBlue.set(key, colors[v * 4 + 2]!);
     }
-    // 顶面最亮，底面最暗，侧面居中
-    expect(byAxis.get('0,1,0')).toBeCloseTo(1, 5);
-    expect(byAxis.get('0,-1,0')).toBeCloseTo(0.62, 5);
-    expect(byAxis.get('0,0,1')).toBeCloseTo(0.95, 5);
+    // 方向光阶：顶面 > 左前主面 > 右后背光面 > 底面
+    const top = byAxis.get('0,1,0')!;
+    const front = byAxis.get('0,0,1')!;
+    const left = byAxis.get('-1,0,0')!;
+    const right = byAxis.get('1,0,0')!;
+    const back = byAxis.get('0,0,-1')!;
+    const bottom = byAxis.get('0,-1,0')!;
+    expect(top).toBeGreaterThan(front);
+    expect(front).toBeGreaterThan(right);
+    expect(left).toBeGreaterThan(right);
+    expect(right).toBeGreaterThan(bottom);
+    // 背光面叠加冷色偏移（蓝通道相对红通道更高）
+    expect(byAxisBlue.get('1,0,0')!).toBeGreaterThan(right);
+    expect(byAxisBlue.get('0,0,-1')!).toBeGreaterThan(back);
+    // 顶面仍是最亮、底面最暗的固定关系
+    expect(top).toBeCloseTo(1.06, 5);
+    expect(bottom).toBeCloseTo(0.45, 5);
   });
 
   it('空模型返回结构化错误而不是静默输出空网格', () => {

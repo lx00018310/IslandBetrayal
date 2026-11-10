@@ -72,6 +72,16 @@ export const VOXEL_PALETTE = {
 
 const P = VOXEL_PALETTE;
 
+/** 按系数微调 sRGB 十六进制明度（仅用于地块棋盘格的微差，不改变色相）。 */
+function shadeHex(hex: string, factor: number): string {
+  const clean = hex.startsWith('#') ? hex.slice(1) : hex;
+  const num = parseInt(clean, 16);
+  const channels = [(num >> 16) & 255, (num >> 8) & 255, num & 255].map((c) =>
+    Math.max(0, Math.min(255, Math.round(c * factor))),
+  );
+  return `#${channels.map((c) => c.toString(16).padStart(2, '0')).join('')}`;
+}
+
 /**
  * 地块表层色（低对比、适度降饱和）：只用微弱色差区分地块，
  * 不让棋盘格抢占单位与弹药的注意力。索引与模拟层的 `band` 一致。
@@ -84,6 +94,16 @@ export const GROUND_BAND_COLORS: readonly string[] = [
   '#8E9A6A', // 草地 → 沙滩过渡
   '#CDBB8E', // 5 外圈沙滩
 ];
+
+/**
+ * 身份色（原 pixel-art-data.ts 的 L2 单位层色板，唯一被运行时使用的一组）。
+ * 迁移到这里后，旧 2D 贴图生成器不再被任何代码引用。
+ */
+export const AI_IDENTITY_COLORS = {
+  friendly: '#38BDF8',
+  greedy: '#FACC15',
+  raider: '#E879F9',
+} as const;
 
 export const TIBO_UNIT = 0.1;
 
@@ -386,8 +406,11 @@ export function crystalProp(): Result<MeshAsset, AssetError> {
 // 表层草地（按档位烘焙色差）→ 暖沙层 → 内收岩层，随地块一起下沉/隐藏
 // ---------------------------------------------------------------------------
 
-export function groundTile(band: number): Result<MeshAsset, AssetError> {
-  const color = GROUND_BAND_COLORS[Math.max(0, Math.min(GROUND_BAND_COLORS.length - 1, band))]!;
+export function groundTile(band: number, parity = 0): Result<MeshAsset, AssetError> {
+  const base = GROUND_BAND_COLORS[Math.max(0, Math.min(GROUND_BAND_COLORS.length - 1, band))]!;
+  // 棋盘格：按 (x + z) 奇偶做微差明度（±3%），形成《天天过马路》的跳格视觉引导，
+  // 但不抢战斗信息——草地档位本身的色差仍然主导。
+  const color = parity === 0 ? base : shadeHex(base, 1.055);
   const model = createVoxelModel({ unit: 0.05, pivot: [10, 4, 10], ao: false });
   // 表层草地：顶面 y = 0
   model.box([0, 3, 0], [20, 4, 20], color);
@@ -396,5 +419,109 @@ export function groundTile(band: number): Result<MeshAsset, AssetError> {
   model.box([0, 1, 0], [20, 2, 20], P.sandDeep);
   // 底层岩层内收一格，形成阶梯切面
   model.box([1, 0, 1], [19, 1, 19], P.rockLayer);
+  return model.build();
+}
+
+// ---------------------------------------------------------------------------
+// 方块拼片辅助体：替代旧圆环 / 圆锥，保证全场景可见几何都是立方体
+// ---------------------------------------------------------------------------
+
+/**
+ * 用若干细方条拼出回字形方框（替代旧 torus 圆环）。
+ * 外半边长 `halfSize`，条厚 `thickness`，高 `height`；单位半径 1 时总宽 2。
+ */
+export function squareFrame(
+  halfSize: number,
+  thickness: number,
+  height: number,
+): Result<MeshAsset, AssetError> {
+  const model = createVoxelModel({ unit: 1, ao: false });
+  const t = Math.max(0.002, thickness);
+  const s = Math.max(t, halfSize);
+  const d = Math.max(0.002, height);
+  const seg = 6;
+  const span = s * 2;
+  const stepLen = span / seg;
+  const edge = Math.round((s - t / 2) * 1000) / 1000;
+  // 前后两条长边（沿 X 分段，全部为方块）
+  for (let i = 0; i < seg; i++) {
+    const a = -s + i * stepLen;
+    model.box([a, 0, edge - t / 2], [a + stepLen, d, edge + t / 2], '#FFFFFF');
+    model.box([a, 0, -edge - t / 2], [a + stepLen, d, -edge + t / 2], '#FFFFFF');
+  }
+  // 左右两条短边（沿 Z 分段）
+  const sideSpan = span - t * 2;
+  const sideStep = sideSpan / seg;
+  for (let i = 0; i < seg; i++) {
+    const a = -s + t + i * sideStep;
+    model.box([-edge - t / 2, 0, a], [-edge + t / 2, d, a + sideStep], '#FFFFFF');
+    model.box([edge - t / 2, 0, a], [edge + t / 2, d, a + sideStep], '#FFFFFF');
+  }
+  return model.build();
+}
+
+/** 用递缩方块堆出朝 +Z 的三角箭头（替代旧圆锥体）。 */
+export function arrowBlocks(): Result<MeshAsset, AssetError> {
+  const model = createVoxelModel({ unit: 0.06, ao: false });
+  model.box([-3, 0, -3], [3, 1, -1], '#FFFFFF');
+  model.box([-2, 0, -1], [2, 1, 1], '#FFFFFF');
+  model.box([-1, 0, 1], [1, 1, 2], '#FFFFFF');
+  return model.build();
+}
+
+/** 纯白浪花方块簇（外圈海面上下浮动用），单簇 3 格阶梯方块。 */
+export function foamCluster(): Result<MeshAsset, AssetError> {
+  const model = createVoxelModel({ unit: 0.16, ao: false });
+  model.box([-2, 0, -2], [2, 1, 2], '#FFFFFF');
+  model.box([-1, 1, -1], [1, 2, 1], '#FFFFFF');
+  model.box([0, 2, 0], [1, 3, 1], '#EAF7FF');
+  return model.build();
+}
+
+/** 缩圈边缘可独立下坠的方块（供外侧地块崩塌动画）。 */
+export function rimChunk(): Result<MeshAsset, AssetError> {
+  const model = createVoxelModel({ unit: 0.1, ao: false });
+  model.box([-5, 0, -5], [5, 2, 5], '#CDBB8E');
+  model.box([-4, -1, -4], [4, 0, 4], '#8C9199');
+  return model.build();
+}
+
+/**
+ * 方块化接地阴影：由「外圈淡 + 内圈稍深」两层扁平方块叠成，
+ * 用顶点色做中心深、边缘浅的柔和过渡，避免硬边深色方板抢画面。
+ * 尺寸按世界单位直接给出（unit = 1），由调用方缩放。
+ */
+export function softShadowPatch(width: number, depth: number): Result<MeshAsset, AssetError> {
+  const model = createVoxelModel({ unit: 1, ao: false, pivot: [0, 0, 0] });
+  // 外圈：浅一档（顶点色为灰白，实际透明度由材质 alpha 决定）
+  model.box([-width / 2, 0, -depth / 2], [width / 2, 1, depth / 2], '#8C8C8C');
+  // 内圈：更深，形成中心聚集的视觉重量
+  model.box([-width / 4, 0, -depth / 4], [width / 4, 1, depth / 4], '#4A4A4A');
+  return model.build();
+}
+
+/**
+ * 体素方格预警方块阵列：用 1×1×0.25 的方块格铺满半径 1 的圆。
+ * 只保留「格中心落在圆内」的格子，因此外轮廓仍贴合真实圆形伤害边界，
+ * 不会像整块方形贴片那样把危险范围画大。调用方按真实半径缩放即可。
+ */
+export function voxelTelegraphGrid(): Result<MeshAsset, AssetError> {
+  // 体素坐标必须是整数（构建器按整数格建键），因此用 unit 缩放而不是小数坐标。
+  // 网格以原点为中心：ix 从 -N/2 到 N/2-1，裁剪判定统一在世界单位下做。
+  const cell = 0.125;
+  const cells = Math.round(2 / cell); // 覆盖 -1..1 的格数
+  const lo = -cells / 2;
+  const model = createVoxelModel({ unit: cell, pivot: [0, 0, 0], ao: false });
+  const halfDiag = (cell * Math.SQRT2) / 2;
+  for (let ix = 0; ix < cells; ix++) {
+    for (let iz = 0; iz < cells; iz++) {
+      // 格中心的世界坐标
+      const cx = (lo + ix + 0.5) * cell;
+      const cz = (lo + iz + 0.5) * cell;
+      // 用「格最远角点到圆心」的距离裁剪：保证格子实体绝不越出圆形伤害边界。
+      if (Math.hypot(cx, cz) + halfDiag > 1) continue;
+      model.box([lo + ix, 0, lo + iz], [lo + ix + 1, 1, lo + iz + 1], '#FFFFFF');
+    }
+  }
   return model.build();
 }
