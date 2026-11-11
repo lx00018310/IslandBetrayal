@@ -163,3 +163,68 @@ it('体素构建器输出的三面明度严格递减（顶 > 前 > 右）', () =
   expect(top).toBeGreaterThan(front);
   expect(front).toBeGreaterThan(right);
 });
+
+it('脚底环是空心方框：原点不被任何三角形覆盖，且几何对称', async () => {
+  const built = await art.build(undefined as never);
+  if (!built.ok) throw built.error;
+  const assets = built.value as Record<string, any>;
+  const mesh = assets['mesh/foot-ring'];
+  const pos = mesh.attributes.position as Float32Array;
+  const idx = mesh.indices as Uint16Array;
+
+  const sign = (ax: number, ay: number, bx: number, by: number, cx: number, cy: number) =>
+    (ax - cx) * (by - cy) - (bx - cx) * (ay - cy);
+  let coversOrigin = false;
+  for (let t = 0; t < idx.length && !coversOrigin; t += 3) {
+    const tri: Array<[number, number]> = [0, 1, 2].map((k) => {
+      const v = idx[t + k]! * 3;
+      return [pos[v]!, pos[v + 2]!] as [number, number];
+    });
+    const d1 = sign(0, 0, tri[0]![0], tri[0]![1], tri[1]![0], tri[1]![1]);
+    const d2 = sign(0, 0, tri[1]![0], tri[1]![1], tri[2]![0], tri[2]![1]);
+    const d3 = sign(0, 0, tri[2]![0], tri[2]![1], tri[0]![0], tri[0]![1]);
+    const hasNeg = d1 < 0 || d2 < 0 || d3 < 0;
+    const hasPos = d1 > 0 || d2 > 0 || d3 > 0;
+    if (!(hasNeg && hasPos)) coversOrigin = true;
+  }
+  // 空心方框：中心必须是空的（早期 bug 让这里退化成了实心方板）
+  expect(coversOrigin).toBe(false);
+
+  // 几何必须以原点为中心、且尺寸在合理范围（早期 bug 让 AABB 放大到 ±60）
+  const aabb = Array.from(mesh.aabb as Float32Array);
+  expect(aabb[0]! + aabb[3]!).toBeCloseTo(0, 3);
+  expect(aabb[2]! + aabb[5]!).toBeCloseTo(0, 3);
+  expect(aabb[3]!).toBeLessThan(1);
+  expect(aabb[3]!).toBeGreaterThan(0.2);
+});
+
+it('碎块槽位材质与激活材质一致（避免扬尘喷出金块）', async () => {
+  const built = await art.build(undefined as never);
+  if (!built.ok) throw built.error;
+  const assets = built.value as Record<string, any>;
+  const entities = assets['scene/island'].entities;
+  // 场景里每个槽位的材质必须是固定的 5 种之一，且按 i % 5 轮转
+  const seen = new Set<string>();
+  for (let i = 0; i < 96; i++) {
+    const handle = entities[`debris-${i}`].components.MeshRenderer.materials[0] as string;
+    seen.add(handle);
+  }
+  expect(seen.size).toBe(5);
+  // 同一余数的槽位必须共用同一材质（presentation 的槽位选择依赖这一事实）
+  const byRemainder = new Map<number, string>();
+  for (let i = 0; i < 96; i++) {
+    const handle = entities[`debris-${i}`].components.MeshRenderer.materials[0] as string;
+    const rem = i % 5;
+    if (byRemainder.has(rem)) expect(handle).toBe(byRemainder.get(rem));
+    else byRemainder.set(rem, handle);
+  }
+});
+
+it('缩圈边缘不再残留未使用的 rimChunk 网格', async () => {
+  const built = await art.build(undefined as never);
+  if (!built.ok) throw built.error;
+  const assets = built.value as Record<string, any>;
+  expect(assets['mesh/rim-chunk']).toBeUndefined();
+  const entities = assets['scene/island'].entities;
+  expect(Object.keys(entities).some((k) => k.includes('rim-chunk'))).toBe(false);
+});

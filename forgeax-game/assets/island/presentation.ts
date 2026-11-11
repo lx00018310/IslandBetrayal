@@ -80,6 +80,21 @@ export function sackTierFor(treasure: number): 0 | 1 | 2 {
   return 0;
 }
 
+/**
+ * 碎块材质 → 槽位余数索引。
+ * 场景里 debris-0..95 的材质按 `i % 5` 固定绑定，因此只能在与材质匹配的
+ * 槽位上激活碎块，否则会喷出错误颜色（例如跑步扬尘出现金块和红块）。
+ * 顺序必须与 art.pack.ts 的 debrisMaterials 数组完全一致。
+ */
+const DEBRIS_MATERIAL_SLOT: Readonly<Record<string, number>> = Object.freeze({
+  'debris-gold': 0,
+  'debris-wood': 1,
+  'debris-danger': 2,
+  'debris-shell': 3,
+  'debris-dust': 4,
+});
+const DEBRIS_MATERIAL_COUNT = 5;
+
 /** 体素碎块池容量（供测试与场景装配共享同一数字）。 */
 export function debrisPoolSize(): number {
   return DEBRIS_POOL;
@@ -329,8 +344,11 @@ export function setupPresentation(
     speed = 2.4,
     upward = 1.8,
   ): void => {
+    const matIdx = DEBRIS_MATERIAL_SLOT[material] ?? 0;
     let spawned = 0;
     for (let slot = 0; slot < DEBRIS_SLOTS && spawned < count; slot++) {
+      // 槽位材质是按 i % 5 预绑定的，只能占用同余数槽位。
+      if (slot % DEBRIS_MATERIAL_COUNT !== matIdx) continue;
       if (debris[slot]) continue;
       debris[slot] = {
         x,
@@ -548,10 +566,20 @@ export function setupPresentation(
           item.hidden = true;
           world.set(item.handle, Transform, { pos: [item.gx, -999, item.gy] }).unwrap();
           if (prop) world.set(prop.handle, Transform, { pos: [item.gx, -999, item.gy] }).unwrap();
+          // 地块首次消失时在海面激起一小簇白色方块水花（纯表现，不改失效时刻）。
+          spawnDebris(item.gx, item.gy, 3, 'debris-dust', 1.6, 2.0);
         } else if (t.falling > 0) {
           const dropY = -t.falling * 2.8;
-          world.set(item.handle, Transform, { pos: [item.gx, dropY, item.gy] }).unwrap();
-          if (prop) world.set(prop.handle, Transform, { pos: [item.gx, dropY + 0.04, item.gy] }).unwrap();
+          // 下沉期间叠加高频微幅抖动，读成"方块在被海水拽下去"而不是平滑位移。
+          // 抖动只是视觉偏移（±0.04m），不改模拟坐标与失效时刻。
+          const jitterX = Math.sin(sim.elapsed * 47 + item.gx * 3.1) * 0.04;
+          const jitterZ = Math.cos(sim.elapsed * 43 + item.gy * 2.7) * 0.04;
+          world.set(item.handle, Transform, { pos: [item.gx + jitterX, dropY, item.gy + jitterZ] }).unwrap();
+          if (prop) {
+            world.set(prop.handle, Transform, {
+              pos: [item.gx + jitterX, dropY + 0.04, item.gy + jitterZ],
+            }).unwrap();
+          }
         } else if (item.hidden) {
           item.hidden = false;
           world.set(item.handle, Transform, { pos: [item.gx, 0, item.gy] }).unwrap();

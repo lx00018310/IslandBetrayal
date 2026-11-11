@@ -427,35 +427,38 @@ export function groundTile(band: number, parity = 0): Result<MeshAsset, AssetErr
 // ---------------------------------------------------------------------------
 
 /**
- * 用若干细方条拼出回字形方框（替代旧 torus 圆环）。
- * 外半边长 `halfSize`，条厚 `thickness`，高 `height`；单位半径 1 时总宽 2。
+ * 用整数格建出回字形方框（替代旧 torus 圆环）。
+ *
+ * 构建器只接受整数体素坐标，早期版本传小数导致坐标被逐位取整、
+ * 整体放大上百倍并退化成实心方板。这里改为固定整数网格：
+ * 外圈 [-N..N] × [-N..N]，挖空内部 [-N+W..N-W]，得到四条空心窄边。
+ *
+ * @param halfSize 外半边长（世界单位）
+ * @param thickness 边框厚度（世界单位）
+ * @param height 高度（世界单位）
  */
 export function squareFrame(
   halfSize: number,
   thickness: number,
   height: number,
 ): Result<MeshAsset, AssetError> {
-  const model = createVoxelModel({ unit: 1, ao: false });
-  const t = Math.max(0.002, thickness);
-  const s = Math.max(t, halfSize);
-  const d = Math.max(0.002, height);
-  const seg = 6;
-  const span = s * 2;
-  const stepLen = span / seg;
-  const edge = Math.round((s - t / 2) * 1000) / 1000;
-  // 前后两条长边（沿 X 分段，全部为方块）
-  for (let i = 0; i < seg; i++) {
-    const a = -s + i * stepLen;
-    model.box([a, 0, edge - t / 2], [a + stepLen, d, edge + t / 2], '#FFFFFF');
-    model.box([a, 0, -edge - t / 2], [a + stepLen, d, -edge + t / 2], '#FFFFFF');
-  }
-  // 左右两条短边（沿 Z 分段）
-  const sideSpan = span - t * 2;
-  const sideStep = sideSpan / seg;
-  for (let i = 0; i < seg; i++) {
-    const a = -s + t + i * sideStep;
-    model.box([-edge - t / 2, 0, a], [-edge + t / 2, d, a + sideStep], '#FFFFFF');
-    model.box([edge - t / 2, 0, a], [edge + t / 2, d, a + sideStep], '#FFFFFF');
+  const N = 8; // 外半边长占 8 格
+  const W = Math.max(1, Math.round((Math.max(0.001, thickness) / Math.max(0.001, halfSize)) * N));
+  const unit = Math.max(0.0001, halfSize) / N;
+  const rows = Math.max(1, Math.round(height / unit));
+  const model = createVoxelModel({ unit, pivot: [0, 0, 0], ao: false });
+  // 逐格判断，判定统一用「格中心」以保持几何对称：
+  // 格 [ix, ix+1) 的中心是 ix + 0.5，因此 ix 从 -N 到 N-1 恰好覆盖 -N..N。
+  for (let ix = -N; ix < N; ix++) {
+    for (let iz = -N; iz < N; iz++) {
+      const cx = ix + 0.5;
+      const cz = iz + 0.5;
+      // 内孔：中心落在 (±(N-W)) 之内则跳过，得到四条空心窄边。
+      if (Math.abs(cx) < N - W && Math.abs(cz) < N - W) continue;
+      for (let iy = 0; iy < rows; iy++) {
+        model.voxel(ix, iy, iz, '#FFFFFF');
+      }
+    }
   }
   return model.build();
 }
@@ -478,13 +481,6 @@ export function foamCluster(): Result<MeshAsset, AssetError> {
   return model.build();
 }
 
-/** 缩圈边缘可独立下坠的方块（供外侧地块崩塌动画）。 */
-export function rimChunk(): Result<MeshAsset, AssetError> {
-  const model = createVoxelModel({ unit: 0.1, ao: false });
-  model.box([-5, 0, -5], [5, 2, 5], '#CDBB8E');
-  model.box([-4, -1, -4], [4, 0, 4], '#8C9199');
-  return model.build();
-}
 
 /**
  * 方块化接地阴影：由「外圈淡 + 内圈稍深」两层扁平方块叠成，

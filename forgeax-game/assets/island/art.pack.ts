@@ -38,7 +38,6 @@ import {
   mimicShell,
   monsterBody,
   monsterEyes,
-  rimChunk,
   rockProp,
   softShadowPatch,
   squareFrame,
@@ -181,9 +180,8 @@ export default definePack({
         factories[`mesh/tile-${band}-${parity}`] = () => groundTile(band, parity);
       }
     }
-    // 浪花方块簇与可独立下坠的边缘方块
+    // 浪花方块簇
     factories['mesh/foam'] = foamCluster;
-    factories['mesh/rim-chunk'] = rimChunk;
 
     const meshes: Record<string, MeshAsset> = {};
     for (const [key, factory] of Object.entries(factories)) {

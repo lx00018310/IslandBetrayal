@@ -895,13 +895,19 @@
    仅改视觉，不改任何布局尺寸、操作入口或交互行为。
    =========================================================================== */
 
-/* 所有面板 / 弹窗 / 卡片统一积木外观 */
+/* 所有面板 / 弹窗 / 卡片 / 左右常驻侧栏统一积木外观 */
 .hud-col,
+.team-sidebar,
+.player-card,
+.boss-hud,
 .choice-banner,
 .result-card,
 .endless-rule-modal,
 .endless-relic-modal,
 .upgrade-modal > *,
+[data-ui-part="team-sidebar"],
+[data-ui-part="player-card"],
+[data-ui-part="boss-hud"],
 [data-ui-part="endless-rule-modal"] > *,
 [data-ui-part="endless-relic-modal"] > * {
   border: 3px solid #1E293B !important;
