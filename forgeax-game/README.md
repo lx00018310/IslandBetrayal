@@ -54,10 +54,26 @@
 - **原生插件与只读投影** (`assets/island/island.pack.ts`)：原生 Cordis 插件，驱动 ECS Update 循环；发布 `island.match` 只读验收投影，并通过端口跨领域向前端同步轻量级 HUD 状态。
 - **原生 HUD** (`assets/guide.ui.html`, `assets/guide.ui.css`, `assets/ui/guide-controller.ts`)：符合天工引擎 UiAuthoringProfile 的原生界面，适配桌面与移动端各分辨率。
 
-## 本地开发与验收命令
+## 本地拉起与开发命令
+
+### 1. 本地启动运行
+
+#### 方式 A：本地 Web 预览运行（推荐，直接浏览器体验）
+```powershell
+# 首次运行请先安装依赖：pnpm.cmd install --frozen-lockfile
+pnpm.cmd preview
+```
+- 启动后浏览器访问：[http://localhost:5173](http://localhost:5173)
+
+#### 方式 B：开发者全量调试模式（DevKit + 热更新）
+```powershell
+pnpm.cmd dev
+```
+
+### 2. 质量检查与自动化验收
 
 ```powershell
-# 规则与生命周期测试
+# 规则与生命周期单元测试
 pnpm.cmd test
 
 # TypeScript 编译检查

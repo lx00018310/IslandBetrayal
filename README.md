@@ -30,16 +30,52 @@
 | `forgeax-sdk-0.4.19/` | 下载的引擎 SDK、源码快照、模板与工具 | 忽略，本地保留 |
 | `forgeax-game/node_modules/`、`dist/`、`.forgeax/` 等 | 依赖、构建产物与缓存 | 忽略，本地保留 |
 
-## 本地开发与验收（Windows PowerShell）
+## 快速上手：如何开启与拉起项目（Quick Start）
 
-项目使用 Node.js `>=22.13.0`、pnpm `12.15.0` 和引擎 `0.4.19`。
+本项目核心游戏代码与运行时位于 `forgeax-game` 目录下。
 
+### 1. 前置环境
+- **Node.js**：`>=20.0.0`（推荐 `22.x` 或 `24.x`，已验证 `v24.14.1`）
+- **包管理器**：`pnpm >=10.0.0`（推荐 `11.x` 或 `12.x`，已验证 `11.19.0`）
+
+### 2. 安装依赖（首次运行）
 ```powershell
 Set-Location .\forgeax-game
 pnpm.cmd install --frozen-lockfile
+```
+
+### 3. 本地拉起与启动方式
+
+#### 方式 A：本地 Web 预览模式（浏览器直接打开游玩，推荐）
+```powershell
+Set-Location .\forgeax-game
+pnpm.cmd preview
+```
+- **默认访问端口**：浏览器访问 [http://localhost:5173](http://localhost:5173) 即可直接开始体验。
+- **特点**：秒级拉起，加载已构建的体素资源与 HUD，支持鼠标/键盘与触屏模拟操作。
+
+#### 方式 B：开发者全量调试模式（DevKit + 热重载）
+```powershell
+Set-Location .\forgeax-game
+pnpm.cmd dev
+```
+- **说明**：启动 ForgeaX DevKit 守护进程及受控浏览器环境，支持实时资产热重载、相机视角观测与调试评估。
+
+### 4. 自动化测试、质量检查与端到端试玩
+
+```powershell
+Set-Location .\forgeax-game
+
+# 规则与生命周期纯逻辑单元测试（Vitest 自动化套件）
 pnpm.cmd test
+
+# TypeScript 静态类型编译检查
 pnpm.cmd typecheck
+
+# 项目资产、Packs 配置与依赖闭包检查
 pnpm.cmd exec forgeax project check --json
+
+# 浏览器端到端试玩验收与全状态截图（执行完整对局并输出截图）
 pnpm.cmd exec forgeax project play scripts/playthrough.mjs --json
 ```
 
