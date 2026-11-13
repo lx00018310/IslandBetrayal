@@ -631,7 +631,7 @@
 /* 全场修正生效横幅 */
 .world-banner {
   position: absolute;
-  top: 78px;
+  top: 88px;
   left: 50%;
   transform: translateX(-50%);
   background: rgba(14, 28, 48, 0.95);
@@ -1018,11 +1018,42 @@
   font-weight: 800;
 }
 
+/* P1 收益跳动反馈与 P2 爆箱事件高亮 */
+.gain-pulse-gold {
+  animation: gain-pop-gold 400ms ease-out;
+}
+.gain-pulse-xp {
+  animation: gain-pop-xp 400ms ease-out;
+}
+.event-burst-hint {
+  color: #FF5A4A !important;
+  font-weight: 800;
+  text-shadow: 2px 2px 0 #0F172A;
+  animation: pop-tick 480ms steps(2, end) infinite;
+}
+
+@keyframes gain-pop-gold {
+  0% { transform: scale(1); filter: brightness(1); }
+  40% { transform: scale(1.22); filter: brightness(1.4); }
+  100% { transform: scale(1); filter: brightness(1); }
+}
+
+@keyframes gain-pop-xp {
+  0% { transform: scale(1); }
+  40% { transform: scale(1.18); filter: brightness(1.35); }
+  100% { transform: scale(1); }
+}
+
 /* 尊重用户的减少动效偏好 */
 @media (prefers-reduced-motion: reduce) {
   .distance-warning-hint,
   [data-ui-part="distance-warning-hint"],
-  [data-ui-part="raid-title"] {
+  [data-ui-part="raid-title"],
+  .event-burst-hint {
+    animation: none !important;
+  }
+  .gain-pulse-gold,
+  .gain-pulse-xp {
     animation: none !important;
   }
   [data-ui-part^="btn-"] {

@@ -77,6 +77,21 @@ export default async function playthrough(play) {
     await play.screenshot('04-midpoint-betrayal');
     return true;
   }
+
+  async function teamUp() {
+    for (let attempt = 0; attempt < 12; attempt++) {
+      await upgrades(play);
+      const s = await read(play);
+      if (!s.player.alive || s.gameOver || s.partner) break;
+      if (s.incomingInvite || (s.candidate?.canInvite && !s.outgoingInvite)) {
+        await play.keyboard.press('Space');
+        await play.advance(0.3);
+      } else if (s.nearestActor) {
+        await toward(play, s.nearestActor.x, s.nearestActor.y, 1.4, 3);
+      }
+      await play.advance(0.5);
+    }
+  }
   await play.step('team-attempt-round-1', () => teamAndBetray());
 
   async function observe() {
@@ -93,12 +108,13 @@ export default async function playthrough(play) {
       await play.advance(1);
       const after = await read(play);
       assert(after.gameOver || after.pendingUpgrade || after.elapsed > before.elapsed, 'Boss froze the main clock');
+      s = after;
     }
     if (!covered.telegraph && (s.raid.phase === 'fight' || s.raid.phase === 'warning')) {
       // 圆形预警只持续 1.5s、每 4.5s 触发一次：在团战窗口内小步推进轮询真实状态，
       // 出现即截图（只读 + advance，不写模拟层）。
       // 只在团战阶段轮询，否则会把脚本预算耗在非团战帧上、导致后续局次跑不完。
-      for (let guard = 0; guard < 24; guard++) {
+      for (let guard = 0; guard < 28; guard++) {
         const t = await read(play);
         if (t.gameOver || t.raid.phase === 'none' || t.raid.phase === 'result') break;
         if (t.raid.telegraph) {
@@ -106,7 +122,7 @@ export default async function playthrough(play) {
           await play.screenshot('boss-red-telegraph');
           break;
         }
-        await play.advance(0.25);
+        await play.advance(0.2);
       }
       // 轮询会推进时间，重新读一次，避免后续截图与断言用过期的 s
       s = await read(play);
@@ -186,7 +202,10 @@ export default async function playthrough(play) {
         for (const key of keys) await play.page.keyboard.down(key);
         try { await play.advance(1); }
         finally { for (const key of keys) await play.page.keyboard.up(key); }
-      } else await play.advance(3);
+      } else {
+        const raidActive = s.raid.phase === 'warning' || s.raid.phase === 'fight';
+        await play.advance(raidActive ? 0.5 : 3);
+      }
     }
     throw new Error('Round did not reach a genuine ending');
   }
@@ -219,12 +238,13 @@ export default async function playthrough(play) {
     if (!covered.betrayal) await nudge(play, 'KeyW');
     if (index <= 2) await play.screenshot(`round-${index + 1}-announcement`);
     if (!covered.betrayal) await play.step(`team-attempt-round-${index + 1}`, () => teamAndBetray());
+    else await play.step(`team-attempt-round-${index + 1}`, () => teamUp());
   }
 
   for (let index = 1; index <= 9; index++) {
     await play.step(`round-${index}-combat-and-result`, () => finishRound());
     await play.step(`round-${index}-secret-votes-and-inheritance`, () => nextRound(index));
-    if (index >= 2 && bossSeen.has(1) && bossSeen.has(2) && covered.upgrade && covered.betrayal) break;
+    if (index >= 2 && bossSeen.has(1) && bossSeen.has(2) && covered.upgrade && covered.betrayal && covered.telegraph) break;
   }
 
   await play.step('actual-upgrade-coverage', async () => {

@@ -357,6 +357,18 @@ export async function createGuideUi(
     };
 
     // 接收来自引擎的 HUD 状态更新
+    let prevPlayerXp = -1;
+    let prevPlayerTreasure = -1;
+    let lastBreakSeq = 0;
+    let breakHintTimer: ReturnType<typeof setTimeout> | null = null;
+    let activeBreakHint: string | null = null;
+    releases.push(() => {
+      if (breakHintTimer) {
+        clearTimeout(breakHintTimer);
+        breakHintTimer = null;
+      }
+    });
+
     const timerElem = shadow?.querySelector<HTMLElement>('[data-ui-part="match-timer"]');
     const phaseElem = shadow?.querySelector<HTMLElement>('[data-ui-part="match-phase"]');
     const challengeStatsElem = shadow?.querySelector<HTMLElement>('[data-ui-part="challenge-stats"]');
@@ -417,6 +429,17 @@ export async function createGuideUi(
         const state = event.data as Record<string, unknown> | undefined;
         if (!state || state.channel !== 'island/hud-state') return;
 
+        if (state.gameOver) {
+          activeBreakHint = null;
+          if (breakHintTimer) {
+            clearTimeout(breakHintTimer);
+            breakHintTimer = null;
+          }
+          prevPlayerXp = -1;
+          prevPlayerTreasure = -1;
+          lastBreakSeq = 0;
+        }
+
         // 若重开已重置或不在结算展示阶段，隐藏结算弹窗并恢复再来一局按钮状态
         if (!state.gameOver) {
           if (resultModal && !resultModal.classList.contains('hidden')) {
@@ -466,6 +489,12 @@ export async function createGuideUi(
           const xpPct = Math.min(100, Math.round((xp / xpNext) * 100));
           xpFill.style.width = `${xpPct}%`;
         }
+        if (prevPlayerXp >= 0 && xp > prevPlayerXp && playerXpTextElem) {
+          playerXpTextElem.classList.remove('gain-pulse-xp');
+          void playerXpTextElem.offsetWidth;
+          playerXpTextElem.classList.add('gain-pulse-xp');
+        }
+        prevPlayerXp = xp;
 
         // 升级三选一面板弹窗同步
         const isUpgradePending = state.pendingUpgrade === true && !state.gameOver;
@@ -572,6 +601,12 @@ export async function createGuideUi(
         const breaks = typeof state.chestBreaks === 'number' ? state.chestBreaks : 0;
         const disbands = typeof state.playerDisbands === 'number' ? state.playerDisbands : 0;
         if (treasureElem) treasureElem.textContent = `◆ ${pTreas} · 爆箱 ${breaks}`;
+        if (prevPlayerTreasure >= 0 && pTreas > prevPlayerTreasure && treasureElem) {
+          treasureElem.classList.remove('gain-pulse-gold');
+          void treasureElem.offsetWidth;
+          treasureElem.classList.add('gain-pulse-gold');
+        }
+        prevPlayerTreasure = pTreas;
 
         if (hpFill) {
           const hp = typeof state.hp === 'number' ? Math.max(0, state.hp) : 100;
@@ -608,14 +643,47 @@ export async function createGuideUi(
           | null
           | undefined;
 
+        // P2 背叛/断线/破箱事件实时通知
+        const lastBreak = state.lastBreakEvent as
+          | { seq: number; reason: string; lootCount: number }
+          | null
+          | undefined;
+        if (lastBreak && typeof lastBreak.seq === 'number') {
+          if (lastBreakSeq === 0) {
+            lastBreakSeq = lastBreak.seq;
+          } else if (lastBreak.seq > lastBreakSeq) {
+            lastBreakSeq = lastBreak.seq;
+            const reasonText =
+              lastBreak.reason === 'betrayal'
+                ? '⚔️ 盟友主动背叛！宝箱爆开，金砖散落速抢！'
+                : lastBreak.reason === 'distance'
+                  ? '⚠️ 超距断线！宝箱爆开，金砖散落速抢！'
+                  : lastBreak.reason === 'damage'
+                    ? '💥 宝箱遭外部击破！部分战利品散落！'
+                    : '⚔️ 终局混战！宝箱解体！';
+            activeBreakHint = reasonText;
+            if (breakHintTimer) clearTimeout(breakHintTimer);
+            breakHintTimer = setTimeout(() => {
+              activeBreakHint = null;
+              breakHintTimer = null;
+            }, 3200);
+          }
+        }
+
         if (statusHint) {
-          if (partnerName) {
-            const chestText = ownChest
-              ? ` · 宝箱 ◆${ownChest.treasure} (${ownChest.hp}/${ownChest.maxHp})`
-              : ' · 宝箱已破';
-            statusHint.textContent = `队友 ${partnerName} · 距离 ${partnerDist ?? 0}m${chestText}`;
+          if (activeBreakHint) {
+            statusHint.textContent = activeBreakHint;
+            statusHint.classList.add('event-burst-hint');
           } else {
-            statusHint.textContent = 'Space 结盟 · 再按背叛';
+            statusHint.classList.remove('event-burst-hint');
+            if (partnerName) {
+              const chestText = ownChest
+                ? ` · 宝箱 ◆${ownChest.treasure} (${ownChest.hp}/${ownChest.maxHp})`
+                : ' · 宝箱已破';
+              statusHint.textContent = `队友 ${partnerName} · 距离 ${partnerDist ?? 0}m${chestText}`;
+            } else {
+              statusHint.textContent = 'Space 结盟 · 再按背叛';
+            }
           }
         }
 

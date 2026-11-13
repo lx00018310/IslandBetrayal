@@ -5,6 +5,7 @@ import {
   sackTierFor,
   moodLevelFor,
   hopPose,
+  hitSquash,
   debrisPoolSize,
 } from '../presentation.ts';
 import { createVoxelModel } from '../voxel-builder.ts';
@@ -58,6 +59,32 @@ it('Crossy Hop 姿态：起跳拉长、落地挤压、静止回归 1:1', () => {
     const pose = hopPose(i / 20, true);
     expect(pose.scaleY).toBeGreaterThan(0.5);
     expect(pose.scaleXZ).toBeGreaterThan(0.5);
+  }
+});
+
+it('hitSquash 命中形变：未受击回归 1:1，受击瞬时沿 Y 挤压、沿 XZ 膨胀', () => {
+  // 未受击
+  const rest = hitSquash(0, 1.25);
+  expect(rest.scaleXZ).toBe(1.25);
+  expect(rest.scaleY).toBe(1.25);
+
+  // 负数值防御
+  const neg = hitSquash(-0.5, 1.0);
+  expect(neg.scaleXZ).toBe(1.0);
+  expect(neg.scaleY).toBe(1.0);
+
+  // 最大受击瞬间（hitFlash >= 0.2）
+  const maxHit = hitSquash(0.2, 1.0);
+  expect(maxHit.scaleY).toBeLessThan(1.0);
+  expect(maxHit.scaleXZ).toBeGreaterThan(1.0);
+  expect(maxHit.scaleY).toBeCloseTo(0.80, 5);
+  expect(maxHit.scaleXZ).toBeCloseTo(1.18, 5);
+
+  // 任意阶段保证非零非负
+  for (let f = 0; f <= 10; f++) {
+    const s = hitSquash(f / 20, 1.0);
+    expect(s.scaleY).toBeGreaterThan(0.5);
+    expect(s.scaleXZ).toBeGreaterThan(0.5);
   }
 });
 

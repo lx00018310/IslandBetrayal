@@ -141,6 +141,23 @@ export function hopPose(hop: number, moving: boolean): HopPose {
   };
 }
 
+/**
+ * 命中微弹性形变：在 hitFlash 持续期（通常 0.2s 内），
+ * 瞬间给受击目标沿 Y 轴挤压、沿 XZ 轴横向膨胀，产生明确的敲击击中反馈；
+ * 静止与未受击时严格回归 1:1，不影响任何物理碰撞与伤害判定。
+ */
+export function hitSquash(
+  hitFlash: number,
+  baseScale: number = 1.0,
+): { scaleXZ: number; scaleY: number } {
+  if (hitFlash <= 0) return { scaleXZ: baseScale, scaleY: baseScale };
+  const hitImpact = Math.min(1, hitFlash / 0.2);
+  return {
+    scaleXZ: baseScale * (1 + hitImpact * 0.18),
+    scaleY: baseScale * (1 - hitImpact * 0.20),
+  };
+}
+
 interface DebrisPiece {
   x: number;
   y: number;
@@ -544,9 +561,10 @@ export function setupPresentation(
 
       const player = sim.actors[0]!;
 
-      // 1. 正交相机平滑跟随主角（保持当前朝向，不引入偏航）
+      // 1. 正交相机平滑跟随主角（保持当前朝向，不引入偏航；带 dt 边界防抖）
       if (player.alive) {
-        const follow = 1 - Math.exp(-8.0 * dt);
+        const clampedDt = Math.min(dt, 0.1);
+        const follow = 1 - Math.exp(-9.0 * clampedDt);
         camX += (player.x - camX) * follow;
         camZ += (player.y + 9.8 - camZ) * follow;
         world
@@ -724,11 +742,12 @@ export function setupPresentation(
           continue;
         }
         const bob = Math.abs(Math.sin(sim.elapsed * 2.8 + m.wobble)) * 0.08;
-        const mScale = m.kind === 'tank' ? 1.25 : m.kind === 'dasher' ? 0.85 : 1.0;
-        world.set(e.root, Transform, { pos: [m.x, bob, m.y], scale: [mScale, mScale, mScale] }).unwrap();
+        const mBaseScale = m.kind === 'tank' ? 1.25 : m.kind === 'dasher' ? 0.85 : 1.0;
+        const squashed = hitSquash(m.hitFlash, mBaseScale);
+        world.set(e.root, Transform, { pos: [m.x, bob, m.y], scale: [squashed.scaleXZ, squashed.scaleY, squashed.scaleXZ] }).unwrap();
         world.set(e.shadow, Transform, {
           pos: [m.x, 0.008, m.y],
-          scale: [mScale, 1, mScale],
+          scale: [squashed.scaleXZ, 1, squashed.scaleXZ],
           quat: [0, 0, 0, 1],
         }).unwrap();
       }
@@ -740,10 +759,11 @@ export function setupPresentation(
       } else {
         const bob = Math.abs(Math.sin(sim.elapsed * 2.2)) * 0.1;
         // 体素外壳本身已 2.2 × 1.3 世界单位，1.15 倍即占屏接近原 Boss
-        const scale = 1.15 + Math.sin(sim.elapsed * 2.2) * 0.02;
+        const baseScale = 1.15 + Math.sin(sim.elapsed * 2.2) * 0.02;
+        const bossSquashed = hitSquash(sim.boss?.hitFlash ?? 0, baseScale);
         world.set(bossEntity.root, Transform, {
           pos: [sim.raidBossX, bob, sim.raidBossY],
-          scale: [scale, scale, scale],
+          scale: [bossSquashed.scaleXZ, bossSquashed.scaleY, bossSquashed.scaleXZ],
         }).unwrap();
         world.set(bossEntity.shadow, Transform, {
           pos: [sim.raidBossX + 0.14, 0.006, sim.raidBossY + 0.18],
@@ -942,9 +962,10 @@ export function setupPresentation(
         const angle = (l.spin + sim.elapsed * 4.0) % (Math.PI * 2);
         quat.fromEuler(spinQ, 0, angle, 0, 'XYZ');
         const float = 0.1 + Math.sin(sim.elapsed * 3.4 + l.spin) * 0.03;
+        const lootPulse = 1.0 + Math.sin(sim.elapsed * 5.0 + l.spin) * 0.08;
         world.set(handle, Transform, {
           pos: [l.x, float, l.y],
-          scale: [1, 1, 1],
+          scale: [lootPulse, lootPulse, lootPulse],
           quat: [spinQ[0] ?? 0, spinQ[1] ?? 0, spinQ[2] ?? 0, spinQ[3] ?? 1],
         }).unwrap();
       }

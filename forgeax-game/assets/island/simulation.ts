@@ -1930,7 +1930,7 @@ export function startBossRaid(sim: SimulationState): void {
   sim.raidBossMaxHp = Math.round((160 + 32 * sim.raidParticipants.length) * sim.enemyHpScale);
   sim.raidBossHp = sim.raidBossMaxHp;
   sim.raidBossDamage = 18 * sim.enemyDamageScale;
-  sim.raidTelegraphTimer = 0; sim.raidTelegraphRadius = 0; sim.raidAttackCd = 1;
+  sim.raidTelegraphTimer = 0; sim.raidTelegraphRadius = 0; sim.raidAttackCd = 0;
   sim.boss = { id: sim.nextEntityId++, kind: 'boss', x: 11, y: 11,
     hp: sim.raidBossHp, maxHp: sim.raidBossMaxHp, alive: true, respawn: 9999,
     wobble: 0, hitFlash: 0, speed: 0, damage: sim.raidBossDamage, attackCd: 0 };
