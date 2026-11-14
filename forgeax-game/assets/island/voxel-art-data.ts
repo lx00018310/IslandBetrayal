@@ -481,10 +481,10 @@ export function hpBarBg(): Result<MeshAsset, AssetError> {
   return model.build();
 }
 
-/** 3D 实体头顶血条填充条（pivot 在最左侧 -12，scale.x 直接映射 0..1 百分比） */
+/** 3D 实体头顶血条填充条（pivot 在最左侧 0，长度 24格，scale.x 直接映射 0..1 百分比） */
 export function hpBarFill(): Result<MeshAsset, AssetError> {
-  const model = createVoxelModel({ unit: 0.04, pivot: [-12, 0, 0], ao: false });
-  model.box([0, -1, 1], [24, 1, 2], P.hpGreen);
+  const model = createVoxelModel({ unit: 0.04, pivot: [0, 0, 0], ao: false });
+  model.box([0, -1, 1], [24, 1, 2], P.hpRed);
   return model.build();
 }
 

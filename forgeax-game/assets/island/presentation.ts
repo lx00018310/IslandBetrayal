@@ -705,14 +705,15 @@ export function setupPresentation(
 
         // 3D 实体头顶血条：跟随角色头顶，面向摄像机，动态比例
         const hpPct = Math.max(0.001, Math.min(1.0, a.hp / a.maxHp));
+        const barScale = 0.95;
         world.set(hpBg, Transform, {
           pos: [a.x, 2.05, a.y],
-          scale: [0.95, 0.95, 1],
+          scale: [barScale, barScale, 1],
           quat: [...SPRITE_QUAT],
         }).unwrap();
         world.set(hpFill, Transform, {
-          pos: [a.x - 0.46 * (1 - hpPct), 2.05, a.y + 0.01],
-          scale: [hpPct * 0.95, 0.95, 1],
+          pos: [a.x - 0.48 * barScale, 2.05 + 0.012, a.y + 0.009],
+          scale: [hpPct * barScale, barScale, 1],
           quat: [...SPRITE_QUAT],
         }).unwrap();
 
@@ -821,14 +822,15 @@ export function setupPresentation(
         // 基础怪物 3D 头顶血条（为前 4 只主要怪物渲染清晰血条）
         if (mHpBg && mHpFill) {
           const mPct = Math.max(0.001, Math.min(1.0, m.hp / m.maxHp));
+          const mBarScale = 0.75;
           world.set(mHpBg, Transform, {
             pos: [m.x, 1.45, m.y],
-            scale: [0.75, 0.75, 1],
+            scale: [mBarScale, mBarScale, 1],
             quat: [...SPRITE_QUAT],
           }).unwrap();
           world.set(mHpFill, Transform, {
-            pos: [m.x - 0.36 * (1 - mPct), 1.45, m.y + 0.01],
-            scale: [mPct * 0.75, 0.75, 1],
+            pos: [m.x - 0.48 * mBarScale, 1.45 + 0.012, m.y + 0.009],
+            scale: [mPct * mBarScale, mBarScale, 1],
             quat: [...SPRITE_QUAT],
           }).unwrap();
         }
@@ -857,14 +859,16 @@ export function setupPresentation(
 
         // Boss 3D 巨型头顶血条
         const bPct = Math.max(0.001, Math.min(1.0, sim.raidBossHp / Math.max(1, sim.raidBossMaxHp)));
+        const bossBarScaleX = 2.2;
+        const bossBarScaleY = 1.4;
         world.set(bossHpBg, Transform, {
           pos: [sim.raidBossX, 2.7, sim.raidBossY],
-          scale: [2.2, 1.4, 1],
+          scale: [bossBarScaleX, bossBarScaleY, 1],
           quat: [...SPRITE_QUAT],
         }).unwrap();
         world.set(bossHpFill, Transform, {
-          pos: [sim.raidBossX - 1.05 * (1 - bPct), 2.7, sim.raidBossY + 0.01],
-          scale: [bPct * 2.2, 1.4, 1],
+          pos: [sim.raidBossX - 0.48 * bossBarScaleX, 2.7 + 0.012, sim.raidBossY + 0.009],
+          scale: [bPct * bossBarScaleX, bossBarScaleY, 1],
           quat: [...SPRITE_QUAT],
         }).unwrap();
         // 蟹钳开合：预警期间张到最大，与真实圆形成一致

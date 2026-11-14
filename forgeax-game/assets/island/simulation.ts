@@ -30,7 +30,7 @@ export interface Vec2 {
   y: number;
 }
 
-export const GRID_SIZE = 33;
+export const GRID_SIZE = 51;
 export const MATCH_SECONDS = 300;
 export const OVERTIME_SECONDS = 60; // 300s ~ 360s 决胜加时
 
@@ -544,9 +544,9 @@ export interface CoverBlock {
 
 /** 中央固定掩体布局（2–3 处，均有可见绕行通道，不形成密封口袋） */
 export const COVER_LAYOUT: readonly CoverBlock[] = [
-  { id: 0, x: 13.5, y: 16, radius: 0.95, disappearsAtStage: 99 },
-  { id: 1, x: 18.5, y: 16, radius: 0.95, disappearsAtStage: 99 },
-  { id: 2, x: 18.2, y: 12.8, radius: 0.75, disappearsAtStage: 6 },
+  { id: 0, x: 21.0, y: 25.0, radius: 1.2, disappearsAtStage: 99 },
+  { id: 1, x: 29.0, y: 25.0, radius: 1.2, disappearsAtStage: 99 },
+  { id: 2, x: 28.5, y: 20.0, radius: 0.9, disappearsAtStage: 6 },
 ] as const;
 
 /** 当前档位仍然存在的掩体 */
@@ -728,7 +728,7 @@ export function createInitialSimulation(options?: {
   const personalities: AiPersonality[] = ['honest', 'greedy', 'raider'];
   for (let i = 0; i < 10; i++) {
     const a = 0.42 + (i / 10) * Math.PI * 2;
-    const rad = 8.5 + (i % 3) * 1.8;
+    const rad = 13.5 + (i % 3) * 3.0;
     const personalMultiplier = Math.max(0.01, personalMultipliers?.get(i) ?? 1);
     const actorMaxHp = calculateEffectiveMaxHp(
       100,
@@ -820,15 +820,15 @@ export function createInitialSimulation(options?: {
     const isInitial = i < 12;
     const kind: MonsterKind = i % 5 === 0 ? 'tank' : i % 3 === 0 ? 'dasher' : 'chaser';
     const baseHp = kind === 'tank' ? 8 : kind === 'dasher' ? 4 : 3;
-    const speed = kind === 'tank' ? 1.35 : kind === 'dasher' ? 3.3 : 2.55;
+    const speed = kind === 'tank' ? 2.03 : kind === 'dasher' ? 4.95 : 3.83;
     const hp = Math.max(1, Math.round(baseHp * enemyHpScale));
     const damage = Math.max(1, Math.round((kind === 'tank' ? 1.2 : 1) * enemyDamageScale));
 
     monsters.push({
       id: i,
       kind,
-      x: center + Math.cos(a) * (7.5 + (i % 3) * 2.5),
-      y: center + Math.sin(a) * (7.5 + (i % 3) * 2.5),
+      x: center + Math.cos(a) * (11.5 + (i % 3) * 4.0),
+      y: center + Math.sin(a) * (11.5 + (i % 3) * 4.0),
       hp,
       maxHp: hp,
       alive: isInitial,
@@ -2789,7 +2789,7 @@ export function stepSimulation(
     const isSlowed = a.slow > 0;
     const sp =
       calculateEffectiveMoveSpeed(
-        4.65,
+        6.98,
         a.statSpeedBonus,
         sim.worldMultipliers.moveSpeed,
         isSlowed,
@@ -2928,8 +2928,8 @@ export function stepSimulation(
     if (deadMonster) {
       // 寻找一个安全未崩塌陆地网格
       for (let tries = 0; tries < 15; tries++) {
-        const gx = Math.floor(center + (Math.random() - 0.5) * 24);
-        const gy = Math.floor(center + (Math.random() - 0.5) * 24);
+        const gx = Math.floor(center + (Math.random() - 0.5) * 38);
+        const gy = Math.floor(center + (Math.random() - 0.5) * 38);
         const t = tileAt(sim, gx, gy);
         if (t && t.isLand && !t.gone && t.r <= currentRadius - 0.1) {
           const x = gx + (Math.random() - 0.5) * 0.8, y = gy + (Math.random() - 0.5) * 0.8;
