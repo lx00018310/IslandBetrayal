@@ -1108,3 +1108,144 @@
     transition: none !important;
   }
 }
+
+/* 战场雷达小地图面板 */
+.mini-map-panel {
+  position: absolute;
+  top: 96px;
+  right: 12px;
+  background: rgba(15, 23, 42, 0.90);
+  border: 2px solid #334155;
+  border-radius: 6px;
+  padding: 6px 8px;
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.45);
+  z-index: 42;
+  pointer-events: auto;
+  user-select: none;
+}
+.mini-map-header {
+  font-size: 11px;
+  font-weight: 800;
+  color: #94a3b8;
+  text-align: center;
+  margin-bottom: 5px;
+  padding-bottom: 3px;
+  border-bottom: 1px solid rgba(148, 163, 184, 0.2);
+  letter-spacing: 0.5px;
+}
+.mini-map-wrapper {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+}
+.mini-map-canvas {
+  position: relative;
+  width: 110px;
+  height: 110px;
+  background: #09121d;
+  border: 1px solid #1e293b;
+  border-radius: 4px;
+  overflow: hidden;
+}
+.radar-island {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: 96px;
+  height: 96px;
+  transform: translate(-50%, -50%);
+  background: #183324;
+  border: 1px solid #28543b;
+  border-radius: 50%;
+}
+.radar-safe-ring {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: 96px;
+  height: 96px;
+  transform: translate(-50%, -50%);
+  border: 1.5px solid rgba(101, 213, 176, 0.75);
+  border-radius: 50%;
+  pointer-events: none;
+}
+.radar-dots-container {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+}
+.radar-dot {
+  position: absolute;
+  transform: translate(-50%, -50%);
+  border-radius: 50%;
+}
+.radar-dot.radar-player {
+  width: 7px;
+  height: 7px;
+  background: #22c55e;
+  border: 1.5px solid #ffffff;
+  box-shadow: 0 0 6px #22c55e;
+  z-index: 5;
+}
+.radar-dot.radar-ally {
+  width: 6px;
+  height: 6px;
+  background: #38bdf8;
+  border: 1px solid #ffffff;
+  box-shadow: 0 0 4px #38bdf8;
+  z-index: 4;
+}
+.radar-dot.radar-enemy {
+  width: 5px;
+  height: 5px;
+  background: #ef4444;
+  box-shadow: 0 0 4px #ef4444;
+  z-index: 3;
+}
+.radar-dot.radar-boss {
+  width: 9px;
+  height: 9px;
+  background: #a855f7;
+  border: 1.5px solid #ffffff;
+  box-shadow: 0 0 8px #a855f7;
+  z-index: 6;
+}
+.mini-map-legend {
+  display: flex;
+  justify-content: space-around;
+  align-items: center;
+  margin-top: 5px;
+  font-size: 10px;
+  font-weight: bold;
+  color: #cbd5e1;
+}
+.legend-item {
+  display: flex;
+  align-items: center;
+  gap: 3px;
+}
+.legend-dot {
+  display: inline-block;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+}
+.dot-player {
+  background: #22c55e;
+  box-shadow: 0 0 5px #22c55e;
+}
+.dot-enemy {
+  background: #ef4444;
+  box-shadow: 0 0 5px #ef4444;
+}
+@media (max-width: 640px) {
+  .mini-map-panel {
+    transform: scale(0.8);
+    transform-origin: top right;
+    top: 76px;
+    right: 6px;
+  }
+}

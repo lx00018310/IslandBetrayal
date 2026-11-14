@@ -416,6 +416,47 @@ export async function createGuideUi(
     const raidHpFill = shadow?.querySelector<HTMLElement>('[data-ui-part="raid-hp-fill"]');
     const saveNoticeElem = shadow?.querySelector<HTMLElement>('[data-ui-part="save-notice"]');
     const statDeathDamage = shadow?.querySelector<HTMLElement>('[data-ui-part="stat-death-damage"]');
+    const miniMapCanvas = shadow?.querySelector<HTMLElement>('[data-ui-part="mini-map-canvas"]');
+    const radarSafeRing = shadow?.querySelector<HTMLElement>('[data-ui-part="radar-safe-ring"]');
+    const radarDotsContainer = shadow?.querySelector<HTMLElement>('[data-ui-part="radar-dots-container"]');
+
+    const renderMiniMap = (radarData: {
+      radarActors?: Array<{ x: number; y: number; isPlayer: boolean; team: number; isAlly?: boolean }>;
+      radarMonsters?: Array<{ x: number; y: number }>;
+      safeRadius?: number;
+      mapSize?: number;
+    }) => {
+      if (!miniMapCanvas || !radarDotsContainer) return;
+      const w = 110;
+      const mapSize = radarData.mapSize ?? 71;
+
+      // 更新毒圈/安全区尺寸
+      if (radarSafeRing) {
+        const safeR = Math.max(0.05, radarData.safeRadius ?? 0.98);
+        const safePx = Math.round(safeR * w);
+        radarSafeRing.style.width = `${safePx}px`;
+        radarSafeRing.style.height = `${safePx}px`;
+      }
+
+      // 渲染敌我点（玩家为绿点，敌对为红点，队友为青点）
+      const actors = radarData.radarActors ?? [];
+      let dotsHtml = '';
+      for (const act of actors) {
+        const leftPct = Math.max(0, Math.min(100, (act.x / mapSize) * 100));
+        const topPct = Math.max(0, Math.min(100, (act.y / mapSize) * 100));
+        const kindClass = act.isPlayer ? 'radar-player' : act.isAlly ? 'radar-ally' : 'radar-enemy';
+        dotsHtml += `<span class="radar-dot ${kindClass}" style="left:${leftPct.toFixed(1)}%;top:${topPct.toFixed(1)}%"></span>`;
+      }
+
+      const bosses = radarData.radarMonsters ?? [];
+      for (const b of bosses) {
+        const leftPct = Math.max(0, Math.min(100, (b.x / mapSize) * 100));
+        const topPct = Math.max(0, Math.min(100, (b.y / mapSize) * 100));
+        dotsHtml += `<span class="radar-dot radar-boss" style="left:${leftPct.toFixed(1)}%;top:${topPct.toFixed(1)}%"></span>`;
+      }
+
+      radarDotsContainer.innerHTML = dotsHtml;
+    };
 
     if (btnRestart) {
       btnRestart.addEventListener('click', () => {
@@ -810,6 +851,16 @@ export async function createGuideUi(
                   hammer: '宝物·巨灵战锤',
                   smoke: '宝物·遁影烟斗',
                   heal: '宝物·生命宝珠',
+                  thunder: '宝物·鸣雷天珠',
+                  frost: '宝物·冰魄雪莲',
+                  shield: '宝物·金刚玄甲',
+                  blackhole: '宝物·暗质奇点',
+                  drain: '宝物·噬血魔翼',
+                  spikes: '宝物·荆棘地刺',
+                  chain: '宝物·乾坤缚索',
+                  orb: '宝物·浮游灵球',
+                  fire_ring: '宝物·赤炎火环',
+                  mirror: '宝物·幻影神镜',
                   bomb: '范围爆轰',
                 };
                 let html = '';
@@ -905,6 +956,9 @@ export async function createGuideUi(
             resultModal.classList.add('hidden');
           }
         }
+
+        // 渲染右上角战场缩略小地图与红点雷达
+        renderMiniMap(state as any);
       };
       port.addEventListener('message', onHudMessage);
       releases.push(() => port.removeEventListener('message', onHudMessage));

@@ -143,7 +143,7 @@ export default definePack({
     if (!playerMarker.ok) return playerMarker;
     const teamBeamMesh = createBoxGeometry(0.12, 0.12, 1.0);
     if (!teamBeamMesh.ok) return teamBeamMesh;
-    const oceanBox = createBoxGeometry(140, 0.5, 140);
+    const oceanBox = createBoxGeometry(200, 0.5, 200);
     if (!oceanBox.ok) return oceanBox;
     const debrisCube = createBoxGeometry(0.18, 0.18, 0.18);
     if (!debrisCube.ok) return debrisCube;

@@ -8,6 +8,7 @@ import {
   currentSafeRadius,
   damageActor,
   formTeam,
+  generateUpgradeChoices,
   giveActorXp,
   isInsideCover,
   segmentBlockedByCover,
@@ -364,5 +365,73 @@ describe('两场 Boss / 死亡增伤 / 逐分钟缩圈与掩体 / 升级队列 /
     p.lastHitTimer = 3.0;
     stepSimulation(sim, 1.0, idleInput);
     expect(p.hp).toBeCloseTo(53.0, 1); // 战时自愈 3.0 HP/s
+  });
+
+  // -------------------------------------------------------------------------
+  // 新机制：纯宝物升级体系 / 浅水区持续扣血 / 护盾格挡与吸血
+  // -------------------------------------------------------------------------
+  it('纯宝物升级：升级池 100% 全部为宝物选项，绝不产生额外属性卡', () => {
+    const sim = createInitialSimulation();
+    const p = sim.actors[0]!;
+    // 连续多次生成卡池验证
+    for (let i = 0; i < 20; i++) {
+      const choices = generateUpgradeChoices(p);
+      expect(choices.length).toBeGreaterThanOrEqual(1);
+      for (const choice of choices) {
+        expect(choice.type).toBe('weapon');
+        expect(choice.id.startsWith('stat_')).toBe(false);
+      }
+    }
+  });
+
+  it('浅水区机制：角色进入水域持续受侵蚀扣血与减速，生命耗尽时才淘汰', () => {
+    const sim = createInitialSimulation();
+    sim.elapsed = 30; // 跳过开局无敌保护期
+    const p = sim.actors[0]!;
+    // 将玩家放置在水域深水网格 (1, 1)，静止不移动
+    p.x = 1.0; p.y = 1.0; p.hp = 100; p.alive = true;
+    stepSimulation(sim, 1.0, { moveX: 0, moveY: 0 });
+    // 未死，但受到持续扣血（每秒扣 10 点）与水流减速
+    expect(p.alive).toBe(true);
+    expect(p.hp).toBeLessThanOrEqual(90.1);
+    expect(p.slow).toBeGreaterThan(0);
+
+    // 将生命降至濒死，在浅水区持续受侵蚀致死淘汰
+    p.hp = 4.0;
+    p.x = 1.0; p.y = 1.0;
+    stepSimulation(sim, 1.0, { moveX: 0, moveY: 0 });
+    expect(p.alive).toBe(false);
+    expect(p.hp).toBe(0);
+  });
+
+  it('金刚玄甲护盾：完全抵挡下一次攻击伤害并震退攻击者', () => {
+    const sim = createInitialSimulation();
+    const target = sim.actors[1]!;
+    const attacker = sim.actors[2]!;
+    target.x = 20; target.y = 20; target.hp = 100;
+    attacker.x = 21; attacker.y = 20;
+
+    target.relicShield = 1;
+    target.shieldHp = 1;
+
+    // 攻击者造成 30 点重创
+    damageActor(sim, target, 30, attacker);
+    // 护盾抵挡，无伤
+    expect(target.hp).toBe(100);
+    expect(target.shieldHp).toBe(0);
+    // 攻击者被震退
+    expect(attacker.x).toBeGreaterThan(21.0);
+  });
+
+  it('噬血魔翼：攻击敌人将伤害转化为自身生命值回复', () => {
+    const sim = createInitialSimulation();
+    const attacker = sim.actors[1]!;
+    const target = sim.actors[2]!;
+    attacker.hp = 50;
+    attacker.relicDrain = 2; // 吸血 35%
+    target.hp = 100;
+
+    damageActor(sim, target, 40, attacker);
+    expect(attacker.hp).toBeGreaterThan(50);
   });
 });

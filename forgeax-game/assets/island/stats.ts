@@ -86,7 +86,26 @@ export const RULE_DESCRIPTIONS: Record<GlobalRuleKind, string> = {
 };
 
 /** 宝物词条（首版每件宝物最多 1 条固定数值词条） */
-export type RelicKind = 'knife' | 'arrow' | 'laser' | 'cyclone' | 'boomerang' | 'hammer' | 'smoke' | 'heal' | 'bomb';
+export type RelicKind =
+  | 'knife'
+  | 'arrow'
+  | 'laser'
+  | 'cyclone'
+  | 'boomerang'
+  | 'hammer'
+  | 'smoke'
+  | 'heal'
+  | 'thunder'
+  | 'frost'
+  | 'shield'
+  | 'blackhole'
+  | 'drain'
+  | 'spikes'
+  | 'chain'
+  | 'orb'
+  | 'fire_ring'
+  | 'mirror'
+  | 'bomb';
 export type RelicAffix =
   | 'knifeArea'
   | 'arrowPierce'
@@ -96,6 +115,16 @@ export type RelicAffix =
   | 'hammerStun'
   | 'smokeSlow'
   | 'healPower'
+  | 'thunderChain'
+  | 'frostDuration'
+  | 'shieldCooldown'
+  | 'blackholeRadius'
+  | 'drainPercent'
+  | 'spikesDamage'
+  | 'chainRange'
+  | 'orbCount'
+  | 'fireRingBurn'
+  | 'mirrorDuration'
   | 'bombRadius';
 
 export interface CarryRelic {
@@ -277,6 +306,16 @@ export function aggregateGlobalRules(rules: readonly GlobalRule[]) {
       hammer: clamp(1.2 ** close * 0.9 ** ranged, 0.5, 3),
       smoke: clamp(1.2 ** close, 0.5, 3),
       heal: 1.0,
+      thunder: clamp(1.2 ** ranged, 1, 3),
+      frost: clamp(1.2 ** close, 0.5, 3),
+      shield: 1.0,
+      blackhole: clamp(1.2 ** ranged, 1, 3),
+      drain: 1.0,
+      spikes: clamp(1.2 ** close, 0.5, 3),
+      chain: clamp(1.2 ** ranged, 1, 3),
+      orb: clamp(1.2 ** ranged, 1, 3),
+      fire_ring: clamp(1.2 ** close, 0.5, 3),
+      mirror: 1.0,
       bomb: clamp(1.2 ** ranged, 1, 3),
       melee: clamp(0.9 ** ranged, 0.5, 1),
     },
@@ -443,5 +482,15 @@ export const RELIC_AFFIX_TEXT: Record<RelicAffix, string> = {
   hammerStun: '战锤重击 +40%',
   smokeSlow: '毒雾减速 +15%',
   healPower: '回血效能 +35%',
+  thunderChain: '落雷连锁 +35%',
+  frostDuration: '冰冻时长 +40%',
+  shieldCooldown: '护盾充能 -30%',
+  blackholeRadius: '黑洞吸附 +30%',
+  drainPercent: '吸血比例 +25%',
+  spikesDamage: '地刺伤害 +40%',
+  chainRange: '飞索距离 +35%',
+  orbCount: '灵球数量 +1',
+  fireRingBurn: '灼烧持续 +40%',
+  mirrorDuration: '幻象时长 +50%',
   bombRadius: '爆炸范围 +15%',
 };

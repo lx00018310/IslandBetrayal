@@ -30,7 +30,7 @@ export interface Vec2 {
   y: number;
 }
 
-export const GRID_SIZE = 51;
+export const GRID_SIZE = 71;
 export const MATCH_SECONDS = 300;
 export const OVERTIME_SECONDS = 60; // 300s ~ 360s 决胜加时
 
@@ -144,6 +144,17 @@ export interface ActorState {
   relicHammer: number; // 0..3 巨灵战锤 (正面巨力砸击击退)
   relicSmoke: number;  // 0..3 遁影烟斗 (身后留存减速毒雾)
   relicHeal: number;   // 0..3 生命宝珠 (加快未受击回血速度与高阶战时自愈)
+  relicThunder: number;// 0..3 鸣雷天珠 (随机落雷轰顶与连锁麻痹)
+  relicFrost: number;  // 0..3 冰魄雪莲 (周期性爆发极寒冰环)
+  relicShield: number; // 0..3 金刚玄甲 (周期性玄光护体灵盾抵挡攻击)
+  shieldHp: number;    // 当前玄甲护盾层数 (0 或 1)
+  relicBlackhole: number; // 0..3 暗质奇点 (微型引力黑洞强力吸引坍缩)
+  relicDrain: number;  // 0..3 噬血魔翼 (攻击吸血转化为生命)
+  relicSpikes: number; // 0..3 荆棘地刺 (身后布下穿刺地刺流血陷阱)
+  relicChain: number;  // 0..3 乾坤缚索 (灵索抓取最近强敌强行拖拽)
+  relicOrb: number;    // 0..3 浮游灵球 (悬浮法球自动连发攻击)
+  relicFireRing: number; // 0..3 赤炎火环 (扩散火环与灼烧火径)
+  relicMirror: number; // 0..3 幻影神镜 (召唤分身并肩协同作战)
   weaponBomb: number;  // 0..3 范围炸弹 (保留兼容)
   lastHitTimer: number;// 受击冷静计时器 (<=0 表示脱战/安全)
   statDamageBonus: number; // 百分比增益 e.g. 0.15
@@ -162,6 +173,17 @@ export interface ActorState {
   boomerangTimer: number;
   hammerTimer: number;
   smokeTimer: number;
+  thunderTimer: number;
+  frostTimer: number;
+  shieldTimer: number;
+  blackholeTimer: number;
+  spikesTimer: number;
+  chainTimer: number;
+  orbTimer: number;
+  orbAngle: number;
+  fireRingTimer: number;
+  mirrorTimer: number;
+  mirrorActive: boolean;
   bombTimer: number;
 }
 
@@ -497,6 +519,16 @@ export function defaultRelicAffix(kind: RelicKind): RelicAffix {
   if (kind === 'hammer') return 'hammerStun';
   if (kind === 'smoke') return 'smokeSlow';
   if (kind === 'heal') return 'healPower';
+  if (kind === 'thunder') return 'thunderChain';
+  if (kind === 'frost') return 'frostDuration';
+  if (kind === 'shield') return 'shieldCooldown';
+  if (kind === 'blackhole') return 'blackholeRadius';
+  if (kind === 'drain') return 'drainPercent';
+  if (kind === 'spikes') return 'spikesDamage';
+  if (kind === 'chain') return 'chainRange';
+  if (kind === 'orb') return 'orbCount';
+  if (kind === 'fire_ring') return 'fireRingBurn';
+  if (kind === 'mirror') return 'mirrorDuration';
   return 'bombRadius';
 }
 
@@ -544,9 +576,9 @@ export interface CoverBlock {
 
 /** 中央固定掩体布局（2–3 处，均有可见绕行通道，不形成密封口袋） */
 export const COVER_LAYOUT: readonly CoverBlock[] = [
-  { id: 0, x: 21.0, y: 25.0, radius: 1.2, disappearsAtStage: 99 },
-  { id: 1, x: 29.0, y: 25.0, radius: 1.2, disappearsAtStage: 99 },
-  { id: 2, x: 28.5, y: 20.0, radius: 0.9, disappearsAtStage: 6 },
+  { id: 0, x: 30.0, y: 35.0, radius: 1.5, disappearsAtStage: 99 },
+  { id: 1, x: 40.0, y: 35.0, radius: 1.5, disappearsAtStage: 99 },
+  { id: 2, x: 39.5, y: 28.0, radius: 1.2, disappearsAtStage: 6 },
 ] as const;
 
 /** 当前档位仍然存在的掩体 */
@@ -728,7 +760,7 @@ export function createInitialSimulation(options?: {
   const personalities: AiPersonality[] = ['honest', 'greedy', 'raider'];
   for (let i = 0; i < 10; i++) {
     const a = 0.42 + (i / 10) * Math.PI * 2;
-    const rad = 13.5 + (i % 3) * 3.0;
+    const rad = 18.0 + (i % 3) * 4.0;
     const personalMultiplier = Math.max(0.01, personalMultipliers?.get(i) ?? 1);
     const actorMaxHp = calculateEffectiveMaxHp(
       100,
@@ -774,6 +806,17 @@ export function createInitialSimulation(options?: {
       relicHammer: 0,
       relicSmoke: 0,
       relicHeal: 0,
+      relicThunder: 0,
+      relicFrost: 0,
+      relicShield: 0,
+      shieldHp: 0,
+      relicBlackhole: 0,
+      relicDrain: 0,
+      relicSpikes: 0,
+      relicChain: 0,
+      relicOrb: 0,
+      relicFireRing: 0,
+      relicMirror: 0,
       weaponBomb: 0,
       lastHitTimer: 0,
       statDamageBonus: 0,
@@ -789,6 +832,17 @@ export function createInitialSimulation(options?: {
       boomerangTimer: 0.6 + i * 0.2,
       hammerTimer: 1.0 + i * 0.2,
       smokeTimer: 0.2,
+      thunderTimer: 1.2 + i * 0.2,
+      frostTimer: 1.5 + i * 0.2,
+      shieldTimer: 0,
+      blackholeTimer: 2.0 + i * 0.3,
+      spikesTimer: 0.5,
+      chainTimer: 1.8 + i * 0.2,
+      orbTimer: 0,
+      orbAngle: i * 1.0,
+      fireRingTimer: 1.0 + i * 0.2,
+      mirrorTimer: 0,
+      mirrorActive: false,
       bombTimer: 1.0 + i * 0.3,
     });
   }
@@ -807,6 +861,16 @@ export function createInitialSimulation(options?: {
         else if (relic.kind === 'hammer') actor.relicHammer = lvl;
         else if (relic.kind === 'smoke') actor.relicSmoke = lvl;
         else if (relic.kind === 'heal') actor.relicHeal = lvl;
+        else if (relic.kind === 'thunder') actor.relicThunder = lvl;
+        else if (relic.kind === 'frost') actor.relicFrost = lvl;
+        else if (relic.kind === 'shield') actor.relicShield = lvl;
+        else if (relic.kind === 'blackhole') actor.relicBlackhole = lvl;
+        else if (relic.kind === 'drain') actor.relicDrain = lvl;
+        else if (relic.kind === 'spikes') actor.relicSpikes = lvl;
+        else if (relic.kind === 'chain') actor.relicChain = lvl;
+        else if (relic.kind === 'orb') actor.relicOrb = lvl;
+        else if (relic.kind === 'fire_ring') actor.relicFireRing = lvl;
+        else if (relic.kind === 'mirror') actor.relicMirror = lvl;
         else if (relic.kind === 'bomb') actor.weaponBomb = lvl;
         actor.relicAffix = relic.affix ?? defaultRelicAffix(relic.kind);
       }
@@ -827,8 +891,8 @@ export function createInitialSimulation(options?: {
     monsters.push({
       id: i,
       kind,
-      x: center + Math.cos(a) * (11.5 + (i % 3) * 4.0),
-      y: center + Math.sin(a) * (11.5 + (i % 3) * 4.0),
+      x: center + Math.cos(a) * (16.0 + (i % 3) * 5.0),
+      y: center + Math.sin(a) * (16.0 + (i % 3) * 5.0),
       hp,
       maxHp: hp,
       alive: isInitial,
@@ -1361,44 +1425,139 @@ export function generateUpgradeChoices(actor: ActorState): UpgradeOption[] {
     });
   }
 
-  // 2. 通用属性宝物选项（始终提供）
-  pool.push({
-    id: 'stat_damage',
-    type: 'stat',
-    title: '锋芒符石',
-    description: '全部武器与攻击基础伤害提升 15%',
-    currentValue: `+${Math.round(actor.statDamageBonus * 100)}%`,
-    nextValue: `+${Math.round((actor.statDamageBonus + 0.15) * 100)}%`,
-  });
+  if ((actor.relicThunder ?? 0) < 3) {
+    const nextLvl = (actor.relicThunder ?? 0) + 1;
+    pool.push({
+      id: 'relic_thunder',
+      type: 'weapon',
+      title: '宝物·鸣雷天珠',
+      description: `周期性引天雷轰顶劈击范围内敌对目标，造成高额落雷重创与麻痹减速`,
+      currentValue: (actor.relicThunder ?? 0) === 0 ? '未习得' : `LV.${actor.relicThunder}`,
+      nextValue: `LV.${nextLvl} (天雷重击，连锁弹射+1)`,
+    });
+  }
 
-  pool.push({
-    id: 'stat_speed',
-    type: 'stat',
-    title: '疾风之靴',
-    description: '角色移动速度提升 8%',
-    currentValue: `+${Math.round(actor.statSpeedBonus * 100)}%`,
-    nextValue: `+${Math.round((actor.statSpeedBonus + 0.08) * 100)}%`,
-  });
+  if ((actor.relicFrost ?? 0) < 3) {
+    const nextLvl = (actor.relicFrost ?? 0) + 1;
+    pool.push({
+      id: 'relic_frost',
+      type: 'weapon',
+      title: '宝物·冰魄雪莲',
+      description: `周期性在脚下爆发极寒冰环霜气，冻结减速周围全部敌对目标并造成持续霜寒伤害`,
+      currentValue: (actor.relicFrost ?? 0) === 0 ? '未习得' : `LV.${actor.relicFrost}`,
+      nextValue: `LV.${nextLvl} (冰环范围+25%，减速50%)`,
+    });
+  }
 
-  pool.push({
-    id: 'stat_attack_speed',
-    type: 'stat',
-    title: '极速指环',
-    description: '基础攻击与全宝物技能触发间隔缩短 10%',
-    currentValue: `+${Math.round(actor.statAttackSpeedBonus * 100)}%`,
-    nextValue: `+${Math.round((actor.statAttackSpeedBonus + 0.10) * 100)}%`,
-  });
+  if ((actor.relicShield ?? 0) < 3) {
+    const nextLvl = (actor.relicShield ?? 0) + 1;
+    pool.push({
+      id: 'relic_shield',
+      type: 'weapon',
+      title: '宝物·金刚玄甲',
+      description: `生成玄光金刚护盾抵挡受到的下一次直接伤害并震退敌人，升级大幅缩短充能时间`,
+      currentValue: (actor.relicShield ?? 0) === 0 ? '未习得' : `LV.${actor.relicShield}`,
+      nextValue: `LV.${nextLvl} (护盾冷却缩短至${10 - nextLvl * 2}秒)`,
+    });
+  }
 
-  pool.push({
-    id: 'stat_area',
-    type: 'stat',
-    title: '威能法印',
-    description: '技能打击范围、震波与扩散半径扩大 15%',
-    currentValue: `+${Math.round(actor.statAreaBonus * 100)}%`,
-    nextValue: `+${Math.round((actor.statAreaBonus + 0.15) * 100)}%`,
-  });
+  if ((actor.relicBlackhole ?? 0) < 3) {
+    const nextLvl = (actor.relicBlackhole ?? 0) + 1;
+    pool.push({
+      id: 'relic_blackhole',
+      type: 'weapon',
+      title: '宝物·暗质奇点',
+      description: `向前打出微型引力黑洞，强力牵引吸附周围的怪物与敌对目标并造成引力撕裂伤害`,
+      currentValue: (actor.relicBlackhole ?? 0) === 0 ? '未习得' : `LV.${actor.relicBlackhole}`,
+      nextValue: `LV.${nextLvl} (吸附范围+${nextLvl * 20}%，引力加强)`,
+    });
+  }
 
-  // 随机抽取 3 个不重复项
+  if ((actor.relicDrain ?? 0) < 3) {
+    const nextLvl = (actor.relicDrain ?? 0) + 1;
+    pool.push({
+      id: 'relic_drain',
+      type: 'weapon',
+      title: '宝物·噬血魔翼',
+      description: `造成的所有攻击与宝物伤害均按比例转化为生命值吸血回复，越战越勇`,
+      currentValue: (actor.relicDrain ?? 0) === 0 ? '未习得' : `LV.${actor.relicDrain} (吸血${15 + (actor.relicDrain ?? 0) * 10}%)`,
+      nextValue: `LV.${nextLvl} (吸血率提升至${15 + nextLvl * 10}%)`,
+    });
+  }
+
+  if ((actor.relicSpikes ?? 0) < 3) {
+    const nextLvl = (actor.relicSpikes ?? 0) + 1;
+    pool.push({
+      id: 'relic_spikes',
+      type: 'weapon',
+      title: '宝物·荆棘地刺',
+      description: `移动时在身后持续布设尖锐地刺陷阱，践踏陷阱的敌人受到流血与穿刺重创`,
+      currentValue: (actor.relicSpikes ?? 0) === 0 ? '未习得' : `LV.${actor.relicSpikes}`,
+      nextValue: `LV.${nextLvl} (地刺持续+1秒，流血伤害提升)`,
+    });
+  }
+
+  if ((actor.relicChain ?? 0) < 3) {
+    const nextLvl = (actor.relicChain ?? 0) + 1;
+    pool.push({
+      id: 'relic_chain',
+      type: 'weapon',
+      title: '宝物·乾坤缚索',
+      description: `周期性伸出灵索瞬间拘捕抓取最近的敌对目标，强行拖拽至眼前并施加眩晕重击`,
+      currentValue: (actor.relicChain ?? 0) === 0 ? '未习得' : `LV.${actor.relicChain}`,
+      nextValue: `LV.${nextLvl} (拖拽距离提升，附带破甲重击)`,
+    });
+  }
+
+  if ((actor.relicOrb ?? 0) < 3) {
+    const nextLvl = (actor.relicOrb ?? 0) + 1;
+    pool.push({
+      id: 'relic_orb',
+      type: 'weapon',
+      title: '宝物·浮游灵球',
+      description: `唤出悬浮法球自动盘旋伴飞，周期性向视野内的强敌自动连发高频追踪灵弹`,
+      currentValue: (actor.relicOrb ?? 0) === 0 ? '未习得' : `LV.${actor.relicOrb} (${actor.relicOrb}颗法球)`,
+      nextValue: `LV.${nextLvl} (${nextLvl}颗浮游灵球高速连射)`,
+    });
+  }
+
+  if ((actor.relicFireRing ?? 0) < 3) {
+    const nextLvl = (actor.relicFireRing ?? 0) + 1;
+    pool.push({
+      id: 'relic_fire_ring',
+      type: 'weapon',
+      title: '宝物·赤炎火环',
+      description: `周期性向外扩散一道灼热烈焰火环，穿透击退所有触碰的敌人并施加持续点燃焚烧`,
+      currentValue: (actor.relicFireRing ?? 0) === 0 ? '未习得' : `LV.${actor.relicFireRing}`,
+      nextValue: `LV.${nextLvl} (火环扩散波次+1，灼烧强化)`,
+    });
+  }
+
+  if ((actor.relicMirror ?? 0) < 3) {
+    const nextLvl = (actor.relicMirror ?? 0) + 1;
+    pool.push({
+      id: 'relic_mirror',
+      type: 'weapon',
+      title: '宝物·幻影神镜',
+      description: `召唤半透明虚影分身协同作战，分身复制本体攻击动作并造成额外协同伤害`,
+      currentValue: (actor.relicMirror ?? 0) === 0 ? '未习得' : `LV.${actor.relicMirror}`,
+      nextValue: `LV.${nextLvl} (分身继承${35 + nextLvl * 15}%战力)`,
+    });
+  }
+
+  // 若全部 18 种宝物全满（极罕见），兜底奖励
+  if (pool.length === 0) {
+    pool.push({
+      id: 'relic_heal_full',
+      type: 'weapon',
+      title: '宝物·九转金丹',
+      description: '全宝物登峰造极！立即回满全部生命值并获得 20 额外宝物财富',
+      currentValue: '已全满',
+      nextValue: '回复满血 + 20财富',
+    });
+  }
+
+  // 纯粹宝物抽卡：随机抽取 3 个不重复宝物升级项
   const shuffled = [...pool].sort(() => Math.random() - 0.5);
   return shuffled.slice(0, 3);
 }
@@ -1429,6 +1588,41 @@ export function applyUpgrade(actor: ActorState, upgrade: UpgradeOption): void {
       break;
     case 'relic_heal':
       actor.relicHeal = Math.min(3, (actor.relicHeal ?? 0) + 1);
+      break;
+    case 'relic_thunder':
+      actor.relicThunder = Math.min(3, (actor.relicThunder ?? 0) + 1);
+      break;
+    case 'relic_frost':
+      actor.relicFrost = Math.min(3, (actor.relicFrost ?? 0) + 1);
+      break;
+    case 'relic_shield':
+      actor.relicShield = Math.min(3, (actor.relicShield ?? 0) + 1);
+      actor.shieldHp = 1; // 习得即刻获得一层护盾
+      break;
+    case 'relic_blackhole':
+      actor.relicBlackhole = Math.min(3, (actor.relicBlackhole ?? 0) + 1);
+      break;
+    case 'relic_drain':
+      actor.relicDrain = Math.min(3, (actor.relicDrain ?? 0) + 1);
+      break;
+    case 'relic_spikes':
+      actor.relicSpikes = Math.min(3, (actor.relicSpikes ?? 0) + 1);
+      break;
+    case 'relic_chain':
+      actor.relicChain = Math.min(3, (actor.relicChain ?? 0) + 1);
+      break;
+    case 'relic_orb':
+      actor.relicOrb = Math.min(3, (actor.relicOrb ?? 0) + 1);
+      break;
+    case 'relic_fire_ring':
+      actor.relicFireRing = Math.min(3, (actor.relicFireRing ?? 0) + 1);
+      break;
+    case 'relic_mirror':
+      actor.relicMirror = Math.min(3, (actor.relicMirror ?? 0) + 1);
+      break;
+    case 'relic_heal_full':
+      actor.hp = actor.maxHp;
+      actor.treasure += 20;
       break;
     case 'weapon_bomb':
       // 兼容旧存档，将 bomb 平滑转为激光宝物
@@ -1588,6 +1782,22 @@ export function resolveHostileHit(
 
 export function damageActor(sim: SimulationState, target: ActorState, amount: number, from: ActorState | null): void {
   if (sim.gameOver || !target.alive) return;
+
+  // 宝物·金刚玄甲：消耗一层玄光护盾抵挡本次受到的直接攻击伤害并震退攻击者
+  if ((target.relicShield ?? 0) > 0 && target.shieldHp > 0) {
+    target.shieldHp = 0;
+    const effAtkSpd = calculateEffectiveAttackSpeed(target.statAttackSpeedBonus, sim.worldMultipliers.attackSpeed);
+    target.shieldTimer = Math.max(3.0, (10.0 - target.relicShield * 2.0) / (target.relicAffix === 'shieldCooldown' ? 1.4 : 1.0) / effAtkSpd);
+    burst(sim, target.x, target.y, '#ffd700', 12);
+    pulse(sim, '🛡️ 玄甲格挡！', target.x, target.y, '#ffd700');
+    if (from) {
+      const pushAng = Math.atan2(from.y - target.y, from.x - target.x);
+      from.x += Math.cos(pushAng) * 1.5;
+      from.y += Math.sin(pushAng) * 1.5;
+    }
+    return;
+  }
+
   // 机制：只要产生了组队（target.team >= 0），受到的伤害直接减免 20%
   let finalAmount = amount;
   if (target.team >= 0) {
@@ -1595,6 +1805,17 @@ export function damageActor(sim: SimulationState, target: ActorState, amount: nu
   }
   target.hp -= finalAmount;
   target.hitFlash = 0.2;
+
+  // 宝物·噬血魔翼：攻击者命中回复生命值
+  if (from && from.alive && (from.relicDrain ?? 0) > 0) {
+    const drainRatio = (0.15 + from.relicDrain * 0.1) * (from.relicAffix === 'drainPercent' ? 1.3 : 1.0);
+    const healVal = Math.min(from.maxHp - from.hp, Math.max(1, Math.round(finalAmount * drainRatio)));
+    if (healVal > 0) {
+      from.hp += healVal;
+      burst(sim, from.x, from.y, '#65d5b0', 4);
+    }
+  }
+
   // 机制：受到攻击后重置脱战冷静期（生命宝珠可缩短受击惩罚时间）
   const coolDown = Math.max(1.0, 3.0 - (target.relicHeal ?? 0) * 1.0);
   target.lastHitTimer = coolDown;
@@ -1621,6 +1842,17 @@ export function damageMonster(sim: SimulationState, monster: MonsterState, amoun
     if (reward > 0) awardTreasure(sim, from, reward);
   }
   monster.hp -= amount;
+
+  // 宝物·噬血魔翼：攻击怪物造成伤害同样享受生命吸血
+  if (from && from.alive && (from.relicDrain ?? 0) > 0) {
+    const drainRatio = (0.15 + from.relicDrain * 0.1) * (from.relicAffix === 'drainPercent' ? 1.3 : 1.0);
+    const healVal = Math.min(from.maxHp - from.hp, Math.max(1, Math.round(amount * drainRatio)));
+    if (healVal > 0) {
+      from.hp += healVal;
+      burst(sim, from.x, from.y, '#65d5b0', 3);
+    }
+  }
+
   if (monster.kind === 'boss') sim.raidBossHp = Math.max(0, monster.hp);
   monster.hitFlash = 0.2;
   burst(sim, monster.x, monster.y, '#c8a2ff', 4);
@@ -2040,6 +2272,260 @@ export function stepWeapons(sim: SimulationState, dt: number): void {
           exploded: false,
           fxTimer: 0.5,
         });
+      }
+    }
+
+    // 8. 宝物·鸣雷天珠（天雷轰顶与连锁闪电）
+    if ((a.relicThunder ?? 0) > 0) {
+      a.thunderTimer -= dt;
+      if (a.thunderTimer <= 0) {
+        const effAtkSpd = calculateEffectiveAttackSpeed(a.statAttackSpeedBonus, sim.worldMultipliers.attackSpeed);
+        a.thunderTimer = Math.max(MIN_LEGAL_CYCLE, (3.2 - a.relicThunder * 0.35) / effAtkSpd);
+        const thunderDmg = Math.round(calculateAttackDamage(sim, a, false) * (1.2 + a.relicThunder * 0.35) * (sim.rules.weaponModifiers.thunder ?? 1));
+        // 搜寻范围内最近敌对目标
+        let targetPos: (Vec2 & { id: number; isMonster?: boolean }) | null = null;
+        let minD = 8.0;
+        for (const m of sim.monsters) {
+          if (m.alive && dist(a, m) < minD && !segmentBlockedByCover(sim, a.x, a.y, m.x, m.y)) {
+            minD = dist(a, m);
+            targetPos = { x: m.x, y: m.y, id: m.id, isMonster: true };
+          }
+        }
+        for (const o of aliveActors(sim)) {
+          if (o.id !== a.id && a.team !== o.id && dist(a, o) < minD && !segmentBlockedByCover(sim, a.x, a.y, o.x, o.y)) {
+            minD = dist(a, o);
+            targetPos = { x: o.x, y: o.y, id: o.id, isMonster: false };
+          }
+        }
+        if (targetPos) {
+          burst(sim, targetPos.x, targetPos.y, '#ffd700', 14);
+          pulse(sim, '⚡ 天雷轰顶！', targetPos.x, targetPos.y, '#ffd700');
+          if (targetPos.isMonster) {
+            const m = sim.monsters.find(xm => xm.id === targetPos!.id);
+            if (m && m.alive) damageMonster(sim, m, thunderDmg, a);
+          } else {
+            const o = sim.actors[targetPos.id];
+            if (o && o.alive) {
+              resolveHostileHit(sim, o, thunderDmg, a);
+              o.slow = Math.max(o.slow, 0.4);
+            }
+          }
+          // 连锁闪电
+          if (a.relicThunder >= 2 || a.relicAffix === 'thunderChain') {
+            const chainDmg = Math.round(thunderDmg * 0.6);
+            for (const m of sim.monsters) {
+              if (m.alive && m.id !== targetPos.id && dist(targetPos, m) < 4.0) {
+                burst(sim, m.x, m.y, '#ffd700', 8);
+                damageMonster(sim, m, chainDmg, a);
+                break;
+              }
+            }
+          }
+        }
+      }
+    }
+
+    // 9. 宝物·冰魄雪莲（周期爆发极寒冰环）
+    if ((a.relicFrost ?? 0) > 0) {
+      a.frostTimer -= dt;
+      if (a.frostTimer <= 0) {
+        const effAtkSpd = calculateEffectiveAttackSpeed(a.statAttackSpeedBonus, sim.worldMultipliers.attackSpeed);
+        a.frostTimer = Math.max(MIN_LEGAL_CYCLE, (3.2 - a.relicFrost * 0.3) / effAtkSpd);
+        const frostRadius = (2.8 + a.relicFrost * 0.5) * (1 + a.statAreaBonus);
+        const frostDmg = Math.round(calculateAttackDamage(sim, a, false) * (0.6 + a.relicFrost * 0.2) * (sim.rules.weaponModifiers.frost ?? 1));
+        burst(sim, a.x, a.y, '#67e8f9', 16);
+        pulse(sim, '❄️ 冰环爆发！', a.x, a.y, '#67e8f9');
+        for (const m of sim.monsters) {
+          if (m.alive && dist(a, m) <= frostRadius && !segmentBlockedByCover(sim, a.x, a.y, m.x, m.y)) {
+            damageMonster(sim, m, frostDmg, a);
+            m.speed = Math.max(1.0, m.speed * 0.5);
+          }
+        }
+        for (const o of aliveActors(sim)) {
+          if (o.id !== a.id && a.team !== o.id && dist(a, o) <= frostRadius && !segmentBlockedByCover(sim, a.x, a.y, o.x, o.y)) {
+            resolveHostileHit(sim, o, frostDmg, a);
+            o.slow = Math.max(o.slow, 1.2);
+          }
+        }
+      }
+    }
+
+    // 10. 宝物·金刚玄甲（被动充能护盾）
+    if ((a.relicShield ?? 0) > 0 && a.shieldHp <= 0) {
+      a.shieldTimer -= dt;
+      if (a.shieldTimer <= 0) {
+        a.shieldHp = 1;
+        burst(sim, a.x, a.y, '#ffd700', 8);
+        pulse(sim, '🛡️ 玄甲充能完毕', a.x, a.y, '#ffd700');
+      }
+    }
+
+    // 11. 宝物·暗质奇点（微型引力黑洞）
+    if ((a.relicBlackhole ?? 0) > 0) {
+      a.blackholeTimer -= dt;
+      if (a.blackholeTimer <= 0) {
+        const effAtkSpd = calculateEffectiveAttackSpeed(a.statAttackSpeedBonus, sim.worldMultipliers.attackSpeed);
+        a.blackholeTimer = Math.max(MIN_LEGAL_CYCLE, (4.0 - a.relicBlackhole * 0.35) / effAtkSpd);
+        const dirX = Math.cos(a.facing) || 1;
+        const dirY = Math.sin(a.facing) || 0;
+        const holeX = a.x + dirX * 2.5;
+        const holeY = a.y + dirY * 2.5;
+        const holeRadius = (3.2 + a.relicBlackhole * 0.4) * (1 + a.statAreaBonus);
+        const holeDmg = Math.round(calculateAttackDamage(sim, a, false) * (0.7 + a.relicBlackhole * 0.2) * (sim.rules.weaponModifiers.blackhole ?? 1));
+        burst(sim, holeX, holeY, '#9333ea', 16);
+        pulse(sim, '🌀 引力奇点！', holeX, holeY, '#9333ea');
+        for (const m of sim.monsters) {
+          if (m.alive && Math.hypot(m.x - holeX, m.y - holeY) <= holeRadius) {
+            damageMonster(sim, m, holeDmg, a);
+            m.x += (holeX - m.x) * 0.4;
+            m.y += (holeY - m.y) * 0.4;
+          }
+        }
+        for (const o of aliveActors(sim)) {
+          if (o.id !== a.id && a.team !== o.id && Math.hypot(o.x - holeX, o.y - holeY) <= holeRadius) {
+            resolveHostileHit(sim, o, holeDmg, a);
+            o.x += (holeX - o.x) * 0.35;
+            o.y += (holeY - o.y) * 0.35;
+            o.slow = Math.max(o.slow, 0.5);
+          }
+        }
+      }
+    }
+
+    // 12. 宝物·荆棘地刺（奔跑留存地刺陷阱）
+    if ((a.relicSpikes ?? 0) > 0) {
+      a.spikesTimer -= dt;
+      const spdSq = a.vx * a.vx + a.vy * a.vy;
+      if (a.spikesTimer <= 0 && spdSq > 0.16) {
+        a.spikesTimer = 0.65;
+        const spikesDmg = Math.round(calculateAttackDamage(sim, a, false) * (0.4 + a.relicSpikes * 0.15) * (sim.rules.weaponModifiers.spikes ?? 1));
+        burst(sim, a.x, a.y, '#f59e0b', 4);
+        for (const m of sim.monsters) {
+          if (m.alive && dist(a, m) < 1.2) {
+            damageMonster(sim, m, spikesDmg, a);
+          }
+        }
+        for (const o of aliveActors(sim)) {
+          if (o.id !== a.id && a.team !== o.id && dist(a, o) < 1.2) {
+            resolveHostileHit(sim, o, spikesDmg, a);
+            o.slow = Math.max(o.slow, 0.35);
+          }
+        }
+      }
+    }
+
+    // 13. 宝物·乾坤缚索（灵索抓取最近强敌）
+    if ((a.relicChain ?? 0) > 0) {
+      a.chainTimer -= dt;
+      if (a.chainTimer <= 0) {
+        const effAtkSpd = calculateEffectiveAttackSpeed(a.statAttackSpeedBonus, sim.worldMultipliers.attackSpeed);
+        a.chainTimer = Math.max(MIN_LEGAL_CYCLE, (3.6 - a.relicChain * 0.35) / effAtkSpd);
+        const chainDmg = Math.round(calculateAttackDamage(sim, a, false) * (0.9 + a.relicChain * 0.3) * (sim.rules.weaponModifiers.chain ?? 1));
+        let closest: (ActorState | MonsterState) | null = null;
+        let minD = 7.0;
+        for (const m of sim.monsters) {
+          if (m.alive && dist(a, m) < minD && !segmentBlockedByCover(sim, a.x, a.y, m.x, m.y)) {
+            minD = dist(a, m); closest = m;
+          }
+        }
+        for (const o of aliveActors(sim)) {
+          if (o.id !== a.id && a.team !== o.id && dist(a, o) < minD && !segmentBlockedByCover(sim, a.x, a.y, o.x, o.y)) {
+            minD = dist(a, o); closest = o;
+          }
+        }
+        if (closest) {
+          burst(sim, closest.x, closest.y, '#f59e0b', 8);
+          pulse(sim, '⛓️ 乾坤缚索！', closest.x, closest.y, '#f59e0b');
+          // 将目标强行拖拽至眼前 1.2 码处
+          const ang = Math.atan2(closest.y - a.y, closest.x - a.x);
+          closest.x = a.x + Math.cos(ang) * 1.2;
+          closest.y = a.y + Math.sin(ang) * 1.2;
+          if ('kind' in closest) {
+            damageMonster(sim, closest, chainDmg, a);
+          } else {
+            resolveHostileHit(sim, closest, chainDmg, a);
+            closest.slow = Math.max(closest.slow, 0.6);
+          }
+        }
+      }
+    }
+
+    // 14. 宝物·浮游灵球（悬浮法球自动发射追踪灵弹）
+    if ((a.relicOrb ?? 0) > 0) {
+      a.orbAngle += dt * 3.5;
+      a.orbTimer -= dt;
+      if (a.orbTimer <= 0) {
+        const effAtkSpd = calculateEffectiveAttackSpeed(a.statAttackSpeedBonus, sim.worldMultipliers.attackSpeed);
+        a.orbTimer = Math.max(MIN_LEGAL_CYCLE, 1.2 / effAtkSpd);
+        const orbDmg = Math.round(calculateAttackDamage(sim, a, false) * (0.5 + a.relicOrb * 0.2) * (sim.rules.weaponModifiers.orb ?? 1));
+        let nearestTarget: (Vec2 & { isMonster?: boolean; id: number }) | null = null;
+        let minD = 6.5;
+        for (const m of sim.monsters) {
+          if (m.alive && dist(a, m) < minD) { minD = dist(a, m); nearestTarget = { x: m.x, y: m.y, id: m.id, isMonster: true }; }
+        }
+        for (const o of aliveActors(sim)) {
+          if (o.id !== a.id && a.team !== o.id && dist(a, o) < minD) { minD = dist(a, o); nearestTarget = { x: o.x, y: o.y, id: o.id, isMonster: false }; }
+        }
+        if (nearestTarget) {
+          burst(sim, nearestTarget.x, nearestTarget.y, '#34d399', 6);
+          if (nearestTarget.isMonster) {
+            const m = sim.monsters.find(xm => xm.id === nearestTarget!.id);
+            if (m && m.alive) damageMonster(sim, m, orbDmg, a);
+          } else {
+            const o = sim.actors[nearestTarget.id];
+            if (o && o.alive) resolveHostileHit(sim, o, orbDmg, a);
+          }
+        }
+      }
+    }
+
+    // 15. 宝物·赤炎火环（向外扩散火焰环与灼烧）
+    if ((a.relicFireRing ?? 0) > 0) {
+      a.fireRingTimer -= dt;
+      if (a.fireRingTimer <= 0) {
+        const effAtkSpd = calculateEffectiveAttackSpeed(a.statAttackSpeedBonus, sim.worldMultipliers.attackSpeed);
+        a.fireRingTimer = Math.max(MIN_LEGAL_CYCLE, (3.0 - a.relicFireRing * 0.3) / effAtkSpd);
+        const ringRadius = (3.0 + a.relicFireRing * 0.5) * (1 + a.statAreaBonus);
+        const fireDmg = Math.round(calculateAttackDamage(sim, a, false) * (0.7 + a.relicFireRing * 0.25) * (sim.rules.weaponModifiers.fire_ring ?? 1));
+        burst(sim, a.x, a.y, '#ef4444', 16);
+        pulse(sim, '🔥 赤炎火环！', a.x, a.y, '#ef4444');
+        for (const m of sim.monsters) {
+          if (m.alive && dist(a, m) <= ringRadius && !segmentBlockedByCover(sim, a.x, a.y, m.x, m.y)) {
+            damageMonster(sim, m, fireDmg, a);
+          }
+        }
+        for (const o of aliveActors(sim)) {
+          if (o.id !== a.id && a.team !== o.id && dist(a, o) <= ringRadius && !segmentBlockedByCover(sim, a.x, a.y, o.x, o.y)) {
+            resolveHostileHit(sim, o, fireDmg, a);
+            const ang = Math.atan2(o.y - a.y, o.x - a.x);
+            o.x += Math.cos(ang) * 1.0;
+            o.y += Math.sin(ang) * 1.0;
+          }
+        }
+      }
+    }
+
+    // 16. 宝物·幻影神镜（召唤分身协同冲击）
+    if ((a.relicMirror ?? 0) > 0) {
+      a.mirrorTimer -= dt;
+      if (a.mirrorTimer <= 0) {
+        const effAtkSpd = calculateEffectiveAttackSpeed(a.statAttackSpeedBonus, sim.worldMultipliers.attackSpeed);
+        a.mirrorTimer = Math.max(MIN_LEGAL_CYCLE, (4.0 - a.relicMirror * 0.35) / effAtkSpd);
+        const mirrorDmg = Math.round(calculateAttackDamage(sim, a, false) * (0.5 + a.relicMirror * 0.15) * (sim.rules.weaponModifiers.mirror ?? 1));
+        const mx = a.x + Math.cos(a.facing + 1.57) * 1.2;
+        const my = a.y + Math.sin(a.facing + 1.57) * 1.2;
+        burst(sim, mx, my, '#e0e7ff', 10);
+        pulse(sim, '👥 幻影协同！', mx, my, '#e0e7ff');
+        for (const m of sim.monsters) {
+          if (m.alive && Math.hypot(m.x - mx, m.y - my) <= 2.2) {
+            damageMonster(sim, m, mirrorDmg, a);
+          }
+        }
+        for (const o of aliveActors(sim)) {
+          if (o.id !== a.id && a.team !== o.id && Math.hypot(o.x - mx, o.y - my) <= 2.2) {
+            resolveHostileHit(sim, o, mirrorDmg, a);
+          }
+        }
       }
     }
   }
@@ -2839,14 +3325,19 @@ export function stepSimulation(
     }
   }
 
-  // 6. 移动后优先执行本步边缘坠落与淘汰判定（R05）
+  // 6. 浅水区与毒圈水域侵蚀持续掉血判定（替代瞬间暴毙，角色可走回陆地脱险）
   for (const a of aliveActors(sim)) {
     const t = tileAt(sim, Math.round(a.x), Math.round(a.y));
     if (!t || !t.isLand || t.gone || t.r > currentRadius) {
-      if (sim.shrinkTransition < SHRINK_TRANSITION_SECONDS) {
-        const safe = nearestSafeGround(sim, a); a.x = safe.x; a.y = safe.y;
-      } else {
-        eliminate(sim, a, 'fall');
+      // 浅水区持续扣血（10 HP/秒）与泥泞减速，生命值耗尽时才淘汰
+      a.hp = Math.max(0, a.hp - 10.0 * dt);
+      a.slow = Math.max(a.slow, 0.25);
+      a.lastHitTimer = 1.0;
+      if (a.isPlayer && Math.random() < 0.1) {
+        pulse(sim, '⚠️ 处于浅水区！持续掉血', a.x, a.y, '#5bc0de');
+      }
+      if (a.hp <= 0) {
+        eliminate(sim, a, 'drown');
         if (sim.gameOver) return;
       }
     }
@@ -2928,8 +3419,8 @@ export function stepSimulation(
     if (deadMonster) {
       // 寻找一个安全未崩塌陆地网格
       for (let tries = 0; tries < 15; tries++) {
-        const gx = Math.floor(center + (Math.random() - 0.5) * 38);
-        const gy = Math.floor(center + (Math.random() - 0.5) * 38);
+        const gx = Math.floor(center + (Math.random() - 0.5) * 54);
+        const gy = Math.floor(center + (Math.random() - 0.5) * 54);
         const t = tileAt(sim, gx, gy);
         if (t && t.isLand && !t.gone && t.r <= currentRadius - 0.1) {
           const x = gx + (Math.random() - 0.5) * 0.8, y = gy + (Math.random() - 0.5) * 0.8;

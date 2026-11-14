@@ -48,6 +48,7 @@ import {
   dist,
   getIgnoreRemaining,
   getNearbyCandidate,
+  GRID_SIZE,
   ignorePair,
   isPairIgnored,
   MATCH_SECONDS,
@@ -1083,6 +1084,17 @@ export const islandPlugin: Plugin = {
                         }
                       : null,
                 },
+                radarActors: aliveActors(sim).map((a) => ({
+                  x: Number(a.x.toFixed(1)),
+                  y: Number(a.y.toFixed(1)),
+                  isPlayer: a.isPlayer,
+                  team: a.team,
+                  isAlly: p.team >= 0 && a.team === p.team && a.id !== p.id,
+                })),
+                radarMonsters: sim.monsters
+                  .filter((m) => m.alive && m.kind === 'boss')
+                  .map((m) => ({ x: Number(m.x.toFixed(1)), y: Number(m.y.toFixed(1)) })),
+                mapSize: GRID_SIZE,
                 covers: activeCovers(sim).map((c) => ({
                   id: c.id,
                   x: c.x,
