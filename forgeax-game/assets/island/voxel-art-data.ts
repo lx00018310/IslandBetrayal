@@ -15,18 +15,26 @@ import { createVoxelModel } from './voxel-builder.ts';
 // ---------------------------------------------------------------------------
 
 export const VOXEL_PALETTE = {
-  // Tibo 小狗：奶油白毛 + 暖色垂耳 + 亮黑鼻头
-  furCream: '#F7EFE2',
-  furShade: '#E4D5BD',
-  earOuter: '#E9D6B8',
-  earInner: '#C6A184',
-  paw: '#C2A886',
-  nose: '#2A2320',
-  eye: '#221C19',
+  // Tibo 萌系潮玩小柴犬：奶油白毛 + 柴犬赤金暖毛 + 亮黑萌眼 + 星星眼神光 + 软萌腮红 + 卷翘萌尾
+  furCream: '#FBF5EB',
+  furWarm: '#E39F58',
+  furShade: '#CF8742',
+  furWhite: '#FFFFFF',
+  earOuter: '#CD7B32',
+  earInner: '#F8A8A7',
+  paw: '#FFF9F0',
+  pawPad: '#F08B92',
+  nose: '#221815',
+  eye: '#1C1514',
+  eyeSparkle: '#FFFFFF',
+  blush: '#FFA49E',
+  tongue: '#FF6F86',
+  eyebrow: '#FFFDF7',
   tailTip: '#FFFFFF',
   sack: '#6E5233',
   sackRope: '#3F2E1C',
-  collar: '#FFC94D',
+  collar: '#E74C3C',
+  collarBell: '#FFD700',
   // 潮玩积木通用色
   gold: '#F0C24B',
   goldDark: '#B8892B',
@@ -50,7 +58,7 @@ export const VOXEL_PALETTE = {
   monsterBodyLight: '#3A2C4E',
   monsterHorn: '#141020',
   monsterGlow: '#FF5A1E',
-  // 武器
+  // 宝物与技能
   blade: '#DCE9F5',
   bladeEdge: '#FFFFFF',
   hilt: '#6C4A2A',
@@ -59,6 +67,23 @@ export const VOXEL_PALETTE = {
   fletch: '#FFFFFF',
   bombShell: '#232833',
   bombFuse: '#FF7A2E',
+  laserCore: '#FFFFFF',
+  laserGlow: '#38BDF8',
+  laserPrism: '#818CF8',
+  cycloneWind: '#6EE7B7',
+  cycloneCore: '#A7F3D0',
+  boomerangGold: '#FBBF24',
+  boomerangEdge: '#FEF08A',
+  hammerHead: '#475569',
+  hammerShaft: '#78350F',
+  hammerRune: '#F59E0B',
+  smokePoison: '#A855F7',
+  smokeMisty: '#C084FC',
+  hpBg: '#0F172A',
+  hpBorder: '#334155',
+  hpGreen: '#22C55E',
+  hpYellow: '#EAB308',
+  hpRed: '#EF4444',
   // 战利品
   goldBar: '#FFD34D',
   goldBarLight: '#FFF3A8',
@@ -108,63 +133,88 @@ export const AI_IDENTITY_COLORS = {
 export const TIBO_UNIT = 0.1;
 
 // ---------------------------------------------------------------------------
-// Tibo 小狗（10 名参赛者共用结构，躯干由角色身份材质着色）
-// 包围盒：12 × 13 × 11 体素（unit 0.1 → 1.2 × 1.3 × 1.1 世界单位）
+// Tibo 萌柴犬（10 名参赛者共用骨骼结构，躯干由角色身份材质着色）
+// 经典日系潮玩体态：大眼高光、软萌腮红、粉舌微笑吻部、卷翘面包尾、金铃铛项圈
 // ---------------------------------------------------------------------------
 
-/** 躯干（顶点色纯白，交给 `material/char-<i>` 的 baseColor 着色） */
+/** 躯干（顶点色纯白交由身份材质着色，胸前配有饱满雪白围兜） */
 export function tiboBody(): Result<MeshAsset, AssetError> {
   const model = createVoxelModel({ unit: TIBO_UNIT });
   model.box([-3, 2, -2], [3, 7, 3], '#FFFFFF');
-  // 胸口浅色围兜，读出头身分界
-  model.box([-2, 3, 3], [2, 6, 4], P.furShade);
+  // 胸前饱满立体围兜，凸显萌系头身分界
+  model.box([-2, 3, 3], [2, 6, 4], P.furCream);
   return model.build();
 }
 
-/** 头部 + 立体口鼻 + 黑亮鼻头 + 双眼；枢轴在脖颈 y = 7 */
+/** 头部 + 萌系大眼带高光 + 软萌腮红 + 微笑吻部与粉舌；枢轴在脖颈 y = 7 */
 export function tiboHead(): Result<MeshAsset, AssetError> {
   const model = createVoxelModel({ unit: TIBO_UNIT, pivot: [0, 7, 0] });
+  // 头部轮廓：下颌微收，两侧饱满
   model.box([-4, 7, -3], [4, 13, 4], P.furCream);
-  model.box([-4, 12, -3], [4, 13, 4], P.furShade);
-  // 立体口鼻部 4 × 2 × 3
-  model.box([-2, 8, 4], [2, 10, 7], P.furCream);
-  model.box([-2, 8, 6], [2, 9, 7], P.furShade);
-  // 黑亮鼻头
+  model.box([-3, 6, -2], [3, 7, 3], P.furCream);
+  // 顶部与后脑勺赤金暖毛
+  model.box([-4, 12, -3], [4, 13, 4], P.furWarm);
+  model.box([-4, 8, -3], [4, 12, -2], P.furWarm);
+  // 柴犬招牌：额头一对浅白豆豆眉
+  model.box([-3, 12, 3], [-1, 13, 4], P.eyebrow);
+  model.box([1, 12, 3], [3, 13, 4], P.eyebrow);
+  // 饱满立体口鼻吻部
+  model.box([-2, 8, 4], [2, 10, 7], P.furWhite);
+  model.box([-2, 7, 4], [2, 8, 6], P.furCream);
+  // 乌黑湿润小鼻头
   model.box([-1, 9, 6], [1, 10, 7], P.nose);
-  // 双眼
+  // 鼻下微露小粉舌（呆萌吐舌）
+  model.box([-1, 8, 6], [1, 9, 7], P.tongue);
+  // 灵动大双眼：乌黑眸底 + 白色星星眼神光（一秒变萌）
   model.box([-3, 10, 3], [-1, 12, 4], P.eye);
+  model.box([-2, 11, 3], [-1, 12, 4], P.eyeSparkle);
   model.box([1, 10, 3], [3, 12, 4], P.eye);
+  model.box([2, 11, 3], [3, 12, 4], P.eyeSparkle);
+  // 两颊软萌粉红腮红
+  model.box([-4, 9, 3], [-3, 10, 4], P.blush);
+  model.box([3, 9, 3], [4, 10, 4], P.blush);
   return model.build();
 }
 
-/** 垂耳（side = -1 左 / +1 右）；枢轴在耳根 y = 12，便于滞后摆动 */
+/** 灵动三角萌耳（side = -1 左 / +1 右）；外立暖赤金，内凹粉嫩耳窝 */
 export function tiboEar(side: -1 | 1): Result<MeshAsset, AssetError> {
   const model = createVoxelModel({ unit: TIBO_UNIT, pivot: [side * 4, 12, 0] });
   const x0 = side < 0 ? -6 : 4;
   const x1 = side < 0 ? -4 : 6;
+  // 耳背暖赤金
   model.box([x0, 8, -1], [x1, 12, 2], P.earOuter);
-  model.box([x0, 8, 1], [x1, 9, 2], P.earInner);
-  model.box([x0, 11, -1], [x1, 12, 2], P.furShade);
+  // 内侧立体粉嫩耳窝
+  model.box([x0, 9, 1], [x1, 11, 2], P.earInner);
+  // 耳尖俏丽微白
+  model.box([x0, 11, 0], [x1, 12, 1], P.furCream);
   return model.build();
 }
 
-/** 前后两对短腿；枢轴在髋部 y = 3，便于交替摆动 */
+/** 肉嘟嘟萌爪短腿；前足雪白白手套，爪底带粉嫩小肉垫 */
 export function tiboLegs(front: boolean): Result<MeshAsset, AssetError> {
   const model = createVoxelModel({ unit: TIBO_UNIT, pivot: [0, 3, 0] });
   const z0 = front ? 1 : -2;
   const z1 = front ? 3 : 0;
   for (const [x0, x1] of [[-3, -1], [1, 3]] as const) {
-    model.box([x0, 0, z0], [x1, 3, z1], P.furShade);
+    // 腿部暖毛
+    model.box([x0, 1, z0], [x1, 3, z1], P.furCream);
+    // 足底白手套
     model.box([x0, 0, z0], [x1, 1, z1], P.paw);
+    // 爪底小粉肉垫（跑动跳跃时隐现）
+    model.box([x0, 0, z0], [x1, 0, z1], P.pawPad);
   }
   return model.build();
 }
 
-/** 翘起的尾巴 + 白色尾尖；枢轴在尾根 */
+/** 柴犬标志性卷翘面包尾（螺旋上卷 + 蓬松白尾尖） */
 export function tiboTail(): Result<MeshAsset, AssetError> {
   const model = createVoxelModel({ unit: TIBO_UNIT, pivot: [0, 6, -2] });
-  model.box([-1, 6, -3], [1, 9, -2], P.furCream);
-  model.box([-1, 9, -4], [1, 10, -2], P.tailTip);
+  // 尾根向上斜扬
+  model.box([-1, 6, -3], [1, 8, -2], P.furWarm);
+  // 尾中向前弯卷成面包圈弧度
+  model.box([-1, 8, -3], [1, 10, -1], P.furWarm);
+  // 卷翘末梢大白尾尖
+  model.box([-1, 9, -2], [1, 11, 0], P.tailTip);
   return model.build();
 }
 
@@ -177,10 +227,13 @@ export function tiboSack(): Result<MeshAsset, AssetError> {
   return model.build();
 }
 
-/** 金色项圈，保证小尺寸下仍有高光识别点 */
+/** 潮玩朱红项圈 + 正面立体悬垂小金铃铛 */
 export function tiboCollar(): Result<MeshAsset, AssetError> {
   const model = createVoxelModel({ unit: TIBO_UNIT, pivot: [0, 7, 0], ao: false });
+  // 朱红项圈环
   model.box([-3, 6, -3], [3, 7, 3], P.collar);
+  // 正面悬挂的金色小铜铃
+  model.box([-1, 5, 3], [1, 7, 4], P.collarBell);
   return model.build();
 }
 
@@ -340,13 +393,98 @@ export function weaponArrow(): Result<MeshAsset, AssetError> {
   return model.build();
 }
 
-/** 炸弹：方块化球体 + 亮橙引信 */
+/** 炸弹：方块化球体 + 亮橙引信（保留兼容） */
 export function weaponBomb(): Result<MeshAsset, AssetError> {
   const model = createVoxelModel({ unit: 0.09, pivot: [0, 4, 0] });
   model.disc(0, 0, 3.6, 1, 6, P.bombShell);
   model.box([-2, 0, -2], [2, 1, 2], P.bombShell);
   model.box([-2, 5, -2], [2, 6, 2], P.monsterHorn);
   model.box([-1, 6, -1], [1, 9, 1], P.bombFuse);
+  return model.build();
+}
+
+/** 宝物·星芒激光：高能贯穿晶石光柱（沿 +Z 轴延伸 6m，unit 0.12） */
+export function relicLaser(): Result<MeshAsset, AssetError> {
+  const model = createVoxelModel({ unit: 0.12, pivot: [0, 0, 0], ao: false });
+  // 核心贯穿强光
+  model.box([-1, -1, 0], [1, 1, 48], P.laserCore);
+  // 外层电离护层
+  model.box([-2, -2, 0], [2, 2, 48], P.laserGlow);
+  // 聚能晶石棱镜发射基座
+  model.box([-3, -3, -2], [3, 3, 4], P.laserPrism);
+  return model.build();
+}
+
+/** 宝物·风暴海螺：螺旋扩散旋风体（由低到高逐级扩散的体素风团） */
+export function relicCyclone(): Result<MeshAsset, AssetError> {
+  const model = createVoxelModel({ unit: 0.08, pivot: [0, 0, 0], ao: false });
+  // 底层窄风眼
+  model.box([-2, 0, -2], [2, 3, 2], P.cycloneCore);
+  model.box([-4, 1, -1], [4, 2, 1], P.cycloneWind);
+  // 中层扩散风刃
+  model.box([-5, 3, -5], [5, 7, 5], P.cycloneWind);
+  model.box([-2, 3, -2], [2, 7, 2], P.cycloneCore);
+  // 顶层外旋巨刃
+  model.box([-8, 7, -3], [8, 10, 3], P.cycloneWind);
+  model.box([-3, 7, -8], [3, 10, 8], P.cycloneWind);
+  model.box([-3, 8, -3], [3, 11, 3], P.cycloneCore);
+  return model.build();
+}
+
+/** 宝物·灵风骨刃：V 字飞翼黄金回旋镖（枢轴在重心） */
+export function relicBoomerang(): Result<MeshAsset, AssetError> {
+  const model = createVoxelModel({ unit: 0.06, pivot: [0, 0, 0], ao: false });
+  // 中心金色握柄
+  model.box([-2, 0, -2], [2, 1, 2], P.boomerangGold);
+  // 左侧前掠锋刃
+  model.box([-7, 0, 0], [-2, 1, 3], P.boomerangGold);
+  model.box([-8, 0, 2], [-4, 1, 4], P.boomerangEdge);
+  // 右侧前掠锋刃
+  model.box([2, 0, 0], [7, 1, 3], P.boomerangGold);
+  model.box([4, 0, 2], [8, 1, 4], P.boomerangEdge);
+  return model.build();
+}
+
+/** 宝物·巨灵战锤：长柄玄铁重锤（朝向正前方，用于猛烈砸地） */
+export function relicHammer(): Result<MeshAsset, AssetError> {
+  const model = createVoxelModel({ unit: 0.08, pivot: [0, 0, -12], ao: false });
+  // 长柄
+  model.box([-1, 0, -12], [1, 2, 8], P.hammerShaft);
+  // 握把包金
+  model.box([-2, -1, -13], [2, 3, -10], P.hammerRune);
+  // 硕大锤头
+  model.box([-6, -2, 8], [6, 6, 18], P.hammerHead);
+  // 锤面符文加固带
+  model.box([-7, -1, 10], [7, 5, 16], P.hammerRune);
+  return model.build();
+}
+
+/** 宝物·遁影毒雾：蓬松毒云颗粒（多重半透明感体素烟团） */
+export function relicSmoke(): Result<MeshAsset, AssetError> {
+  const model = createVoxelModel({ unit: 0.09, pivot: [0, 0, 0], ao: false });
+  // 中心毒核
+  model.box([-3, 1, -3], [3, 6, 3], P.smokePoison);
+  // 错落外散迷雾团
+  model.box([-5, 2, -2], [5, 5, 2], P.smokeMisty);
+  model.box([-2, 2, -5], [2, 5, 5], P.smokeMisty);
+  model.box([-4, 3, -4], [4, 7, 4], P.smokeMisty);
+  return model.build();
+}
+
+/** 3D 实体头顶血条底框：深暗色槽框（长 1.0m，高 0.12m） */
+export function hpBarBg(): Result<MeshAsset, AssetError> {
+  const model = createVoxelModel({ unit: 0.04, pivot: [0, 0, 0], ao: false });
+  // 外边框
+  model.box([-13, -2, -1], [13, 2, 1], P.hpBorder);
+  // 内凹底槽
+  model.box([-12, -1, 0], [12, 1, 2], P.hpBg);
+  return model.build();
+}
+
+/** 3D 实体头顶血条填充条（pivot 在最左侧 -12，scale.x 直接映射 0..1 百分比） */
+export function hpBarFill(): Result<MeshAsset, AssetError> {
+  const model = createVoxelModel({ unit: 0.04, pivot: [-12, 0, 0], ao: false });
+  model.box([0, -1, 1], [24, 1, 2], P.hpGreen);
   return model.build();
 }
 

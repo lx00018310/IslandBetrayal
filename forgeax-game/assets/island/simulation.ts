@@ -21,6 +21,7 @@ import {
   type CarryRelic,
   type EffectiveMultipliers,
   type RelicAffix,
+  type RelicKind,
   type WorldMultipliers,
 } from './stats.ts';
 
@@ -88,7 +89,7 @@ export const PLAYER_NAMES = [
 
 export type AiPersonality = 'honest' | 'greedy' | 'raider';
 export type MonsterKind = 'chaser' | 'tank' | 'dasher' | 'boss';
-export type WeaponKind = 'knife' | 'arrow' | 'bomb';
+export type WeaponKind = 'knife' | 'arrow' | 'laser' | 'cyclone' | 'boomerang' | 'hammer' | 'smoke' | 'bomb';
 export type MatchEventKind = 'none' | 'treasure_rain' | 'monster_frenzy';
 
 export interface TileState {
@@ -131,13 +132,18 @@ export interface ActorState {
   rank: number | null;
   runningAwayFromPartner?: boolean;
 
-  // 肉鸽经验与技能等级
+  // 肉鸽经验与宝物技能等级
   level: number;
   xp: number;
   xpNext: number;
-  weaponKnife: number; // 0..3 环绕飞刀
+  weaponKnife: number; // 0..3 旋转飞刃
   weaponArrow: number; // 0..3 穿透箭矢
-  weaponBomb: number;  // 0..3 范围炸弹
+  relicLaser: number;  // 0..3 星芒激光 (8向散射高能光束)
+  relicCyclone: number;// 0..3 风暴海螺 (向前螺旋扩散旋风)
+  relicBoomerang: number; // 0..3 灵风骨刃 (往返贯穿回旋镖)
+  relicHammer: number; // 0..3 巨灵战锤 (正面巨力砸击击退)
+  relicSmoke: number;  // 0..3 遁影烟斗 (身后留存减速毒雾)
+  weaponBomb: number;  // 0..3 范围炸弹 (保留兼容)
   statDamageBonus: number; // 百分比增益 e.g. 0.15
   statSpeedBonus: number;
   statAttackSpeedBonus: number;
@@ -149,6 +155,11 @@ export interface ActorState {
 
   knifeAngle: number;
   arrowTimer: number;
+  laserTimer: number;
+  cycloneTimer: number;
+  boomerangTimer: number;
+  hammerTimer: number;
+  smokeTimer: number;
   bombTimer: number;
 }
 
@@ -264,6 +275,70 @@ export interface ArrowState {
   hitActorIds: number[];
 }
 
+export interface LaserState {
+  id: number;
+  ownerId: number;
+  x: number;
+  y: number;
+  angle: number;
+  length: number;
+  life: number;
+  maxLife: number;
+}
+
+export interface CycloneState {
+  id: number;
+  ownerId: number;
+  x: number;
+  y: number;
+  vx: number;
+  vy: number;
+  radius: number;
+  life: number;
+  damage: number;
+  hitCooldowns: Map<string, number>;
+}
+
+export interface BoomerangState {
+  id: number;
+  ownerId: number;
+  x: number;
+  y: number;
+  vx: number;
+  vy: number;
+  startX: number;
+  startY: number;
+  returnPhase: boolean;
+  life: number;
+  damage: number;
+  hitActorIds: number[];
+  hitMonsterIds: number[];
+}
+
+export interface HammerState {
+  id: number;
+  ownerId: number;
+  x: number;
+  y: number;
+  facing: number;
+  radius: number;
+  life: number;
+  maxLife: number;
+  damage: number;
+}
+
+export interface SmokeState {
+  id: number;
+  ownerId: number;
+  x: number;
+  y: number;
+  radius: number;
+  life: number;
+  maxLife: number;
+  damage: number;
+  hitCooldowns: Map<string, number>;
+}
+
 export interface BombState {
   id: number;
   ownerId: number;
@@ -364,6 +439,11 @@ export interface SimulationState {
   pendingUpgradeCount: number;
   arrows: ArrowState[];
   bombs: BombState[];
+  lasers: LaserState[];
+  cyclones: CycloneState[];
+  boomerangs: BoomerangState[];
+  hammers: HammerState[];
+  smokes: SmokeState[];
   activeEvent: MatchEventKind;
   eventTimeLeft: number;
   eventTriggered: {
@@ -389,14 +469,31 @@ export function dist(a: Vec2, b: Vec2): number {
   return Math.hypot(a.x - b.x, a.y - b.y);
 }
 
+export function distPointToSegment(px: number, py: number, x1: number, y1: number, x2: number, y2: number): number {
+  const dx = x2 - x1;
+  const dy = y2 - y1;
+  const lenSq = dx * dx + dy * dy;
+  if (lenSq === 0) return Math.hypot(px - x1, py - y1);
+  let t = ((px - x1) * dx + (py - y1) * dy) / lenSq;
+  t = Math.max(0, Math.min(1, t));
+  const projX = x1 + t * dx;
+  const projY = y1 + t * dy;
+  return Math.hypot(px - projX, py - projY);
+}
+
 export function landRadius(shrink: number): number {
   return 0.98 * (1 - shrink * 0.62);
 }
 
-/** 默认宝物词条：按武器种类给出首版唯一合法词条 */
-export function defaultRelicAffix(kind: 'knife' | 'arrow' | 'bomb'): RelicAffix {
+/** 默认宝物词条：按宝物种类给出首版合法词条 */
+export function defaultRelicAffix(kind: RelicKind): RelicAffix {
   if (kind === 'knife') return 'knifeArea';
   if (kind === 'arrow') return 'arrowPierce';
+  if (kind === 'laser') return 'laserWidth';
+  if (kind === 'cyclone') return 'cycloneSize';
+  if (kind === 'boomerang') return 'boomerangSpeed';
+  if (kind === 'hammer') return 'hammerStun';
+  if (kind === 'smoke') return 'smokeSlow';
   return 'bombRadius';
 }
 
@@ -668,6 +765,11 @@ export function createInitialSimulation(options?: {
       xpNext: 5,
       weaponKnife: 0,
       weaponArrow: 0,
+      relicLaser: 0,
+      relicCyclone: 0,
+      relicBoomerang: 0,
+      relicHammer: 0,
+      relicSmoke: 0,
       weaponBomb: 0,
       statDamageBonus: 0,
       statSpeedBonus: 0,
@@ -677,6 +779,11 @@ export function createInitialSimulation(options?: {
       relicAffix: null,
       knifeAngle: i * 0.6,
       arrowTimer: 0.5 + i * 0.2,
+      laserTimer: 0.5 + i * 0.2,
+      cycloneTimer: 0.8 + i * 0.2,
+      boomerangTimer: 0.6 + i * 0.2,
+      hammerTimer: 1.0 + i * 0.2,
+      smokeTimer: 0.2,
       bombTimer: 1.0 + i * 0.3,
     });
   }
@@ -689,6 +796,11 @@ export function createInitialSimulation(options?: {
         const lvl = Math.min(3, Math.max(1, relic.level));
         if (relic.kind === 'knife') actor.weaponKnife = lvl;
         else if (relic.kind === 'arrow') actor.weaponArrow = lvl;
+        else if (relic.kind === 'laser') actor.relicLaser = lvl;
+        else if (relic.kind === 'cyclone') actor.relicCyclone = lvl;
+        else if (relic.kind === 'boomerang') actor.relicBoomerang = lvl;
+        else if (relic.kind === 'hammer') actor.relicHammer = lvl;
+        else if (relic.kind === 'smoke') actor.relicSmoke = lvl;
         else if (relic.kind === 'bomb') actor.weaponBomb = lvl;
         actor.relicAffix = relic.affix ?? defaultRelicAffix(relic.kind);
       }
@@ -790,6 +902,11 @@ export function createInitialSimulation(options?: {
     pendingUpgradeCount: 0,
     arrows: [],
     bombs: [],
+    lasers: [],
+    cyclones: [],
+    boomerangs: [],
+    hammers: [],
+    smokes: [],
     activeEvent: 'none',
     eventTimeLeft: 0,
     eventTriggered: {
@@ -1080,6 +1197,14 @@ export function getNearbyCandidate(sim: SimulationState, actor: ActorState): Can
 export function checkGameOver(sim: SimulationState): void {
   if (sim.gameOver) return;
 
+  // 玩家死亡立即结束对局，不再观战 AI
+  const player = sim.actors.find((a) => a.isPlayer);
+  if (player && !player.alive) {
+    sim.gameOver = true;
+    sim.winner = null;
+    return;
+  }
+
   const alive = aliveActors(sim);
   if (alive.length <= 1) {
     sim.gameOver = true;
@@ -1093,7 +1218,14 @@ export function checkGameOver(sim: SimulationState): void {
 export function eliminate(sim: SimulationState, a: ActorState, reason: string): void {
   if (!a.alive) return;
   a.alive = false;
-  if (a.isPlayer) { sim.pendingUpgrade = false; sim.upgradePaused = false; sim.pendingUpgradeCount = 0; sim.upgradeChoices = []; }
+  if (a.isPlayer) {
+    sim.pendingUpgrade = false;
+    sim.upgradePaused = false;
+    sim.pendingUpgradeCount = 0;
+    sim.upgradeChoices = [];
+    sim.gameOver = true;
+    sim.winner = null;
+  }
   a.rank = aliveActors(sim).length + 1;
 
   if (a.team >= 0) {
@@ -1122,20 +1254,20 @@ export function eliminate(sim: SimulationState, a: ActorState, reason: string): 
   checkGameOver(sim);
 }
 
-/** 生成三选一升级候选项 */
+/** 生成三选一升级候选项（全面接入宝物体系） */
 export function generateUpgradeChoices(actor: ActorState): UpgradeOption[] {
   const pool: UpgradeOption[] = [];
 
-  // 1. 武器选项（未满 3 级）
+  // 1. 核心宝物（未满 3 级）
   if (actor.weaponKnife < 3) {
     const nextLvl = actor.weaponKnife + 1;
     pool.push({
       id: 'weapon_knife',
       type: 'weapon',
-      title: '环绕飞刀',
-      description: `召唤 ${nextLvl} 把灵能飞刀在身边持续旋转切割触碰的敌人`,
+      title: '宝物·旋转飞刃',
+      description: `召唤 ${nextLvl} 把灵能飞刀在身周高速旋转切割触碰的一切敌人`,
       currentValue: actor.weaponKnife === 0 ? '未习得' : `LV.${actor.weaponKnife} (${actor.weaponKnife}把)`,
-      nextValue: `LV.${nextLvl} (${nextLvl}把飞刀)`,
+      nextValue: `LV.${nextLvl} (${nextLvl}把旋转飞刃)`,
     });
   }
 
@@ -1144,31 +1276,79 @@ export function generateUpgradeChoices(actor: ActorState): UpgradeOption[] {
     pool.push({
       id: 'weapon_arrow',
       type: 'weapon',
-      title: '穿透箭矢',
-      description: `周期性向最近敌对目标射出穿透箭，穿透 ${nextLvl + 1} 个目标`,
+      title: '宝物·破晓神弩',
+      description: `周期性向最近敌对目标射出高能穿透箭，穿透 ${nextLvl + 1} 个目标`,
       currentValue: actor.weaponArrow === 0 ? '未习得' : `LV.${actor.weaponArrow} (穿透${actor.weaponArrow + 1}人)`,
       nextValue: `LV.${nextLvl} (穿透${nextLvl + 1}人)`,
     });
   }
 
-  if (actor.weaponBomb < 3) {
-    const nextLvl = actor.weaponBomb + 1;
+  if (actor.relicLaser < 3) {
+    const nextLvl = actor.relicLaser + 1;
     pool.push({
-      id: 'weapon_bomb',
+      id: 'relic_laser',
       type: 'weapon',
-      title: '范围爆轰',
-      description: `周期性向敌群投掷高爆体素地雷，造成大范围群体爆破`,
-      currentValue: actor.weaponBomb === 0 ? '未习得' : `LV.${actor.weaponBomb} (半径${(1.6 + actor.weaponBomb * 0.4).toFixed(1)}m)`,
-      nextValue: `LV.${nextLvl} (半径${(1.6 + nextLvl * 0.4).toFixed(1)}m)`,
+      title: '宝物·星芒棱镜',
+      description: `每隔数秒向八面八方散射瞬间贯穿的耀眼晶石激光束，扫除周围围攻`,
+      currentValue: actor.relicLaser === 0 ? '未习得' : `LV.${actor.relicLaser} (8向激光)`,
+      nextValue: `LV.${nextLvl} (${nextLvl >= 3 ? '12向高能激光' : '8向强化激光'})`,
     });
   }
 
-  // 2. 通用属性选项（始终提供）
+  if (actor.relicCyclone < 3) {
+    const nextLvl = actor.relicCyclone + 1;
+    pool.push({
+      id: 'relic_cyclone',
+      type: 'weapon',
+      title: '宝物·风暴海螺',
+      description: `向前打出向前推进并螺旋向外扩散的暴风，持续牵引撕裂沿途目标`,
+      currentValue: actor.relicCyclone === 0 ? '未习得' : `LV.${actor.relicCyclone} (半径${(1.5 + actor.relicCyclone * 0.4).toFixed(1)}m)`,
+      nextValue: `LV.${nextLvl} (扩散半径${(1.5 + nextLvl * 0.4).toFixed(1)}m)`,
+    });
+  }
+
+  if (actor.relicBoomerang < 3) {
+    const nextLvl = actor.relicBoomerang + 1;
+    pool.push({
+      id: 'relic_boomerang',
+      type: 'weapon',
+      title: '宝物·灵风骨刃',
+      description: `掷出高速飞行的黄金回旋镖，飞抵极限后折返归位，往返双程强力贯穿`,
+      currentValue: actor.relicBoomerang === 0 ? '未习得' : `LV.${actor.relicBoomerang}`,
+      nextValue: `LV.${nextLvl} (往返双段${nextLvl * 25}%增伤)`,
+    });
+  }
+
+  if (actor.relicHammer < 3) {
+    const nextLvl = actor.relicHammer + 1;
+    pool.push({
+      id: 'relic_hammer',
+      type: 'weapon',
+      title: '宝物·巨灵战锤',
+      description: `朝正前方巨力重锤砸地，造成大范围扇形粉碎冲击并强烈击退近身威胁`,
+      currentValue: actor.relicHammer === 0 ? '未习得' : `LV.${actor.relicHammer}`,
+      nextValue: `LV.${nextLvl} (震波范围+${nextLvl * 20}%，击退强化)`,
+    });
+  }
+
+  if (actor.relicSmoke < 3) {
+    const nextLvl = actor.relicSmoke + 1;
+    pool.push({
+      id: 'relic_smoke',
+      type: 'weapon',
+      title: '宝物·遁影烟斗',
+      description: `移动时在尾部喷射持续留存的毒云迷雾，踏入毒雾的敌人受到持续中毒并被大幅减速`,
+      currentValue: actor.relicSmoke === 0 ? '未习得' : `LV.${actor.relicSmoke} (减速40%)`,
+      nextValue: `LV.${nextLvl} (减速${35 + nextLvl * 5}%，留存+1s)`,
+    });
+  }
+
+  // 2. 通用属性宝物选项（始终提供）
   pool.push({
     id: 'stat_damage',
     type: 'stat',
-    title: '锋芒毕露',
-    description: '全武器与攻击基础伤害提升 15%',
+    title: '锋芒符石',
+    description: '全部武器与攻击基础伤害提升 15%',
     currentValue: `+${Math.round(actor.statDamageBonus * 100)}%`,
     nextValue: `+${Math.round((actor.statDamageBonus + 0.15) * 100)}%`,
   });
@@ -1176,7 +1356,7 @@ export function generateUpgradeChoices(actor: ActorState): UpgradeOption[] {
   pool.push({
     id: 'stat_speed',
     type: 'stat',
-    title: '疾风步伐',
+    title: '疾风之靴',
     description: '角色移动速度提升 8%',
     currentValue: `+${Math.round(actor.statSpeedBonus * 100)}%`,
     nextValue: `+${Math.round((actor.statSpeedBonus + 0.08) * 100)}%`,
@@ -1185,8 +1365,8 @@ export function generateUpgradeChoices(actor: ActorState): UpgradeOption[] {
   pool.push({
     id: 'stat_attack_speed',
     type: 'stat',
-    title: '极速连击',
-    description: '基础攻击与武器技能触发间隔缩短 10%',
+    title: '极速指环',
+    description: '基础攻击与全宝物技能触发间隔缩短 10%',
     currentValue: `+${Math.round(actor.statAttackSpeedBonus * 100)}%`,
     nextValue: `+${Math.round((actor.statAttackSpeedBonus + 0.10) * 100)}%`,
   });
@@ -1194,8 +1374,8 @@ export function generateUpgradeChoices(actor: ActorState): UpgradeOption[] {
   pool.push({
     id: 'stat_area',
     type: 'stat',
-    title: '威能扩散',
-    description: '技能打击范围与爆炸波及半径扩大 15%',
+    title: '威能法印',
+    description: '技能打击范围、震波与扩散半径扩大 15%',
     currentValue: `+${Math.round(actor.statAreaBonus * 100)}%`,
     nextValue: `+${Math.round((actor.statAreaBonus + 0.15) * 100)}%`,
   });
@@ -1214,8 +1394,24 @@ export function applyUpgrade(actor: ActorState, upgrade: UpgradeOption): void {
     case 'weapon_arrow':
       actor.weaponArrow = Math.min(3, actor.weaponArrow + 1);
       break;
+    case 'relic_laser':
+      actor.relicLaser = Math.min(3, actor.relicLaser + 1);
+      break;
+    case 'relic_cyclone':
+      actor.relicCyclone = Math.min(3, actor.relicCyclone + 1);
+      break;
+    case 'relic_boomerang':
+      actor.relicBoomerang = Math.min(3, actor.relicBoomerang + 1);
+      break;
+    case 'relic_hammer':
+      actor.relicHammer = Math.min(3, actor.relicHammer + 1);
+      break;
+    case 'relic_smoke':
+      actor.relicSmoke = Math.min(3, actor.relicSmoke + 1);
+      break;
     case 'weapon_bomb':
-      actor.weaponBomb = Math.min(3, actor.weaponBomb + 1);
+      // 兼容旧存档，将 bomb 平滑转为激光宝物
+      actor.relicLaser = Math.min(3, actor.relicLaser + 1);
       break;
     case 'stat_damage':
       actor.statDamageBonus += 0.15;
@@ -1606,23 +1802,204 @@ export function stepWeapons(sim: SimulationState, dt: number): void {
       }
     }
 
-    // 3. 范围炸弹投放计时
+    // 3. 宝物·星芒激光（8向/12向散射瞬发贯穿光束）
+    if (a.relicLaser > 0) {
+      a.laserTimer -= dt;
+      if (a.laserTimer <= 0) {
+        const effAtkSpd = calculateEffectiveAttackSpeed(a.statAttackSpeedBonus, sim.worldMultipliers.attackSpeed);
+        a.laserTimer = Math.max(MIN_LEGAL_CYCLE, (3.2 - a.relicLaser * 0.4) / effAtkSpd);
+        const rayCount = a.relicLaser >= 3 ? 12 : 8;
+        const length = (6.0 + a.relicLaser * 0.8) * (1 + a.statAreaBonus) * (a.relicAffix === 'laserWidth' ? 1.25 : 1);
+        const laserDmg = Math.round(calculateAttackDamage(sim, a, false) * (0.8 + a.relicLaser * 0.25) * sim.rules.weaponModifiers.laser);
+        const deathMult = survivalDamageMultiplier(sim.eliminatedCount, sim.rules.bloodFeudBase);
+        const effLaserDmg = Math.max(1, Math.round(laserDmg * deathMult));
+        const laserCrit = calculateEffectiveCrit(sim.effectiveMultipliers.critChance, a.personalMultiplier);
+
+        for (let r = 0; r < rayCount; r++) {
+          const ang = (r * Math.PI * 2) / rayCount + (a.relicLaser >= 3 ? a.knifeAngle * 0.2 : 0);
+          const endX = a.x + Math.cos(ang) * length;
+          const endY = a.y + Math.sin(ang) * length;
+
+          // 记录激光束实体用于 3D 渲染
+          sim.lasers.push({
+            id: sim.nextEntityId++,
+            ownerId: a.id,
+            x: a.x,
+            y: a.y,
+            angle: ang,
+            length,
+            life: 0.22,
+            maxLife: 0.22,
+          });
+
+          // 对沿途怪物判定射线碰撞（点到线段距离 < 0.65）
+          for (const m of sim.monsters) {
+            if (!m.alive) continue;
+            const distToSeg = distPointToSegment(m.x, m.y, a.x, a.y, endX, endY);
+            if (distToSeg < 0.75 && !segmentBlockedByCover(sim, a.x, a.y, m.x, m.y)) {
+              const hit = resolveHitDamage(effLaserDmg, laserCrit.critChance, laserCrit.critMultiplier, sim.rng ?? Math.random);
+              damageMonster(sim, m, hit.damage, a);
+            }
+          }
+
+          // 对沿途敌对角色与宝箱判定
+          for (const o of aliveActors(sim)) {
+            if (o.id === a.id || (a.team >= 0 && a.team === o.id)) continue;
+            const distToSeg = distPointToSegment(o.x, o.y, a.x, a.y, endX, endY);
+            if (distToSeg < 0.75 && !segmentBlockedByCover(sim, a.x, a.y, o.x, o.y)) {
+              resolveHostileHit(sim, o, effLaserDmg, a);
+              if (sim.gameOver) return;
+            }
+          }
+        }
+      }
+    }
+
+    // 4. 宝物·风暴海螺（螺旋扩散旋风）
+    if (a.relicCyclone > 0) {
+      a.cycloneTimer -= dt;
+      if (a.cycloneTimer <= 0) {
+        const effAtkSpd = calculateEffectiveAttackSpeed(a.statAttackSpeedBonus, sim.worldMultipliers.attackSpeed);
+        a.cycloneTimer = Math.max(MIN_LEGAL_CYCLE, (2.6 - a.relicCyclone * 0.3) / effAtkSpd);
+        const speed = 4.2;
+        const dirX = Math.cos(a.facing) || 1;
+        const dirY = Math.sin(a.facing) || 0;
+        const cycloneDmg = Math.round(calculateAttackDamage(sim, a, false) * (0.6 + a.relicCyclone * 0.2) * sim.rules.weaponModifiers.cyclone);
+
+        sim.cyclones.push({
+          id: sim.nextEntityId++,
+          ownerId: a.id,
+          x: a.x + dirX * 0.8,
+          y: a.y + dirY * 0.8,
+          vx: dirX * speed,
+          vy: dirY * speed,
+          radius: (1.2 + a.relicCyclone * 0.3) * (1 + a.statAreaBonus) * (a.relicAffix === 'cycloneSize' ? 1.3 : 1),
+          life: 2.2,
+          damage: cycloneDmg,
+          hitCooldowns: new Map(),
+        });
+      }
+    }
+
+    // 5. 宝物·灵风骨刃（黄金回旋镖：去程+折返双段）
+    if (a.relicBoomerang > 0) {
+      a.boomerangTimer -= dt;
+      if (a.boomerangTimer <= 0) {
+        const effAtkSpd = calculateEffectiveAttackSpeed(a.statAttackSpeedBonus, sim.worldMultipliers.attackSpeed);
+        a.boomerangTimer = Math.max(MIN_LEGAL_CYCLE, (2.2 - a.relicBoomerang * 0.25) / effAtkSpd);
+        const flySpeed = 8.0 * (a.relicAffix === 'boomerangSpeed' ? 1.35 : 1);
+        const dirX = Math.cos(a.facing) || 1;
+        const dirY = Math.sin(a.facing) || 0;
+        const boomDmg = Math.round(calculateAttackDamage(sim, a, false) * (0.9 + a.relicBoomerang * 0.25) * sim.rules.weaponModifiers.boomerang);
+
+        sim.boomerangs.push({
+          id: sim.nextEntityId++,
+          ownerId: a.id,
+          x: a.x + dirX * 0.6,
+          y: a.y + dirY * 0.6,
+          vx: dirX * flySpeed,
+          vy: dirY * flySpeed,
+          startX: a.x,
+          startY: a.y,
+          returnPhase: false,
+          life: 2.4,
+          damage: boomDmg,
+          hitActorIds: [],
+          hitMonsterIds: [],
+        });
+      }
+    }
+
+    // 6. 宝物·巨灵战锤（正面巨力砸地与震波击退）
+    if (a.relicHammer > 0) {
+      a.hammerTimer -= dt;
+      if (a.hammerTimer <= 0) {
+        const effAtkSpd = calculateEffectiveAttackSpeed(a.statAttackSpeedBonus, sim.worldMultipliers.attackSpeed);
+        a.hammerTimer = Math.max(MIN_LEGAL_CYCLE, (2.4 - a.relicHammer * 0.3) / effAtkSpd);
+        const reach = (2.2 + a.relicHammer * 0.3) * (1 + a.statAreaBonus);
+        const hammerDmg = Math.round(calculateAttackDamage(sim, a, false) * (1.5 + a.relicHammer * 0.4) * sim.rules.weaponModifiers.hammer);
+        const deathMult = survivalDamageMultiplier(sim.eliminatedCount, sim.rules.bloodFeudBase);
+        const effHammerDmg = Math.max(1, Math.round(hammerDmg * deathMult));
+
+        sim.hammers.push({
+          id: sim.nextEntityId++,
+          ownerId: a.id,
+          x: a.x,
+          y: a.y,
+          facing: a.facing,
+          radius: reach,
+          life: 0.32,
+          maxLife: 0.32,
+          damage: effHammerDmg,
+        });
+
+        // 正面 120 度扇形判定
+        for (const m of sim.monsters) {
+          if (!m.alive) continue;
+          const d = dist(a, m);
+          if (d <= reach) {
+            const angToM = Math.atan2(m.y - a.y, m.x - a.x);
+            let diff = Math.abs(angToM - a.facing);
+            while (diff > Math.PI) diff = Math.abs(diff - Math.PI * 2);
+            if (diff <= (Math.PI / 3) && !segmentBlockedByCover(sim, a.x, a.y, m.x, m.y)) {
+              damageMonster(sim, m, effHammerDmg, a);
+              // 击退怪物
+              const pushX = Math.cos(angToM) * 1.8;
+              const pushY = Math.sin(angToM) * 1.8;
+              m.x += pushX;
+              m.y += pushY;
+            }
+          }
+        }
+
+        for (const o of aliveActors(sim)) {
+          if (o.id === a.id || (a.team >= 0 && a.team === o.id)) continue;
+          const d = dist(a, o);
+          if (d <= reach) {
+            const angToO = Math.atan2(o.y - a.y, o.x - a.x);
+            let diff = Math.abs(angToO - a.facing);
+            while (diff > Math.PI) diff = Math.abs(diff - Math.PI * 2);
+            if (diff <= (Math.PI / 3) && !segmentBlockedByCover(sim, a.x, a.y, o.x, o.y)) {
+              resolveHostileHit(sim, o, effHammerDmg, a);
+              o.x += Math.cos(angToO) * 1.6;
+              o.y += Math.sin(angToO) * 1.6;
+              if (sim.gameOver) return;
+            }
+          }
+        }
+      }
+    }
+
+    // 7. 宝物·遁影烟斗（移动时身后留下减速毒雾）
+    if (a.relicSmoke > 0) {
+      a.smokeTimer -= dt;
+      const speedSq = a.vx * a.vx + a.vy * a.vy;
+      if (a.smokeTimer <= 0 && speedSq > 0.16) {
+        a.smokeTimer = 0.35;
+        const norm = Math.hypot(a.vx, a.vy) || 1;
+        const smokeDmg = Math.round(calculateAttackDamage(sim, a, false) * (0.35 + a.relicSmoke * 0.15) * sim.rules.weaponModifiers.smoke);
+        sim.smokes.push({
+          id: sim.nextEntityId++,
+          ownerId: a.id,
+          x: a.x - (a.vx / norm) * 0.6,
+          y: a.y - (a.vy / norm) * 0.6,
+          radius: 1.3 * (1 + a.statAreaBonus),
+          life: 2.6,
+          maxLife: 2.6,
+          damage: smokeDmg,
+          hitCooldowns: new Map(),
+        });
+      }
+    }
+
+    // 兼容历史测试：若手动赋予了 weaponBomb，支持旧炸弹投掷
     if (a.weaponBomb > 0) {
       a.bombTimer -= dt;
       if (a.bombTimer <= 0) {
-        const effAtkSpd = calculateEffectiveAttackSpeed(
-          a.statAttackSpeedBonus,
-          sim.worldMultipliers.attackSpeed,
-        );
+        const effAtkSpd = calculateEffectiveAttackSpeed(a.statAttackSpeedBonus, sim.worldMultipliers.attackSpeed);
         a.bombTimer = Math.max(MIN_LEGAL_CYCLE, (2.8 - a.weaponBomb * 0.35) / effAtkSpd);
-        const radius =
-          (1.8 + a.weaponBomb * 0.45) *
-          (1 + a.statAreaBonus) *
-          (a.relicAffix === 'bombRadius' ? 1.15 : 1);
-        // 发射时只快照基础伤害；死亡增伤在爆炸命中瞬间读取最新倍率（Plan 2B-1.5）
+        const radius = (1.8 + a.weaponBomb * 0.45) * (1 + a.statAreaBonus) * (a.relicAffix === 'bombRadius' ? 1.15 : 1);
         const bombDmg = Math.round(calculateAttackDamage(sim, a, false) * 1.3 * sim.rules.weaponModifiers.bomb);
-
-        // 投掷在自身或敌群密集方向
         sim.bombs.push({
           id: sim.nextEntityId++,
           ownerId: a.id,
@@ -1695,6 +2072,131 @@ export function stepWeapons(sim: SimulationState, dt: number): void {
     if (arr.life <= 0 || arr.pierceLeft <= 0) {
       sim.arrows.splice(i, 1);
     }
+  }
+
+  // 更新激光束寿命
+  for (let i = sim.lasers.length - 1; i >= 0; i--) {
+    const l = sim.lasers[i]!;
+    l.life -= dt;
+    if (l.life <= 0) sim.lasers.splice(i, 1);
+  }
+
+  // 更新风暴旋风位移与持续吸扯撕裂
+  for (let i = sim.cyclones.length - 1; i >= 0; i--) {
+    const c = sim.cyclones[i]!;
+    c.life -= dt;
+    c.x += c.vx * dt;
+    c.y += c.vy * dt;
+    const owner = sim.actors[c.ownerId];
+    if (owner) {
+      for (const m of sim.monsters) {
+        if (!m.alive || dist(c, m) > c.radius) continue;
+        const key = `m:${m.id}`;
+        const cd = c.hitCooldowns.get(key) ?? 0;
+        if (sim.elapsed >= cd) {
+          c.hitCooldowns.set(key, sim.elapsed + 0.3);
+          damageMonster(sim, m, c.damage, owner);
+          const dx = c.x - m.x;
+          const dy = c.y - m.y;
+          const d = Math.hypot(dx, dy) || 1;
+          m.x += (dx / d) * 0.4;
+          m.y += (dy / d) * 0.4;
+        }
+      }
+      for (const o of aliveActors(sim)) {
+        if (o.id === c.ownerId || (owner.team >= 0 && owner.team === o.id) || dist(c, o) > c.radius) continue;
+        const key = `a:${o.id}`;
+        const cd = c.hitCooldowns.get(key) ?? 0;
+        if (sim.elapsed >= cd) {
+          c.hitCooldowns.set(key, sim.elapsed + 0.3);
+          resolveHostileHit(sim, o, c.damage, owner);
+          if (sim.gameOver) return;
+        }
+      }
+    }
+    if (c.life <= 0) sim.cyclones.splice(i, 1);
+  }
+
+  // 更新灵风骨刃回旋镖往返轨迹与贯穿命中
+  for (let i = sim.boomerangs.length - 1; i >= 0; i--) {
+    const b = sim.boomerangs[i]!;
+    b.life -= dt;
+    const owner = sim.actors[b.ownerId];
+    if (!owner) {
+      sim.boomerangs.splice(i, 1);
+      continue;
+    }
+
+    if (!b.returnPhase) {
+      b.x += b.vx * dt;
+      b.y += b.vy * dt;
+      const flyDist = Math.hypot(b.x - b.startX, b.y - b.startY);
+      if (flyDist >= 5.2 || b.life <= 1.2) {
+        b.returnPhase = true;
+      }
+    } else {
+      const toOwnerX = owner.x - b.x;
+      const toOwnerY = owner.y - b.y;
+      const d = Math.hypot(toOwnerX, toOwnerY);
+      if (d < 0.6) {
+        sim.boomerangs.splice(i, 1);
+        continue;
+      }
+      const speed = 9.0;
+      b.x += (toOwnerX / d) * speed * dt;
+      b.y += (toOwnerY / d) * speed * dt;
+    }
+
+    for (const m of sim.monsters) {
+      if (!m.alive || dist(b, m) > 0.85 || b.hitMonsterIds.includes(m.id)) continue;
+      b.hitMonsterIds.push(m.id);
+      damageMonster(sim, m, b.damage, owner);
+    }
+    for (const o of aliveActors(sim)) {
+      if (o.id === b.ownerId || (owner.team >= 0 && owner.team === o.id) || dist(b, o) > 0.85 || b.hitActorIds.includes(o.id)) continue;
+      b.hitActorIds.push(o.id);
+      resolveHostileHit(sim, o, b.damage, owner);
+      if (sim.gameOver) return;
+    }
+
+    if (b.life <= 0) sim.boomerangs.splice(i, 1);
+  }
+
+  // 更新战锤砸地寿命
+  for (let i = sim.hammers.length - 1; i >= 0; i--) {
+    const h = sim.hammers[i]!;
+    h.life -= dt;
+    if (h.life <= 0) sim.hammers.splice(i, 1);
+  }
+
+  // 更新遁影毒雾留存与踏入减速中毒
+  for (let i = sim.smokes.length - 1; i >= 0; i--) {
+    const s = sim.smokes[i]!;
+    s.life -= dt;
+    const owner = sim.actors[s.ownerId];
+    if (owner) {
+      for (const m of sim.monsters) {
+        if (!m.alive || dist(s, m) > s.radius) continue;
+        const key = `m:${m.id}`;
+        const cd = s.hitCooldowns.get(key) ?? 0;
+        if (sim.elapsed >= cd) {
+          s.hitCooldowns.set(key, sim.elapsed + 0.5);
+          damageMonster(sim, m, s.damage, owner);
+        }
+      }
+      for (const o of aliveActors(sim)) {
+        if (o.id === s.ownerId || (owner.team >= 0 && owner.team === o.id) || dist(s, o) > s.radius) continue;
+        o.slow = Math.max(o.slow, 1.2);
+        const key = `a:${o.id}`;
+        const cd = s.hitCooldowns.get(key) ?? 0;
+        if (sim.elapsed >= cd) {
+          s.hitCooldowns.set(key, sim.elapsed + 0.5);
+          resolveHostileHit(sim, o, s.damage, owner);
+          if (sim.gameOver) return;
+        }
+      }
+    }
+    if (s.life <= 0) sim.smokes.splice(i, 1);
   }
 
   // 更新炸弹倒计时与爆炸波及

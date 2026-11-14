@@ -56,6 +56,13 @@ import {
   weaponArrow,
   weaponBomb,
   weaponKnife,
+  relicLaser,
+  relicCyclone,
+  relicBoomerang,
+  relicHammer,
+  relicSmoke,
+  hpBarBg,
+  hpBarFill,
 } from './voxel-art-data.ts';
 
 function withMaterial(mesh: MeshAsset, material: AssetGuid, sourceKey: string): MeshAsset {
@@ -167,6 +174,13 @@ export default definePack({
       'mesh/weapon-knife': weaponKnife,
       'mesh/weapon-arrow': weaponArrow,
       'mesh/weapon-bomb': weaponBomb,
+      'mesh/relic-laser': relicLaser,
+      'mesh/relic-cyclone': relicCyclone,
+      'mesh/relic-boomerang': relicBoomerang,
+      'mesh/relic-hammer': relicHammer,
+      'mesh/relic-smoke': relicSmoke,
+      'mesh/hp-bar-bg': hpBarBg,
+      'mesh/hp-bar-fill': hpBarFill,
       'mesh/monster-body': monsterBody,
       'mesh/monster-eyes': monsterEyes,
       'mesh/bush': bushProp,
@@ -608,7 +622,7 @@ export default definePack({
       }
     }
 
-    // 32 颗炸弹与冲击波
+    // 32 颗炸弹与冲击波（保留兼容占位）
     for (let i = 0; i < 32; i++) {
       entities[`bomb-${i}`] = {
         components: {
@@ -627,6 +641,122 @@ export default definePack({
         },
       };
     }
+
+    // 24 道星芒激光束实体
+    for (let i = 0; i < 24; i++) {
+      entities[`laser-${i}`] = {
+        components: {
+          Name: { value: `Laser ${i}` },
+          Transform: { pos: [0, -999, 0] },
+          MeshFilter: { assetHandle: meshRef('mesh/relic-laser') },
+          MeshRenderer: { materials: [matRef('material/relic-laser')] },
+        },
+      };
+    }
+
+    // 16 个风暴旋风实体
+    for (let i = 0; i < 16; i++) {
+      entities[`cyclone-${i}`] = {
+        components: {
+          Name: { value: `Cyclone ${i}` },
+          Transform: { pos: [0, -999, 0] },
+          MeshFilter: { assetHandle: meshRef('mesh/relic-cyclone') },
+          MeshRenderer: { materials: [matRef('material/relic-cyclone')] },
+        },
+      };
+    }
+
+    // 16 个黄金回旋镖实体
+    for (let i = 0; i < 16; i++) {
+      entities[`boomerang-${i}`] = {
+        components: {
+          Name: { value: `Boomerang ${i}` },
+          Transform: { pos: [0, -999, 0] },
+          MeshFilter: { assetHandle: meshRef('mesh/relic-boomerang') },
+          MeshRenderer: { materials: [matRef('material/relic-boomerang')] },
+        },
+      };
+    }
+
+    // 10 个巨灵战锤实体
+    for (let i = 0; i < 10; i++) {
+      entities[`hammer-${i}`] = {
+        components: {
+          Name: { value: `Hammer ${i}` },
+          Transform: { pos: [0, -999, 0] },
+          MeshFilter: { assetHandle: meshRef('mesh/relic-hammer') },
+          MeshRenderer: { materials: [matRef('material/relic-hammer')] },
+        },
+      };
+    }
+
+    // 32 团尾随毒雾实体
+    for (let i = 0; i < 32; i++) {
+      entities[`smoke-${i}`] = {
+        components: {
+          Name: { value: `Smoke ${i}` },
+          Transform: { pos: [0, -999, 0] },
+          MeshFilter: { assetHandle: meshRef('mesh/relic-smoke') },
+          MeshRenderer: { materials: [matRef('material/relic-smoke')] },
+        },
+      };
+    }
+
+    // 3D 实体头顶血条系统（10 角色 + 4 怪物 + 1 Boss）
+    for (let i = 0; i < 10; i++) {
+      entities[`actor-${i}-hp-bg`] = {
+        components: {
+          Name: { value: `Actor ${i} HP Bg` },
+          Transform: { pos: [0, -999, 0] },
+          MeshFilter: { assetHandle: meshRef('mesh/hp-bar-bg') },
+          MeshRenderer: { materials: [matRef('material/hp-bar-bg')] },
+        },
+      };
+      entities[`actor-${i}-hp-fill`] = {
+        components: {
+          Name: { value: `Actor ${i} HP Fill` },
+          Transform: { pos: [0, -999, 0] },
+          MeshFilter: { assetHandle: meshRef('mesh/hp-bar-fill') },
+          MeshRenderer: { materials: [matRef('material/hp-bar-fill-green')] },
+        },
+      };
+    }
+
+    for (let i = 0; i < 4; i++) {
+      entities[`monster-${i}-hp-bg`] = {
+        components: {
+          Name: { value: `Monster ${i} HP Bg` },
+          Transform: { pos: [0, -999, 0] },
+          MeshFilter: { assetHandle: meshRef('mesh/hp-bar-bg') },
+          MeshRenderer: { materials: [matRef('material/hp-bar-bg')] },
+        },
+      };
+      entities[`monster-${i}-hp-fill`] = {
+        components: {
+          Name: { value: `Monster ${i} HP Fill` },
+          Transform: { pos: [0, -999, 0] },
+          MeshFilter: { assetHandle: meshRef('mesh/hp-bar-fill') },
+          MeshRenderer: { materials: [matRef('material/hp-bar-fill-green')] },
+        },
+      };
+    }
+
+    entities['boss-hp-bg'] = {
+      components: {
+        Name: { value: 'Boss HP Bg' },
+        Transform: { pos: [0, -999, 0] },
+        MeshFilter: { assetHandle: meshRef('mesh/hp-bar-bg') },
+        MeshRenderer: { materials: [matRef('material/hp-bar-bg')] },
+      },
+    };
+    entities['boss-hp-fill'] = {
+      components: {
+        Name: { value: 'Boss HP Fill' },
+        Transform: { pos: [0, -999, 0] },
+        MeshFilter: { assetHandle: meshRef('mesh/hp-bar-fill') },
+        MeshRenderer: { materials: [matRef('material/hp-bar-fill-green')] },
+      },
+    };
 
     // 3 处青苔岩块掩体（位置与半径严格读 activeCovers）
     for (let i = 0; i < 3; i++) {
@@ -822,6 +952,69 @@ export default definePack({
         metallic: 0.25,
         emissive: [0.7, 0.16, 0.05],
         emissiveIntensity: 0.9,
+      }),
+      // 新宝物技能材质
+      'material/relic-laser': Materials.standard({
+        baseColor: linearColor('#38BDF8'),
+        roughness: 0.1,
+        metallic: 0.1,
+        emissive: [0.2, 0.74, 1.0],
+        emissiveIntensity: 2.5,
+      }),
+      'material/relic-cyclone': Materials.standard({
+        baseColor: linearColor('#6EE7B7'),
+        roughness: 0.35,
+        metallic: 0.05,
+        emissive: [0.2, 0.8, 0.55],
+        emissiveIntensity: 1.6,
+      }),
+      'material/relic-boomerang': Materials.standard({
+        baseColor: linearColor('#FBBF24'),
+        roughness: 0.2,
+        metallic: 0.8,
+        emissive: [0.8, 0.6, 0.1],
+        emissiveIntensity: 1.6,
+      }),
+      'material/relic-hammer': Materials.standard({
+        baseColor: linearColor('#475569'),
+        roughness: 0.7,
+        metallic: 0.3,
+        emissive: [0.35, 0.2, 0.08],
+        emissiveIntensity: 1.1,
+      }),
+      'material/relic-smoke': Materials.standard({
+        baseColor: linearColor('#A855F7'),
+        roughness: 0.9,
+        metallic: 0.0,
+        emissive: [0.55, 0.15, 0.75],
+        emissiveIntensity: 1.3,
+      }),
+      // 3D 头顶血条材质
+      'material/hp-bar-bg': Materials.standard({
+        baseColor: linearColor('#0F172A'),
+        roughness: 0.9,
+        metallic: 0.0,
+      }),
+      'material/hp-bar-fill-green': Materials.standard({
+        baseColor: linearColor('#22C55E'),
+        roughness: 0.2,
+        metallic: 0.1,
+        emissive: [0.15, 0.8, 0.25],
+        emissiveIntensity: 1.2,
+      }),
+      'material/hp-bar-fill-yellow': Materials.standard({
+        baseColor: linearColor('#EAB308'),
+        roughness: 0.2,
+        metallic: 0.1,
+        emissive: [0.8, 0.65, 0.1],
+        emissiveIntensity: 1.2,
+      }),
+      'material/hp-bar-fill-red': Materials.standard({
+        baseColor: linearColor('#EF4444'),
+        roughness: 0.2,
+        metallic: 0.1,
+        emissive: [0.9, 0.12, 0.12],
+        emissiveIntensity: 1.5,
       }),
 
       // 道具

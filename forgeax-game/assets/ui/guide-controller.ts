@@ -379,6 +379,7 @@ export async function createGuideUi(
     const treasureElem = shadow?.querySelector<HTMLElement>('[data-ui-part="player-treasure"]');
     const teamListElem = shadow?.querySelector<HTMLElement>('[data-ui-part="team-list"]');
     const hpFill = shadow?.querySelector<HTMLElement>('[data-ui-part="hp-fill"]');
+    const playerHpText = shadow?.querySelector<HTMLElement>('[data-ui-part="player-hp-text"]');
     const statusHint = shadow?.querySelector<HTMLElement>('[data-ui-part="player-status-hint"]');
     const warningHint = shadow?.querySelector<HTMLElement>('[data-ui-part="distance-warning-hint"]');
     const choiceBanner = shadow?.querySelector<HTMLElement>('[data-ui-part="choice-banner"]');
@@ -614,6 +615,10 @@ export async function createGuideUi(
           const pct = Math.min(100, Math.max(0, hp / maxHp * 100));
           hpFill.style.width = `${pct}%`;
           hpFill.style.background = pct > 30 ? '#7ee08a' : '#ff5a4a';
+          if (playerHpText) {
+            playerHpText.textContent = `${hp} / ${maxHp} HP`;
+            playerHpText.style.color = pct > 30 ? '#4ade80' : '#ef4444';
+          }
         }
 
         // 动态同步场上队伍列表
@@ -796,9 +801,14 @@ export async function createGuideUi(
 
               if (relicCardsContainer) {
                 const RELIC_NAMES: Record<string, string> = {
-                  knife: '环绕飞刀',
-                  arrow: '穿透箭矢',
-                  bomb: '范围炸弹',
+                  knife: '宝物·旋转飞刃',
+                  arrow: '宝物·破晓神弩',
+                  laser: '宝物·星芒棱镜',
+                  cyclone: '宝物·风暴海螺',
+                  boomerang: '宝物·灵风骨刃',
+                  hammer: '宝物·巨灵战锤',
+                  smoke: '宝物·遁影烟斗',
+                  bomb: '范围爆轰',
                 };
                 let html = '';
                 cachedOwnedRelics.forEach((r, idx) => {

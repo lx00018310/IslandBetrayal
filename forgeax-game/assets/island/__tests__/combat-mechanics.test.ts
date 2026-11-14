@@ -261,4 +261,61 @@ describe('两场 Boss / 死亡增伤 / 逐分钟缩圈与掩体 / 升级队列 /
     expect(p.rank).toBe(winnerRank);
     expect(p.treasure).toBe(winnerTreasure);
   });
+
+  // -------------------------------------------------------------------------
+  // 死亡立结机制测试
+  // -------------------------------------------------------------------------
+  it('玩家阵亡时立即结算结束游戏，不再等待其余存活 AI', () => {
+    const sim = createInitialSimulation();
+    const p = sim.actors[0]!;
+    expect(p.isPlayer).toBe(true);
+    expect(sim.gameOver).toBe(false);
+
+    // 此时全场 9 个 AI 均存活
+    damageActor(sim, p, 9999, null);
+    expect(p.alive).toBe(false);
+    expect(sim.gameOver).toBe(true);
+    expect(sim.winner).toBe(null);
+  });
+
+  // -------------------------------------------------------------------------
+  // 创意宝物技能体系（激光、旋风、回旋镖、战锤、尾流毒雾）
+  // -------------------------------------------------------------------------
+  it('新创意宝物体系：激光、旋风、回旋镖、战锤、毒雾正确触发物理与战斗判定', () => {
+    const sim = createInitialSimulation();
+    const p = sim.actors[0]!;
+    const idleInput = { moveX: 0, moveY: 0 };
+
+    // 1. 装备星芒激光
+    p.relicLaser = 1;
+    p.laserTimer = 0;
+    stepSimulation(sim, 0.1, idleInput);
+    expect(sim.lasers.length).toBeGreaterThanOrEqual(8);
+
+    // 2. 装备风暴海螺
+    p.relicCyclone = 1;
+    p.cycloneTimer = 0;
+    stepSimulation(sim, 0.1, idleInput);
+    expect(sim.cyclones.length).toBeGreaterThanOrEqual(1);
+
+    // 3. 装备灵风骨刃
+    p.relicBoomerang = 1;
+    p.boomerangTimer = 0;
+    stepSimulation(sim, 0.1, idleInput);
+    expect(sim.boomerangs.length).toBeGreaterThanOrEqual(1);
+
+    // 4. 装备巨灵战锤
+    p.relicHammer = 1;
+    p.hammerTimer = 0;
+    stepSimulation(sim, 0.1, idleInput);
+    expect(sim.hammers.length).toBeGreaterThanOrEqual(1);
+
+    // 5. 装备遁影烟斗并移动
+    p.relicSmoke = 1;
+    p.smokeTimer = 0;
+    p.vx = 2.0;
+    p.vy = 0;
+    stepSimulation(sim, 0.1, { moveX: 1, moveY: 0 });
+    expect(sim.smokes.length).toBeGreaterThanOrEqual(1);
+  });
 });

@@ -313,6 +313,40 @@ export function setupPresentation(
   const foamEntities: EntityHandle[] = [];
   for (let i = 0; i < 24; i++) foamEntities.push(resolve(`foam-${i}`));
 
+  // 宝物视觉实体池
+  const laserEntities: EntityHandle[] = [];
+  for (let i = 0; i < 24; i++) laserEntities.push(resolve(`laser-${i}`));
+
+  const cycloneEntities: EntityHandle[] = [];
+  for (let i = 0; i < 16; i++) cycloneEntities.push(resolve(`cyclone-${i}`));
+
+  const boomerangEntities: EntityHandle[] = [];
+  for (let i = 0; i < 16; i++) boomerangEntities.push(resolve(`boomerang-${i}`));
+
+  const hammerEntities: EntityHandle[] = [];
+  for (let i = 0; i < 10; i++) hammerEntities.push(resolve(`hammer-${i}`));
+
+  const smokeEntities: EntityHandle[] = [];
+  for (let i = 0; i < 32; i++) smokeEntities.push(resolve(`smoke-${i}`));
+
+  // 3D 实体头顶血条系统
+  const actorHpBgs: EntityHandle[] = [];
+  const actorHpFills: EntityHandle[] = [];
+  for (let i = 0; i < 10; i++) {
+    actorHpBgs.push(resolve(`actor-${i}-hp-bg`));
+    actorHpFills.push(resolve(`actor-${i}-hp-fill`));
+  }
+
+  const monsterHpBgs: EntityHandle[] = [];
+  const monsterHpFills: EntityHandle[] = [];
+  for (let i = 0; i < 4; i++) {
+    monsterHpBgs.push(resolve(`monster-${i}-hp-bg`));
+    monsterHpFills.push(resolve(`monster-${i}-hp-fill`));
+  }
+
+  const bossHpBg = resolve('boss-hp-bg');
+  const bossHpFill = resolve('boss-hp-fill');
+
   let camX = center;
   let camZ = center + 9.8;
   const initialPlayer = initialSim.actors[0];
@@ -456,6 +490,17 @@ export function setupPresentation(
     world.set(raidTelegraphEntity, Transform, { pos: [0, -999, 0] }).unwrap();
     world.set(raidTelegraphFillEntity, Transform, { pos: [0, -999, 0] }).unwrap();
     for (const tails of arrowTails) for (const tail of tails) world.set(tail, Transform, { pos: [0, -999, 0] }).unwrap();
+    for (const l of laserEntities) world.set(l, Transform, { pos: [0, -999, 0] }).unwrap();
+    for (const c of cycloneEntities) world.set(c, Transform, { pos: [0, -999, 0] }).unwrap();
+    for (const b of boomerangEntities) world.set(b, Transform, { pos: [0, -999, 0] }).unwrap();
+    for (const h of hammerEntities) world.set(h, Transform, { pos: [0, -999, 0] }).unwrap();
+    for (const s of smokeEntities) world.set(s, Transform, { pos: [0, -999, 0] }).unwrap();
+    for (const bg of actorHpBgs) world.set(bg, Transform, { pos: [0, -999, 0] }).unwrap();
+    for (const f of actorHpFills) world.set(f, Transform, { pos: [0, -999, 0] }).unwrap();
+    for (const bg of monsterHpBgs) world.set(bg, Transform, { pos: [0, -999, 0] }).unwrap();
+    for (const f of monsterHpFills) world.set(f, Transform, { pos: [0, -999, 0] }).unwrap();
+    world.set(bossHpBg, Transform, { pos: [0, -999, 0] }).unwrap();
+    world.set(bossHpFill, Transform, { pos: [0, -999, 0] }).unwrap();
 
     lastArrowCount = 0;
     lastBombCount = 0;
@@ -647,11 +692,29 @@ export function setupPresentation(
           }).unwrap();
         }
 
+        const hpBg = actorHpBgs[i]!;
+        const hpFill = actorHpFills[i]!;
+
         if (!a.alive) {
           world.set(e.root, Transform, { pos: [0, -999, 0] }).unwrap();
           world.set(e.shadow, Transform, { pos: [0, -999, 0] }).unwrap();
+          world.set(hpBg, Transform, { pos: [0, -999, 0] }).unwrap();
+          world.set(hpFill, Transform, { pos: [0, -999, 0] }).unwrap();
           continue;
         }
+
+        // 3D 实体头顶血条：跟随角色头顶，面向摄像机，动态比例
+        const hpPct = Math.max(0.001, Math.min(1.0, a.hp / a.maxHp));
+        world.set(hpBg, Transform, {
+          pos: [a.x, 2.05, a.y],
+          scale: [0.95, 0.95, 1],
+          quat: [...SPRITE_QUAT],
+        }).unwrap();
+        world.set(hpFill, Transform, {
+          pos: [a.x - 0.46 * (1 - hpPct), 2.05, a.y + 0.01],
+          scale: [hpPct * 0.95, 0.95, 1],
+          quat: [...SPRITE_QUAT],
+        }).unwrap();
 
         const dirSign = a.vx < -0.05 ? -1 : 1;
         const speed = Math.hypot(a.vx, a.vy);
@@ -736,9 +799,13 @@ export function setupPresentation(
       for (let i = 0; i < 40; i++) {
         const m = sim.monsters[i];
         const e = monsterEntities[i]!;
+        const mHpBg = i < 4 ? monsterHpBgs[i] : null;
+        const mHpFill = i < 4 ? monsterHpFills[i] : null;
         if (!m || !m.alive || m.kind === 'boss') {
           world.set(e.root, Transform, { pos: [0, -999, 0] }).unwrap();
           world.set(e.shadow, Transform, { pos: [0, -999, 0] }).unwrap();
+          if (mHpBg) world.set(mHpBg, Transform, { pos: [0, -999, 0] }).unwrap();
+          if (mHpFill) world.set(mHpFill, Transform, { pos: [0, -999, 0] }).unwrap();
           continue;
         }
         const bob = Math.abs(Math.sin(sim.elapsed * 2.8 + m.wobble)) * 0.08;
@@ -750,12 +817,29 @@ export function setupPresentation(
           scale: [squashed.scaleXZ, 1, squashed.scaleXZ],
           quat: [0, 0, 0, 1],
         }).unwrap();
+
+        // 基础怪物 3D 头顶血条（为前 4 只主要怪物渲染清晰血条）
+        if (mHpBg && mHpFill) {
+          const mPct = Math.max(0.001, Math.min(1.0, m.hp / m.maxHp));
+          world.set(mHpBg, Transform, {
+            pos: [m.x, 1.45, m.y],
+            scale: [0.75, 0.75, 1],
+            quat: [...SPRITE_QUAT],
+          }).unwrap();
+          world.set(mHpFill, Transform, {
+            pos: [m.x - 0.36 * (1 - mPct), 1.45, m.y + 0.01],
+            scale: [mPct * 0.75, 0.75, 1],
+            quat: [...SPRITE_QUAT],
+          }).unwrap();
+        }
       }
 
       // 5. Boss：仅团战阶段可见，两次出场复用同一模型
-      if (sim.raidPhase === 'none' || sim.raidPhase === 'result') {
+      if (sim.raidPhase === 'none' || sim.raidPhase === 'result' || sim.raidBossHp <= 0) {
         world.set(bossEntity.root, Transform, { pos: [0, -999, 0] }).unwrap();
         world.set(bossEntity.shadow, Transform, { pos: [0, -999, 0] }).unwrap();
+        world.set(bossHpBg, Transform, { pos: [0, -999, 0] }).unwrap();
+        world.set(bossHpFill, Transform, { pos: [0, -999, 0] }).unwrap();
       } else {
         const bob = Math.abs(Math.sin(sim.elapsed * 2.2)) * 0.1;
         // 体素外壳本身已 2.2 × 1.3 世界单位，1.15 倍即占屏接近原 Boss
@@ -769,6 +853,19 @@ export function setupPresentation(
           pos: [sim.raidBossX + 0.14, 0.006, sim.raidBossY + 0.18],
           scale: [2.6, 1, 2.2],
           quat: [0, 0, 0, 1],
+        }).unwrap();
+
+        // Boss 3D 巨型头顶血条
+        const bPct = Math.max(0.001, Math.min(1.0, sim.raidBossHp / Math.max(1, sim.raidBossMaxHp)));
+        world.set(bossHpBg, Transform, {
+          pos: [sim.raidBossX, 2.7, sim.raidBossY],
+          scale: [2.2, 1.4, 1],
+          quat: [...SPRITE_QUAT],
+        }).unwrap();
+        world.set(bossHpFill, Transform, {
+          pos: [sim.raidBossX - 1.05 * (1 - bPct), 2.7, sim.raidBossY + 0.01],
+          scale: [bPct * 2.2, 1.4, 1],
+          quat: [...SPRITE_QUAT],
         }).unwrap();
         // 蟹钳开合：预警期间张到最大，与真实圆形成一致
         const open = sim.raidTelegraphTimer > 0 ? 1 : 0.35;
@@ -940,6 +1037,92 @@ export function setupPresentation(
         } else {
           world.set(bombH, Transform, { pos: [0, -999, 0] }).unwrap();
           world.set(blastH, Transform, { pos: [0, -999, 0] }).unwrap();
+        }
+      }
+
+      // 10b. 宝物·星芒激光（贯穿晶石光柱）
+      for (let i = 0; i < 24; i++) {
+        const handle = laserEntities[i]!;
+        const l = sim.lasers[i];
+        if (l && l.life > 0) {
+          quat.fromEuler(partQ, 0, -l.angle, 0, 'XYZ');
+          const alpha = l.life / l.maxLife;
+          world.set(handle, Transform, {
+            pos: [l.x, 0.45, l.y],
+            scale: [alpha, alpha, l.length / 6.0],
+            quat: [partQ[0] ?? 0, partQ[1] ?? 0, partQ[2] ?? 0, partQ[3] ?? 1],
+          }).unwrap();
+        } else {
+          world.set(handle, Transform, { pos: [0, -999, 0] }).unwrap();
+        }
+      }
+
+      // 10c. 宝物·风暴海螺（螺旋向外扩散的暴风）
+      for (let i = 0; i < 16; i++) {
+        const handle = cycloneEntities[i]!;
+        const c = sim.cyclones[i];
+        if (c && c.life > 0) {
+          const spin = (sim.elapsed * 12.0 + c.id * 1.5) % (Math.PI * 2);
+          quat.fromEuler(partQ, 0, spin, 0, 'XYZ');
+          const sc = Math.max(0.4, c.radius / 1.5);
+          world.set(handle, Transform, {
+            pos: [c.x, 0.35, c.y],
+            scale: [sc, sc, sc],
+            quat: [partQ[0] ?? 0, partQ[1] ?? 0, partQ[2] ?? 0, partQ[3] ?? 1],
+          }).unwrap();
+        } else {
+          world.set(handle, Transform, { pos: [0, -999, 0] }).unwrap();
+        }
+      }
+
+      // 10d. 宝物·灵风骨刃（高速自转黄金回旋镖）
+      for (let i = 0; i < 16; i++) {
+        const handle = boomerangEntities[i]!;
+        const b = sim.boomerangs[i];
+        if (b && b.life > 0) {
+          const spin = (sim.elapsed * 20.0 + b.id * 2.0) % (Math.PI * 2);
+          quat.fromEuler(partQ, 0, spin, 0, 'XYZ');
+          world.set(handle, Transform, {
+            pos: [b.x, 0.65, b.y],
+            scale: [1, 1, 1],
+            quat: [partQ[0] ?? 0, partQ[1] ?? 0, partQ[2] ?? 0, partQ[3] ?? 1],
+          }).unwrap();
+        } else {
+          world.set(handle, Transform, { pos: [0, -999, 0] }).unwrap();
+        }
+      }
+
+      // 10e. 宝物·巨灵战锤（正面高空下砸与震波）
+      for (let i = 0; i < 10; i++) {
+        const handle = hammerEntities[i]!;
+        const h = sim.hammers[i];
+        if (h && h.life > 0) {
+          const progress = 1 - (h.life / h.maxLife);
+          const pitch = (1 - progress) * 1.1;
+          quat.fromEuler(partQ, pitch, -h.facing, 0, 'YXZ');
+          world.set(handle, Transform, {
+            pos: [h.x, 0.3 + (1 - progress) * 0.7, h.y],
+            scale: [1.2, 1.2, 1.2],
+            quat: [partQ[0] ?? 0, partQ[1] ?? 0, partQ[2] ?? 0, partQ[3] ?? 1],
+          }).unwrap();
+        } else {
+          world.set(handle, Transform, { pos: [0, -999, 0] }).unwrap();
+        }
+      }
+
+      // 10f. 宝物·遁影烟斗（尾随留存减速毒雾）
+      for (let i = 0; i < 32; i++) {
+        const handle = smokeEntities[i]!;
+        const s = sim.smokes[i];
+        if (s && s.life > 0) {
+          const pulse = 1.0 + Math.sin(sim.elapsed * 4.0 + s.id) * 0.12;
+          world.set(handle, Transform, {
+            pos: [s.x, 0.22, s.y],
+            scale: [s.radius * pulse, 0.8, s.radius * pulse],
+            quat: [...SHADOW_QUAT],
+          }).unwrap();
+        } else {
+          world.set(handle, Transform, { pos: [0, -999, 0] }).unwrap();
         }
       }
 

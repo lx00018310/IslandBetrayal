@@ -86,10 +86,19 @@ export const RULE_DESCRIPTIONS: Record<GlobalRuleKind, string> = {
 };
 
 /** 宝物词条（首版每件宝物最多 1 条固定数值词条） */
-export type RelicAffix = 'knifeArea' | 'arrowPierce' | 'bombRadius';
+export type RelicKind = 'knife' | 'arrow' | 'laser' | 'cyclone' | 'boomerang' | 'hammer' | 'smoke' | 'bomb';
+export type RelicAffix =
+  | 'knifeArea'
+  | 'arrowPierce'
+  | 'laserWidth'
+  | 'cycloneSize'
+  | 'boomerangSpeed'
+  | 'hammerStun'
+  | 'smokeSlow'
+  | 'bombRadius';
 
 export interface CarryRelic {
-  kind: 'knife' | 'arrow' | 'bomb';
+  kind: RelicKind;
   level: number; // 1..3
   affix?: RelicAffix;
 }
@@ -261,6 +270,11 @@ export function aggregateGlobalRules(rules: readonly GlobalRule[]) {
     weaponModifiers: {
       knife: clamp(1.2 ** close * 0.9 ** ranged, 0.5, 3),
       arrow: clamp(1.2 ** ranged, 1, 3),
+      laser: clamp(1.2 ** ranged, 1, 3),
+      cyclone: clamp(1.2 ** ranged, 1, 3),
+      boomerang: clamp(1.2 ** ranged, 1, 3),
+      hammer: clamp(1.2 ** close * 0.9 ** ranged, 0.5, 3),
+      smoke: clamp(1.2 ** close, 0.5, 3),
       bomb: clamp(1.2 ** ranged, 1, 3),
       melee: clamp(0.9 ** ranged, 0.5, 1),
     },
@@ -421,5 +435,10 @@ export function applyRoundOutcome(layers: number, won: boolean): number {
 export const RELIC_AFFIX_TEXT: Record<RelicAffix, string> = {
   knifeArea: '飞刀数量 +1',
   arrowPierce: '箭矢穿透 +1',
-  bombRadius: '炸弹半径 +15%',
+  laserWidth: '激光射程 +25%',
+  cycloneSize: '旋风范围 +30%',
+  boomerangSpeed: '回旋镖往返 +35%',
+  hammerStun: '战锤重击 +40%',
+  smokeSlow: '毒雾减速 +15%',
+  bombRadius: '爆炸范围 +15%',
 };

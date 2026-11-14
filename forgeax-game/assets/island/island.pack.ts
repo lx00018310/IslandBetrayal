@@ -25,6 +25,7 @@ import {
   type CarryRelic,
   type EndlessProfile,
   type GlobalRule,
+  type RelicKind,
   type StatFactor,
   type StatTarget,
   type WorldMultipliers,
@@ -91,7 +92,7 @@ export interface IslandTouchMessage {
   ruleKind?: GlobalRuleKind;
   stat?: StatTarget;
   factor?: StatFactor;
-  relicKind?: 'knife' | 'arrow' | 'bomb' | null;
+  relicKind?: RelicKind | null;
   relicLevel?: number;
   mode?: 'normal' | 'endless';
   /** 存档恢复载荷（由 UI realm 读取 localStorage 后传入） */
@@ -270,6 +271,11 @@ export const islandPlugin: Plugin = {
         const list: CarryRelic[] = [];
         if (p.weaponKnife > 0) list.push({ kind: 'knife', level: p.weaponKnife });
         if (p.weaponArrow > 0) list.push({ kind: 'arrow', level: p.weaponArrow });
+        if (p.relicLaser > 0) list.push({ kind: 'laser', level: p.relicLaser });
+        if (p.relicCyclone > 0) list.push({ kind: 'cyclone', level: p.relicCyclone });
+        if (p.relicBoomerang > 0) list.push({ kind: 'boomerang', level: p.relicBoomerang });
+        if (p.relicHammer > 0) list.push({ kind: 'hammer', level: p.relicHammer });
+        if (p.relicSmoke > 0) list.push({ kind: 'smoke', level: p.relicSmoke });
         if (p.weaponBomb > 0) list.push({ kind: 'bomb', level: p.weaponBomb });
         return list;
       };
@@ -282,12 +288,26 @@ export const islandPlugin: Plugin = {
         const owned: CarryRelic[] = [];
         if (actor.weaponKnife > 0) owned.push({ kind: 'knife', level: actor.weaponKnife });
         if (actor.weaponArrow > 0) owned.push({ kind: 'arrow', level: actor.weaponArrow });
+        if (actor.relicLaser > 0) owned.push({ kind: 'laser', level: actor.relicLaser });
+        if (actor.relicCyclone > 0) owned.push({ kind: 'cyclone', level: actor.relicCyclone });
+        if (actor.relicBoomerang > 0) owned.push({ kind: 'boomerang', level: actor.relicBoomerang });
+        if (actor.relicHammer > 0) owned.push({ kind: 'hammer', level: actor.relicHammer });
+        if (actor.relicSmoke > 0) owned.push({ kind: 'smoke', level: actor.relicSmoke });
         if (actor.weaponBomb > 0) owned.push({ kind: 'bomb', level: actor.weaponBomb });
         owned.sort((a, b) => b.level - a.level);
         const best = owned[0];
         const relic = best ? { ...best, affix: defaultRelicAffix(best.kind) } : null;
         const relics = new Map<number, CarryRelic | null>(sim.actors.map(a => {
-          const choices: CarryRelic[] = [{ kind: 'knife', level: a.weaponKnife }, { kind: 'arrow', level: a.weaponArrow }, { kind: 'bomb', level: a.weaponBomb }];
+          const choices: CarryRelic[] = [
+            { kind: 'knife', level: a.weaponKnife },
+            { kind: 'arrow', level: a.weaponArrow },
+            { kind: 'laser', level: a.relicLaser },
+            { kind: 'cyclone', level: a.relicCyclone },
+            { kind: 'boomerang', level: a.relicBoomerang },
+            { kind: 'hammer', level: a.relicHammer },
+            { kind: 'smoke', level: a.relicSmoke },
+            { kind: 'bomb', level: a.weaponBomb },
+          ];
           choices.sort((a, b) => b.level - a.level);
           return [a.id, choices[0]!.level > 0 ? choices[0]! : null];
         }));
@@ -593,6 +613,11 @@ export const islandPlugin: Plugin = {
               xpNext: p.xpNext,
               weaponKnife: p.weaponKnife,
               weaponArrow: p.weaponArrow,
+              relicLaser: p.relicLaser,
+              relicCyclone: p.relicCyclone,
+              relicBoomerang: p.relicBoomerang,
+              relicHammer: p.relicHammer,
+              relicSmoke: p.relicSmoke,
               weaponBomb: p.weaponBomb,
               relic: endlessProfiles.get(0)?.carryRelic
                 ? {

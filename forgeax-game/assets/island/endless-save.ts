@@ -48,8 +48,26 @@ export interface EndlessSaveInput {
   now?: Date;
 }
 
-const RELIC_KINDS: ReadonlyArray<CarryRelic['kind']> = ['knife', 'arrow', 'bomb'];
-const RELIC_AFFIXES: ReadonlyArray<RelicAffix> = ['knifeArea', 'arrowPierce', 'bombRadius'];
+const RELIC_KINDS: ReadonlyArray<CarryRelic['kind']> = [
+  'knife',
+  'arrow',
+  'laser',
+  'cyclone',
+  'boomerang',
+  'hammer',
+  'smoke',
+  'bomb',
+];
+const RELIC_AFFIXES: ReadonlyArray<RelicAffix> = [
+  'knifeArea',
+  'arrowPierce',
+  'laserWidth',
+  'cycloneSize',
+  'boomerangSpeed',
+  'hammerStun',
+  'smokeSlow',
+  'bombRadius',
+];
 const PHASES: ReadonlyArray<EndlessPhase> = ['round-start', 'round-result', 'rule-pick', 'relic-pick'];
 
 function isStatTarget(v: unknown): v is StatTarget {
