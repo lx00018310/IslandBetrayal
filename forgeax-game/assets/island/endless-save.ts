@@ -56,6 +56,7 @@ const RELIC_KINDS: ReadonlyArray<CarryRelic['kind']> = [
   'boomerang',
   'hammer',
   'smoke',
+  'heal',
   'bomb',
 ];
 const RELIC_AFFIXES: ReadonlyArray<RelicAffix> = [
@@ -66,6 +67,7 @@ const RELIC_AFFIXES: ReadonlyArray<RelicAffix> = [
   'boomerangSpeed',
   'hammerStun',
   'smokeSlow',
+  'healPower',
   'bombRadius',
 ];
 const PHASES: ReadonlyArray<EndlessPhase> = ['round-start', 'round-result', 'rule-pick', 'relic-pick'];

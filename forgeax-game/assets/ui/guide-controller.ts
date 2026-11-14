@@ -809,6 +809,7 @@ export async function createGuideUi(
                   boomerang: '宝物·灵风骨刃',
                   hammer: '宝物·巨灵战锤',
                   smoke: '宝物·遁影烟斗',
+                  heal: '宝物·生命宝珠',
                   bomb: '范围爆轰',
                 };
                 let html = '';

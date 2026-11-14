@@ -276,6 +276,7 @@ export const islandPlugin: Plugin = {
         if (p.relicBoomerang > 0) list.push({ kind: 'boomerang', level: p.relicBoomerang });
         if (p.relicHammer > 0) list.push({ kind: 'hammer', level: p.relicHammer });
         if (p.relicSmoke > 0) list.push({ kind: 'smoke', level: p.relicSmoke });
+        if (p.relicHeal > 0) list.push({ kind: 'heal', level: p.relicHeal });
         if (p.weaponBomb > 0) list.push({ kind: 'bomb', level: p.weaponBomb });
         return list;
       };
@@ -293,6 +294,7 @@ export const islandPlugin: Plugin = {
         if (actor.relicBoomerang > 0) owned.push({ kind: 'boomerang', level: actor.relicBoomerang });
         if (actor.relicHammer > 0) owned.push({ kind: 'hammer', level: actor.relicHammer });
         if (actor.relicSmoke > 0) owned.push({ kind: 'smoke', level: actor.relicSmoke });
+        if (actor.relicHeal > 0) owned.push({ kind: 'heal', level: actor.relicHeal });
         if (actor.weaponBomb > 0) owned.push({ kind: 'bomb', level: actor.weaponBomb });
         owned.sort((a, b) => b.level - a.level);
         const best = owned[0];
@@ -306,6 +308,7 @@ export const islandPlugin: Plugin = {
             { kind: 'boomerang', level: a.relicBoomerang },
             { kind: 'hammer', level: a.relicHammer },
             { kind: 'smoke', level: a.relicSmoke },
+            { kind: 'heal', level: a.relicHeal ?? 0 },
             { kind: 'bomb', level: a.weaponBomb },
           ];
           choices.sort((a, b) => b.level - a.level);
@@ -618,6 +621,7 @@ export const islandPlugin: Plugin = {
               relicBoomerang: p.relicBoomerang,
               relicHammer: p.relicHammer,
               relicSmoke: p.relicSmoke,
+              relicHeal: p.relicHeal ?? 0,
               weaponBomb: p.weaponBomb,
               relic: endlessProfiles.get(0)?.carryRelic
                 ? {

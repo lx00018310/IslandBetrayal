@@ -318,4 +318,51 @@ describe('两场 Boss / 死亡增伤 / 逐分钟缩圈与掩体 / 升级队列 /
     stepSimulation(sim, 0.1, { moveX: 1, moveY: 0 });
     expect(sim.smokes.length).toBeGreaterThanOrEqual(1);
   });
+
+  // -------------------------------------------------------------------------
+  // 新机制：组队 20% 减伤 与 未受击缓慢回血及宝物强化
+  // -------------------------------------------------------------------------
+  it('组队机制：只要产生组队，受到的伤害减免 20%', () => {
+    const sim = createInitialSimulation();
+    const a = sim.actors[1]!;
+    const b = sim.actors[2]!;
+
+    // 未组队状态：承受 10 点伤害
+    a.hp = 100;
+    damageActor(sim, a, 10, null);
+    expect(a.hp).toBe(90);
+
+    // 组队状态：承受 10 点伤害，减免 20%（实受 8 点）
+    a.x = 16; a.y = 16;
+    b.x = 16.5; b.y = 16;
+    formTeam(sim, a, b);
+    expect(a.team >= 0).toBe(true);
+
+    a.hp = 100;
+    damageActor(sim, a, 10, null);
+    expect(a.hp).toBe(92); // 100 - 8 = 92
+  });
+
+  it('回血机制：未受击时缓慢回血，宝物加速回血且高阶支持战时自愈', () => {
+    const sim = createInitialSimulation();
+    const p = sim.actors[0]!;
+    const idleInput = { moveX: 0, moveY: 0 };
+
+    p.hp = 50;
+    p.lastHitTimer = 2.0; // 受击硬直中
+    stepSimulation(sim, 1.0, idleInput);
+    expect(p.hp).toBe(50); // 冷却中不回血
+    expect(p.lastHitTimer).toBeCloseTo(1.0, 5);
+
+    // 冷静期结束（步进 1.2s，其中 1.0s 冷却，0.2s 处于未受击回血阶段）
+    stepSimulation(sim, 1.2, idleInput);
+    expect(p.hp).toBeGreaterThan(50); // 开始缓慢自愈
+
+    // 装备 LV.3 生命宝珠：即使受击（lastHitTimer = 3.0），也能战时恒定自愈
+    p.hp = 50;
+    p.relicHeal = 3;
+    p.lastHitTimer = 3.0;
+    stepSimulation(sim, 1.0, idleInput);
+    expect(p.hp).toBeCloseTo(53.0, 1); // 战时自愈 3.0 HP/s
+  });
 });

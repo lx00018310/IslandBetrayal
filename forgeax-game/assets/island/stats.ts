@@ -86,7 +86,7 @@ export const RULE_DESCRIPTIONS: Record<GlobalRuleKind, string> = {
 };
 
 /** 宝物词条（首版每件宝物最多 1 条固定数值词条） */
-export type RelicKind = 'knife' | 'arrow' | 'laser' | 'cyclone' | 'boomerang' | 'hammer' | 'smoke' | 'bomb';
+export type RelicKind = 'knife' | 'arrow' | 'laser' | 'cyclone' | 'boomerang' | 'hammer' | 'smoke' | 'heal' | 'bomb';
 export type RelicAffix =
   | 'knifeArea'
   | 'arrowPierce'
@@ -95,6 +95,7 @@ export type RelicAffix =
   | 'boomerangSpeed'
   | 'hammerStun'
   | 'smokeSlow'
+  | 'healPower'
   | 'bombRadius';
 
 export interface CarryRelic {
@@ -275,6 +276,7 @@ export function aggregateGlobalRules(rules: readonly GlobalRule[]) {
       boomerang: clamp(1.2 ** ranged, 1, 3),
       hammer: clamp(1.2 ** close * 0.9 ** ranged, 0.5, 3),
       smoke: clamp(1.2 ** close, 0.5, 3),
+      heal: 1.0,
       bomb: clamp(1.2 ** ranged, 1, 3),
       melee: clamp(0.9 ** ranged, 0.5, 1),
     },
@@ -440,5 +442,6 @@ export const RELIC_AFFIX_TEXT: Record<RelicAffix, string> = {
   boomerangSpeed: '回旋镖往返 +35%',
   hammerStun: '战锤重击 +40%',
   smokeSlow: '毒雾减速 +15%',
+  healPower: '回血效能 +35%',
   bombRadius: '爆炸范围 +15%',
 };

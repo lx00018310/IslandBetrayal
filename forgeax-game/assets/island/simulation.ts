@@ -143,7 +143,9 @@ export interface ActorState {
   relicBoomerang: number; // 0..3 灵风骨刃 (往返贯穿回旋镖)
   relicHammer: number; // 0..3 巨灵战锤 (正面巨力砸击击退)
   relicSmoke: number;  // 0..3 遁影烟斗 (身后留存减速毒雾)
+  relicHeal: number;   // 0..3 生命宝珠 (加快未受击回血速度与高阶战时自愈)
   weaponBomb: number;  // 0..3 范围炸弹 (保留兼容)
+  lastHitTimer: number;// 受击冷静计时器 (<=0 表示脱战/安全)
   statDamageBonus: number; // 百分比增益 e.g. 0.15
   statSpeedBonus: number;
   statAttackSpeedBonus: number;
@@ -494,6 +496,7 @@ export function defaultRelicAffix(kind: RelicKind): RelicAffix {
   if (kind === 'boomerang') return 'boomerangSpeed';
   if (kind === 'hammer') return 'hammerStun';
   if (kind === 'smoke') return 'smokeSlow';
+  if (kind === 'heal') return 'healPower';
   return 'bombRadius';
 }
 
@@ -770,7 +773,9 @@ export function createInitialSimulation(options?: {
       relicBoomerang: 0,
       relicHammer: 0,
       relicSmoke: 0,
+      relicHeal: 0,
       weaponBomb: 0,
+      lastHitTimer: 0,
       statDamageBonus: 0,
       statSpeedBonus: 0,
       statAttackSpeedBonus: 0,
@@ -801,6 +806,7 @@ export function createInitialSimulation(options?: {
         else if (relic.kind === 'boomerang') actor.relicBoomerang = lvl;
         else if (relic.kind === 'hammer') actor.relicHammer = lvl;
         else if (relic.kind === 'smoke') actor.relicSmoke = lvl;
+        else if (relic.kind === 'heal') actor.relicHeal = lvl;
         else if (relic.kind === 'bomb') actor.weaponBomb = lvl;
         actor.relicAffix = relic.affix ?? defaultRelicAffix(relic.kind);
       }
@@ -1343,6 +1349,18 @@ export function generateUpgradeChoices(actor: ActorState): UpgradeOption[] {
     });
   }
 
+  if ((actor.relicHeal ?? 0) < 3) {
+    const nextLvl = (actor.relicHeal ?? 0) + 1;
+    pool.push({
+      id: 'relic_heal',
+      type: 'weapon',
+      title: '宝物·生命宝珠',
+      description: `加快未受攻击时的自然回血速度，缩短受击冷静时间；高阶觉醒战斗持续自愈`,
+      currentValue: (actor.relicHeal ?? 0) === 0 ? '未习得' : `LV.${actor.relicHeal} (+${actor.relicHeal === 1 ? 3 : 6}HP/s)`,
+      nextValue: `LV.${nextLvl} (+${nextLvl === 1 ? 3 : nextLvl === 2 ? 6 : 10}HP/s${nextLvl >= 3 ? '，战时自愈' : ''})`,
+    });
+  }
+
   // 2. 通用属性宝物选项（始终提供）
   pool.push({
     id: 'stat_damage',
@@ -1408,6 +1426,9 @@ export function applyUpgrade(actor: ActorState, upgrade: UpgradeOption): void {
       break;
     case 'relic_smoke':
       actor.relicSmoke = Math.min(3, actor.relicSmoke + 1);
+      break;
+    case 'relic_heal':
+      actor.relicHeal = Math.min(3, (actor.relicHeal ?? 0) + 1);
       break;
     case 'weapon_bomb':
       // 兼容旧存档，将 bomb 平滑转为激光宝物
@@ -1567,8 +1588,16 @@ export function resolveHostileHit(
 
 export function damageActor(sim: SimulationState, target: ActorState, amount: number, from: ActorState | null): void {
   if (sim.gameOver || !target.alive) return;
-  target.hp -= amount;
+  // 机制：只要产生了组队（target.team >= 0），受到的伤害直接减免 20%
+  let finalAmount = amount;
+  if (target.team >= 0) {
+    finalAmount = Math.max(1, Math.round(finalAmount * 0.8));
+  }
+  target.hp -= finalAmount;
   target.hitFlash = 0.2;
+  // 机制：受到攻击后重置脱战冷静期（生命宝珠可缩短受击惩罚时间）
+  const coolDown = Math.max(1.0, 3.0 - (target.relicHeal ?? 0) * 1.0);
+  target.lastHitTimer = coolDown;
   burst(sim, target.x, target.y, '#ff8a8a', 4);
   if (target.hp <= 0) {
     if (from && from.id !== target.id) from.kills++;
@@ -2784,9 +2813,29 @@ export function stepSimulation(
     a.dashCd = Math.max(0, a.dashCd - dt);
     a.attackCd = Math.max(0, a.attackCd - dt);
     a.hitFlash = Math.max(0, a.hitFlash - dt);
-    // 脱战生命回复（受击后短暂停止），保证长期对局可持续
-    if (a.hitFlash <= 0 && a.hp < a.maxHp) {
-      a.hp = Math.min(a.maxHp, a.hp + ACTOR_HP_REGEN_PER_SECOND * dt);
+    a.lastHitTimer = Math.max(0, (a.lastHitTimer ?? 0) - dt);
+
+    // 生命回复机制：未受攻击时持续缓慢回血；宝物与词缀增强效果
+    if (a.hp < a.maxHp) {
+      const isOutOfCombat = a.lastHitTimer <= 0;
+      let regenRate = 0;
+      if (isOutOfCombat) {
+        // 基础未受击自然回血 3.0 HP/秒
+        regenRate = 3.0;
+        // 宝物等级加成：LV.1 +3, LV.2 +6, LV.3 +10 HP/秒
+        if (a.relicHeal > 0) {
+          regenRate += a.relicHeal === 1 ? 3.0 : a.relicHeal === 2 ? 6.0 : 10.0;
+        }
+      } else if (a.relicHeal >= 3) {
+        // LV.3 生命之泉：即使受到攻击，也拥有 3.0 HP/秒的不间断恒定自愈
+        regenRate = 3.0;
+      }
+      if (a.relicAffix === 'healPower') {
+        regenRate *= 1.35;
+      }
+      if (regenRate > 0) {
+        a.hp = Math.min(a.maxHp, a.hp + regenRate * dt);
+      }
     }
   }
 
