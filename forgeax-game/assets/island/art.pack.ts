@@ -143,7 +143,7 @@ export default definePack({
     if (!playerMarker.ok) return playerMarker;
     const teamBeamMesh = createBoxGeometry(0.12, 0.12, 1.0);
     if (!teamBeamMesh.ok) return teamBeamMesh;
-    const oceanBox = createBoxGeometry(60, 0.5, 60);
+    const oceanBox = createBoxGeometry(85, 0.5, 85);
     if (!oceanBox.ok) return oceanBox;
     const debrisCube = createBoxGeometry(0.18, 0.18, 0.18);
     if (!debrisCube.ok) return debrisCube;
@@ -717,7 +717,7 @@ export default definePack({
           Name: { value: `Actor ${i} HP Fill` },
           Transform: { pos: [0, -999, 0] },
           MeshFilter: { assetHandle: meshRef('mesh/hp-bar-fill') },
-          MeshRenderer: { materials: [matRef('material/hp-bar-fill-green')] },
+          MeshRenderer: { materials: [matRef('material/hp-bar-fill-red')] },
         },
       };
     }
@@ -736,7 +736,7 @@ export default definePack({
           Name: { value: `Monster ${i} HP Fill` },
           Transform: { pos: [0, -999, 0] },
           MeshFilter: { assetHandle: meshRef('mesh/hp-bar-fill') },
-          MeshRenderer: { materials: [matRef('material/hp-bar-fill-green')] },
+          MeshRenderer: { materials: [matRef('material/hp-bar-fill-yellow')] },
         },
       };
     }
@@ -754,7 +754,7 @@ export default definePack({
         Name: { value: 'Boss HP Fill' },
         Transform: { pos: [0, -999, 0] },
         MeshFilter: { assetHandle: meshRef('mesh/hp-bar-fill') },
-        MeshRenderer: { materials: [matRef('material/hp-bar-fill-green')] },
+        MeshRenderer: { materials: [matRef('material/hp-bar-fill-yellow')] },
       },
     };
 

@@ -180,7 +180,7 @@
 .boss-hp-fill {
   height: 100%;
   width: 100%;
-  background: #ef4444;
+  background: #eab308;
   transition: width 0.15s ease;
 }
 
@@ -319,8 +319,8 @@
 .hp-fill {
   height: 100%;
   width: 100%;
-  background: linear-gradient(90deg, #22c55e, #4ade80);
-  box-shadow: 0 0 8px rgba(74, 222, 128, 0.5);
+  background: linear-gradient(90deg, #ef4444, #f87171);
+  box-shadow: 0 0 8px rgba(239, 68, 68, 0.6);
   transition: width 0.15s ease, background 0.2s ease;
 }
 .player-status-hint {
@@ -509,6 +509,37 @@
   padding: 20px 24px;
   text-align: center;
   box-shadow: 0 8px 32px rgba(0, 0, 0, 0.6);
+  transition: border-color 0.3s ease, box-shadow 0.3s ease;
+}
+.result-card.is-defeat {
+  border: 3px solid #ef4444 !important;
+  box-shadow: 0 0 35px rgba(239, 68, 68, 0.45), 0 8px 32px rgba(0, 0, 0, 0.6) !important;
+}
+.result-card.is-defeat .result-title {
+  color: #ff4d4f !important;
+  font-size: 26px !important;
+  text-shadow: 0 0 16px rgba(255, 77, 79, 0.8), 2px 2px 0 #000 !important;
+  letter-spacing: 1px;
+}
+.result-card.is-defeat .btn-restart {
+  background: #dc2626 !important;
+  color: #ffffff !important;
+  box-shadow: 0 3px 12px rgba(220, 38, 38, 0.5) !important;
+}
+.result-card.is-victory {
+  border: 3px solid #22c55e !important;
+  box-shadow: 0 0 35px rgba(34, 197, 94, 0.45), 0 8px 32px rgba(0, 0, 0, 0.6) !important;
+}
+.result-card.is-victory .result-title {
+  color: #4ade80 !important;
+  font-size: 26px !important;
+  text-shadow: 0 0 16px rgba(74, 222, 128, 0.8), 2px 2px 0 #000 !important;
+  letter-spacing: 1px;
+}
+.result-card.is-victory .btn-restart {
+  background: #16a34a !important;
+  color: #ffffff !important;
+  box-shadow: 0 3px 12px rgba(22, 163, 74, 0.5) !important;
 }
 .result-title {
   margin: 0;
@@ -615,7 +646,7 @@
   border-radius: 4px;
   overflow: hidden;
 }
-.raid-hp-fill { height: 100%; width: 100%; background: linear-gradient(90deg, #ff4d4f, #ff9a3c); }
+.raid-hp-fill { height: 100%; width: 100%; background: linear-gradient(90deg, #eab308, #fde047); }
 
 .burden-row {
   display: flex;

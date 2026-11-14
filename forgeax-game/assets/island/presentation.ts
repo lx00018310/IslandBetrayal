@@ -652,9 +652,9 @@ export function setupPresentation(
 
       const nextShrink = SHRINK_THRESHOLD_SECONDS[sim.shrinkStage + 1];
       const warning = nextShrink !== undefined && nextShrink - sim.elapsed <= 5;
-      const boundaryRadius = currentSafeRadius(sim) * 11;
+      const boundaryRadius = currentSafeRadius(sim) * center;
       world.set(shrinkBoundary, Transform, {
-        pos: warning || (sim.shrinkStage > 0 && sim.shrinkTransition < 5) ? [11, 0.03, 11] : [0, -999, 0],
+        pos: warning || (sim.shrinkStage > 0 && sim.shrinkTransition < 5) ? [center, 0.03, center] : [0, -999, 0],
         scale: [boundaryRadius * 1.06, boundaryRadius * 0.94, 1],
         quat: [...SHADOW_QUAT],
       }).unwrap();

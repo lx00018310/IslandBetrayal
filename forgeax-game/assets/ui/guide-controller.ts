@@ -397,6 +397,7 @@ export async function createGuideUi(
 
     // 结算弹窗
     const resultModal = shadow?.querySelector<HTMLElement>('[data-ui-part="result-modal"]');
+    const resultCard = shadow?.querySelector<HTMLElement>('.result-card');
     const btnRestart = shadow?.querySelector<HTMLButtonElement>('[data-ui-part="btn-restart"]');
     const resultTitle = shadow?.querySelector<HTMLElement>('[data-ui-part="result-title"]');
     const resultSub = shadow?.querySelector<HTMLElement>('[data-ui-part="result-subtitle"]');
@@ -614,10 +615,10 @@ export async function createGuideUi(
           const maxHp = typeof state.maxHp === 'number' ? state.maxHp : 100;
           const pct = Math.min(100, Math.max(0, hp / maxHp * 100));
           hpFill.style.width = `${pct}%`;
-          hpFill.style.background = pct > 30 ? '#7ee08a' : '#ff5a4a';
+          hpFill.style.background = pct > 30 ? '#ef4444' : '#ff5a4a';
           if (playerHpText) {
             playerHpText.textContent = `${hp} / ${maxHp} HP`;
-            playerHpText.style.color = pct > 30 ? '#4ade80' : '#ef4444';
+            playerHpText.style.color = pct > 30 ? '#f87171' : '#ff5a4a';
           }
         }
 
@@ -864,15 +865,26 @@ export async function createGuideUi(
             resultModal.classList.remove('hidden');
             if (btnRestart) btnRestart.textContent = endlessState?.mode === 'normal' ? '再来一局 (Space)' : '进入下局秘策选择 (Space)';
             const isWinner = state.isWinner === true;
+            if (resultCard) {
+              if (isWinner) {
+                resultCard.classList.add('is-victory');
+                resultCard.classList.remove('is-defeat');
+              } else {
+                resultCard.classList.add('is-defeat');
+                resultCard.classList.remove('is-victory');
+              }
+            }
             if (resultTitle) {
               resultTitle.textContent = isWinner
-                ? '你赢了！'
-                : `${state.winnerName ?? '其他角色'} 获胜`;
+                ? '🎉 大获全胜 · 你赢了！'
+                : '💀 挑战失败 · 你输了';
             }
             if (resultSub) {
               resultSub.textContent = isWinner
-                ? '精彩的合作攒宝与断线分赃决战！'
-                : '荒岛形势瞬息万变，换个策略再试一次！';
+                ? '精彩的合作攒宝与决战！你已成功夺得胜利脱离荒岛！'
+                : state.winnerName
+                  ? `${state.winnerName} 获得了最终胜利！换个策略再试一次！`
+                  : '你在荒岛对抗中不幸阵亡，换个策略再试一次！';
             }
             if (statTreasure) statTreasure.textContent = String(pTreas);
             if (statBreaks) statBreaks.textContent = String(breaks);
