@@ -14,6 +14,7 @@ import {
   finishBossRaid,
   endBossRaid,
   damageActor,
+  damageMonster,
   destroyChest,
   disbandTeam,
   dist,
@@ -674,10 +675,73 @@ describe('荒岛分赃核心规则、肉鸽升级与战斗系统测试', () => {
 
     grantRelicToActor(actor, 'haste', 2);
     expect(actor.relicHaste).toBe(2);
-    expect(getActorAttackSpeedBonus(actor)).toBeCloseTo(0.40);
+    expect(getActorAttackSpeedBonus(actor)).toBeCloseTo(0.35);
 
     grantRelicToActor(actor, 'haste', 3);
     expect(actor.relicHaste).toBe(3);
-    expect(getActorAttackSpeedBonus(actor)).toBeCloseTo(0.60);
+    expect(getActorAttackSpeedBonus(actor)).toBeCloseTo(0.50);
+  });
+
+  it('宝物等级上限提升至 6 级，且数值阶梯正确生效', () => {
+    const sim = createInitialSimulation();
+    const actor = sim.actors[0]!;
+
+    // 验证升级到 6 级
+    for (let lvl = 1; lvl <= 6; lvl++) {
+      grantRelicToActor(actor, 'might', lvl);
+      expect(actor.relicMight).toBe(lvl);
+    }
+    // LV.6 修罗战魂增伤 +200%
+    const baseDmg = 10;
+    const dmgLvl6 = calculateAttackDamage(sim, actor);
+    expect(dmgLvl6).toBe(baseDmg * 3);
+
+    // 验证盘古圣体 LV.6 (+560 HP)
+    const baseMaxHp = 100;
+    grantRelicToActor(actor, 'vitality', 6);
+    expect(actor.relicVitality).toBe(6);
+    expect(actor.maxHp).toBe(baseMaxHp + 560);
+
+    // 验证疾风灵羽 LV.6 (冷却缩减 80%)
+    grantRelicToActor(actor, 'haste', 6);
+    expect(actor.relicHaste).toBe(6);
+    expect(getActorAttackSpeedBonus(actor)).toBeCloseTo(0.80);
+
+    // 验证升级三选一逻辑与升级函数最高可升至 6 级
+    actor.weaponKnife = 0;
+    const knifeOpt = { id: 'weapon_knife' } as any;
+    for (let i = 1; i <= 6; i++) {
+      applyUpgrade(actor, knifeOpt);
+      expect(actor.weaponKnife).toBe(i);
+    }
+    // 达到 6 级封顶后不再增加
+    applyUpgrade(actor, knifeOpt);
+    expect(actor.weaponKnife).toBe(6);
+
+    actor.weaponKnife = 5;
+    const choices = generateUpgradeChoices(actor);
+    const knifeChoice = choices.find((c) => c.id === 'weapon_knife');
+    expect(knifeChoice).toBeDefined();
+    expect(knifeChoice!.nextValue).toContain('LV.6');
+  });
+
+  it('战斗中伤害打击与受击产生 damageHits 飘字事件', () => {
+    const sim = createInitialSimulation();
+    expect(sim.damageHits).toBeDefined();
+    expect(Array.isArray(sim.damageHits)).toBe(true);
+
+    const initialHitCount = sim.damageHits.length;
+    // 对首个野怪造成伤害
+    const monster = sim.monsters[0]!;
+    const hitAmount = 35;
+    damageMonster(sim, monster, hitAmount, null);
+
+    expect(sim.damageHits.length).toBeGreaterThan(initialHitCount);
+    const lastHit = sim.damageHits[sim.damageHits.length - 1]!;
+    expect(lastHit.amount).toBe(hitAmount);
+    expect(lastHit.targetType).toBe('monster');
+    expect(lastHit.kind).toBe('damage');
+    expect(lastHit.x).toBeCloseTo(monster.x);
+    expect(lastHit.y).toBeCloseTo(monster.y);
   });
 });

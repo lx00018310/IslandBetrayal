@@ -30,7 +30,7 @@ export interface RelicCatalogEntry {
   classification: 'damage' | 'enhance';
   classificationName: '伤害类' | '强化类';
   desc: string;
-  levels: [RelicCatalogLevel, RelicCatalogLevel, RelicCatalogLevel];
+  levels: readonly RelicCatalogLevel[];
 }
 
 export const RELIC_CATALOG: readonly RelicCatalogEntry[] = [
@@ -47,6 +47,9 @@ export const RELIC_CATALOG: readonly RelicCatalogEntry[] = [
       { level: 1, desc: '召唤 1 把旋转飞刀高速护身切割' },
       { level: 2, desc: '飞刀数量增至 2 把，旋转范围扩大' },
       { level: 3, desc: '飞刀数量增至 3 把，超速回旋绞杀' },
+      { level: 4, desc: '飞刀数量增至 4 把，旋转切割范围 +30%' },
+      { level: 5, desc: '飞刀数量增至 5 把，附带切割撕裂流血' },
+      { level: 6, desc: '飞刀数量增至 6 把，飞刃风暴全方位绝对绞杀' },
     ],
   },
   {
@@ -62,6 +65,9 @@ export const RELIC_CATALOG: readonly RelicCatalogEntry[] = [
       { level: 1, desc: '周期射出穿透箭，穿透 2 个目标' },
       { level: 2, desc: '穿透 3 个目标，箭矢飞行速度提升' },
       { level: 3, desc: '穿透 4 个目标，极速穿透附带高额重创' },
+      { level: 4, desc: '穿透 5 个目标，发射频率提升 30%' },
+      { level: 5, desc: '穿透 6 个目标，箭矢穿透附带致盲减速' },
+      { level: 6, desc: '穿透 8 个目标，每次并发 2 支神箭全屏贯日' },
     ],
   },
   {
@@ -77,6 +83,9 @@ export const RELIC_CATALOG: readonly RelicCatalogEntry[] = [
       { level: 1, desc: '散射 8 向瞬间贯穿晶石激光束' },
       { level: 2, desc: '8 向强化激光，射程与贯穿伤害提升' },
       { level: 3, desc: '进阶为 12 向高能激光，全方位毁灭清场' },
+      { level: 4, desc: '12 向超聚能激光，贯穿伤害提升 50%' },
+      { level: 5, desc: '进阶为 16 向极光裂隙，发射周期缩短 30%' },
+      { level: 6, desc: '进阶为 20 向歼灭星芒阵，全场无死角贯穿轰击' },
     ],
   },
   {
@@ -92,6 +101,9 @@ export const RELIC_CATALOG: readonly RelicCatalogEntry[] = [
       { level: 1, desc: '向前推进暴风，扩散半径 1.9m 撕裂沿途目标' },
       { level: 2, desc: '暴风扩散半径增至 2.3m，撕裂持续时间延长' },
       { level: 3, desc: '暴风扩散半径增至 2.7m，超大风暴持续牵引' },
+      { level: 4, desc: '暴风扩散半径增至 3.1m，风暴移动速度提升' },
+      { level: 5, desc: '暴风扩散半径增至 3.5m，撕裂附带狂风绞杀' },
+      { level: 6, desc: '暴风扩散半径增至 4.0m，超巨灭世龙卷强引全场' },
     ],
   },
   {
@@ -107,6 +119,9 @@ export const RELIC_CATALOG: readonly RelicCatalogEntry[] = [
       { level: 1, desc: '掷出回旋镖，折返归位往返贯穿' },
       { level: 2, desc: '回旋镖往返折返双段 +50% 增伤' },
       { level: 3, desc: '回旋镖折返双段 +75% 增伤，飞行极速' },
+      { level: 4, desc: '回旋镖折返双段 +100% 增伤，穿透击退加剧' },
+      { level: 5, desc: '回旋镖折返双段 +125% 暴击重创' },
+      { level: 6, desc: '回旋镖折返双段 +150% 毁灭碎裂，飞行穿云破雾' },
     ],
   },
   {
@@ -122,6 +137,9 @@ export const RELIC_CATALOG: readonly RelicCatalogEntry[] = [
       { level: 1, desc: '正前方扇形粉碎冲击，造成强力击退' },
       { level: 2, desc: '震波范围 +40%，击退力度与碎石伤害强化' },
       { level: 3, desc: '震波范围 +60%，造成大幅震荡眩晕与击飞' },
+      { level: 4, desc: '震波范围 +80%，释放频率提升 25%' },
+      { level: 5, desc: '震波范围 +100%，粉碎冲击造成双重地陷碎石' },
+      { level: 6, desc: '震波范围 +120%，360° 全身大地崩裂巨力践踏' },
     ],
   },
   {
@@ -137,6 +155,9 @@ export const RELIC_CATALOG: readonly RelicCatalogEntry[] = [
       { level: 1, desc: '尾部喷射留存毒雾，敌踏入减速 40% 并中毒' },
       { level: 2, desc: '毒雾留存 3.5s，减速提升至 45%，范围扩大' },
       { level: 3, desc: '毒雾留存 4.5s，减速提升至 50%，毒伤翻倍' },
+      { level: 4, desc: '毒雾留存 5.5s，减速提升至 55%，毒雾持续蔓延' },
+      { level: 5, desc: '毒雾留存 6.5s，减速提升至 60%，附加破防虚弱' },
+      { level: 6, desc: '毒雾留存 8.0s，减速提升至 70%，冥府死雾绝息剧毒' },
     ],
   },
   {
@@ -150,8 +171,11 @@ export const RELIC_CATALOG: readonly RelicCatalogEntry[] = [
     desc: '自然回血加速，缩短冷静时间，觉醒战时持续自愈',
     levels: [
       { level: 1, desc: '脱战自然回血 +3 HP/s，冷静时间缩短' },
-      { level: 2, desc: '脱战回血 +6 HP/s，受击冷静时间进一步缩短' },
-      { level: 3, desc: '回血 +10 HP/s，觉醒战时持续自愈能力' },
+      { level: 2, desc: '脱战回血 +5 HP/s，受击冷静时间进一步缩短' },
+      { level: 3, desc: '回血 +8 HP/s，觉醒战时持续自愈 3 HP/s' },
+      { level: 4, desc: '脱战回血 +11 HP/s，战时持续自愈 6 HP/s' },
+      { level: 5, desc: '脱战回血 +15 HP/s，战时持续自愈 10 HP/s' },
+      { level: 6, desc: '脱战回血 +20 HP/s，战时持续自愈 15 HP/s，生生不息' },
     ],
   },
   {
@@ -167,6 +191,9 @@ export const RELIC_CATALOG: readonly RelicCatalogEntry[] = [
       { level: 1, desc: '周期引天雷轰顶劈击目标，造成高额落雷' },
       { level: 2, desc: '天雷落击后连锁弹射 +1 次，造成麻痹减速' },
       { level: 3, desc: '天雷连锁弹射 +2 次，多重落雷连环轰击' },
+      { level: 4, desc: '天雷连锁弹射 +3 次，落雷轰击频率提升 25%' },
+      { level: 5, desc: '天雷连锁弹射 +4 次，附带神罚雷暴感电易伤' },
+      { level: 6, desc: '天雷连锁弹射 +5 次，万钧雷劫连环贯顶全屏狂轰' },
     ],
   },
   {
@@ -182,6 +209,9 @@ export const RELIC_CATALOG: readonly RelicCatalogEntry[] = [
       { level: 1, desc: '周期脚下爆发极寒冰环，减速 40%' },
       { level: 2, desc: '冰环范围 +25%，减速效果提升至 50%' },
       { level: 3, desc: '冰环范围 +50%，霜冻霜爆并造成高额冻结' },
+      { level: 4, desc: '冰环范围 +75%，触发周期缩短 25%' },
+      { level: 5, desc: '冰环范围 +100%，冰爆附带万华碎冰真实穿透' },
+      { level: 6, desc: '冰环范围 +125%，极寒绝对零度全场冰封霜冻' },
     ],
   },
   {
@@ -195,8 +225,11 @@ export const RELIC_CATALOG: readonly RelicCatalogEntry[] = [
     desc: '金刚护盾抵挡受到的直接伤害并震退敌人',
     levels: [
       { level: 1, desc: '抵挡 1 次直接伤害并震退敌人，冷却 8 秒' },
-      { level: 2, desc: '护盾充能加速，抵挡冷却缩短至 6 秒' },
-      { level: 3, desc: '护盾充能加速，抵挡冷却缩短至 4 秒' },
+      { level: 2, desc: '护盾充能加速，抵挡冷却缩短至 7 秒' },
+      { level: 3, desc: '护盾充能加速，抵挡冷却缩短至 6 秒' },
+      { level: 4, desc: '抵挡冷却缩短至 5 秒，反震冲击造成轻微击飞' },
+      { level: 5, desc: '抵挡冷却缩短至 4 秒，反弹 30 点真实反震伤害' },
+      { level: 6, desc: '抵挡冷却仅需 3 秒，金刚不坏之躯常驻守护' },
     ],
   },
   {
@@ -212,6 +245,9 @@ export const RELIC_CATALOG: readonly RelicCatalogEntry[] = [
       { level: 1, desc: '打出微型黑洞，持续吸附沿途全部目标' },
       { level: 2, desc: '黑洞吸附范围 +40%，引力牵引拉扯力加强' },
       { level: 3, desc: '黑洞吸附范围 +60%，终末引力坍缩撕裂重创' },
+      { level: 4, desc: '黑洞吸附范围 +80%，存续时间延长 50%' },
+      { level: 5, desc: '黑洞吸附范围 +100%，坍缩爆发额外双重引力波' },
+      { level: 6, desc: '召唤深空超重力奇点，巨型坍缩强力吞噬全场' },
     ],
   },
   {
@@ -225,8 +261,11 @@ export const RELIC_CATALOG: readonly RelicCatalogEntry[] = [
     desc: '所有攻击与宝物伤害按比例转化为生命值吸血回复',
     levels: [
       { level: 1, desc: '造成伤害的 25% 转化为自身生命吸血' },
-      { level: 2, desc: '吸血转化比例提升至 35%' },
-      { level: 3, desc: '吸血转化比例提升至 45%，持久续航' },
+      { level: 2, desc: '吸血转化比例提升至 30%' },
+      { level: 3, desc: '吸血转化比例提升至 35%，持久续航' },
+      { level: 4, desc: '吸血转化比例提升至 40%' },
+      { level: 5, desc: '吸血转化比例提升至 45%，濒死吸血翻倍' },
+      { level: 6, desc: '吸血转化比例提升至 50%，战神降临噬血无极' },
     ],
   },
   {
@@ -242,6 +281,9 @@ export const RELIC_CATALOG: readonly RelicCatalogEntry[] = [
       { level: 1, desc: '身后布设地刺陷阱留存 3s，造成穿刺流血' },
       { level: 2, desc: '地刺留存延长至 4s，流血伤害提升 30%' },
       { level: 3, desc: '地刺留存延长至 5s，范围扩大附带残废重伤' },
+      { level: 4, desc: '地刺留存延长至 6s，布设频率加快 30%' },
+      { level: 5, desc: '地刺留存延长至 7s，踩踏附带无法冲刺禁锢' },
+      { level: 6, desc: '地刺留存延长至 8.5s，远古铁棘地狱狂暴穿心' },
     ],
   },
   {
@@ -257,6 +299,9 @@ export const RELIC_CATALOG: readonly RelicCatalogEntry[] = [
       { level: 1, desc: '伸出灵索抓取最近敌对目标拖至眼前并眩晕' },
       { level: 2, desc: '缚索抓取距离与速度提升，附带破甲重创' },
       { level: 3, desc: '抓取范围进一步扩大，施加更长眩晕与重击' },
+      { level: 4, desc: '缚索拉扯附加灵魂震颤，重击伤害提升 50%' },
+      { level: 5, desc: '缚索射程大幅提升，抓取后对目标施加易伤印记' },
+      { level: 6, desc: '天地罗网，神锁瞬间擒拿并将沿途敌人聚拢粉碎' },
     ],
   },
   {
@@ -272,6 +317,9 @@ export const RELIC_CATALOG: readonly RelicCatalogEntry[] = [
       { level: 1, desc: '召唤 1 颗浮游法球，自动发射追踪灵弹' },
       { level: 2, desc: '浮游法球增至 2 颗，连发追踪弹幕频率加快' },
       { level: 3, desc: '浮游法球增至 3 颗，全自动高频追踪灵能弹幕' },
+      { level: 4, desc: '浮游法球增至 4 颗，追踪灵弹飞行极速' },
+      { level: 5, desc: '浮游法球增至 5 颗，灵弹命中附带灵能小爆破' },
+      { level: 6, desc: '浮游法球增至 6 颗，星穹法环高频追踪狂轰乱炸' },
     ],
   },
   {
@@ -287,6 +335,9 @@ export const RELIC_CATALOG: readonly RelicCatalogEntry[] = [
       { level: 1, desc: '周期扩散 1 道火环，穿透击退并点燃触碰敌人' },
       { level: 2, desc: '火环扩散速度与范围提升，灼烧伤害加剧' },
       { level: 3, desc: '火环连续扩散 2 重烈焰，火浪重叠爆破' },
+      { level: 4, desc: '火环扩散范围 +50%，点燃灼烧持续时间延长' },
+      { level: 5, desc: '火环连续扩散 3 重真火波浪，所过之处烈焰翻滚' },
+      { level: 6, desc: '三昧真火大阵，连续 4 重焚天烈火波次横扫全屏' },
     ],
   },
   {
@@ -302,6 +353,9 @@ export const RELIC_CATALOG: readonly RelicCatalogEntry[] = [
       { level: 1, desc: '召唤虚影分身协同攻击，继承 50% 战力' },
       { level: 2, desc: '虚影分身继承 65% 战力，留存时间延长' },
       { level: 3, desc: '虚影分身继承 80% 战力，分身协同爆发极强威力' },
+      { level: 4, desc: '虚影分身继承 95% 战力，分身动作更敏捷' },
+      { level: 5, desc: '召唤 2 尊虚影分身同时协同作战，各继承 80% 战力' },
+      { level: 6, desc: '幻影化神，2 尊分身继承 100% 战力完全复刻神威' },
     ],
   },
   {
@@ -316,7 +370,10 @@ export const RELIC_CATALOG: readonly RelicCatalogEntry[] = [
     levels: [
       { level: 1, desc: '角色全伤害提高 25%' },
       { level: 2, desc: '角色全伤害提高 50%' },
-      { level: 3, desc: '角色全伤害提高 80%，极意狂化' },
+      { level: 3, desc: '角色全伤害提高 80%' },
+      { level: 4, desc: '角色全伤害提高 115%' },
+      { level: 5, desc: '角色全伤害提高 155%' },
+      { level: 6, desc: '角色全伤害提高 200%，神魔修罗极境狂化' },
     ],
   },
   {
@@ -332,6 +389,9 @@ export const RELIC_CATALOG: readonly RelicCatalogEntry[] = [
       { level: 1, desc: '最大生命上限提升 60 点并同额恢复' },
       { level: 2, desc: '最大生命上限累计提升 120 点并同额恢复' },
       { level: 3, desc: '最大生命上限累计提升 200 点并同额恢复' },
+      { level: 4, desc: '最大生命上限累计提升 300 点并同额恢复' },
+      { level: 5, desc: '最大生命上限累计提升 420 点并同额恢复' },
+      { level: 6, desc: '最大生命上限累计提升 560 点并同额恢复，不死不灭' },
     ],
   },
   {
@@ -345,8 +405,11 @@ export const RELIC_CATALOG: readonly RelicCatalogEntry[] = [
     desc: '迅捷身法加持，提升移动速度并大幅缩短武器绝技与攻击冷却',
     levels: [
       { level: 1, desc: '移速 +15%，武器与普攻冷却缩减 20%' },
-      { level: 2, desc: '移速 +25%，武器与普攻冷却缩减 40%' },
-      { level: 3, desc: '移速 +35%，武器与普攻冷却缩减 60%' },
+      { level: 2, desc: '移速 +25%，武器与普攻冷却缩减 35%' },
+      { level: 3, desc: '移速 +35%，武器与普攻冷却缩减 50%' },
+      { level: 4, desc: '移速 +45%，武器与普攻冷却缩减 60%' },
+      { level: 5, desc: '移速 +55%，武器与普攻冷却缩减 70%' },
+      { level: 6, desc: '移速 +65%，武器与普攻冷却缩减 80%，踏雪无痕' },
     ],
   },
 ];
@@ -634,6 +697,8 @@ export async function createGuideUi(
     const relicTabUnowned = shadow?.querySelector<HTMLElement>('[data-ui-part="relic-tab-unowned"]');
     const btnCatalogClose = shadow?.querySelector<HTMLButtonElement>('[data-ui-part="btn-catalog-close"]');
     const btnCatalogConfirm = shadow?.querySelector<HTMLButtonElement>('[data-ui-part="btn-catalog-confirm"]');
+    const btnResultRelics = shadow?.querySelector<HTMLButtonElement>('[data-ui-part="btn-result-relics"]');
+    const floatingLayer = shadow?.querySelector<HTMLElement>('[data-ui-part="floating-layer"]');
 
     let currentRelicFilter: 'all' | 'damage' | 'enhance' | 'owned' | 'unowned' = 'all';
     let isRelicCatalogOpen = false;
@@ -641,6 +706,8 @@ export async function createGuideUi(
 
     const renderRelicCatalog = () => {
       if (!relicCatalogGrid) return;
+      const doc = shadow?.ownerDocument ?? (typeof document !== 'undefined' ? document : null);
+      if (!doc || typeof doc.createElement !== 'function') return;
       const totalCount = RELIC_CATALOG.length;
       let ownedCount = 0;
 
@@ -666,13 +733,13 @@ export async function createGuideUi(
         if (currentRelicFilter === 'owned' && !isOwned) continue;
         if (currentRelicFilter === 'unowned' && isOwned) continue;
 
-        const card = document.createElement('div');
+        const card = doc.createElement('div');
         card.className = `relic-catalog-card ${isOwned ? 'relic-card-unlocked' : 'relic-card-locked'}`;
         card.setAttribute('data-relic-kind', relic.kind);
 
         const badgeText = isOwned
-          ? currentLvl >= 3
-            ? 'LV.3 极境'
+          ? currentLvl >= 6
+            ? 'LV.6 极境'
             : `LV.${currentLvl}`
           : '未收录';
 
@@ -786,6 +853,10 @@ export async function createGuideUi(
       if (btnRelicCatalog) {
         btnRelicCatalog.addEventListener('click', () => toggleRelicCatalog());
         blurAfterClick(btnRelicCatalog);
+      }
+      if (btnResultRelics) {
+        btnResultRelics.addEventListener('click', () => toggleRelicCatalog(true));
+        blurAfterClick(btnResultRelics);
       }
       if (btnCatalogClose) {
         btnCatalogClose.addEventListener('click', () => toggleRelicCatalog(false));
@@ -1474,6 +1545,48 @@ export async function createGuideUi(
 
         // 渲染右上角战场缩略小地图与红点雷达
         renderMiniMap(state as any);
+
+        // 渲染打击反馈与飘字跳动效果
+        const hits = state.damageHits as
+          | Array<{
+              id: number;
+              x: number;
+              y: number;
+              amount: number;
+              kind: 'damage' | 'crit' | 'shield' | 'heal';
+              targetType: 'player' | 'enemy' | 'monster' | 'boss';
+            }>
+          | undefined;
+        const playerPos = (state.playerPos as { x: number; y: number } | undefined) ?? { x: 11, y: 11 };
+        const doc = shadow?.ownerDocument ?? (typeof document !== 'undefined' ? document : null);
+        if (hits && hits.length > 0 && floatingLayer && doc && typeof doc.createElement === 'function') {
+          for (const hit of hits) {
+            const dx = hit.x - playerPos.x;
+            const dy = hit.y - playerPos.y;
+            if (Math.hypot(dx, dy) > 16) continue;
+            const pop = doc.createElement('div');
+            pop.className = `combat-number-pop pop-${hit.kind} pop-target-${hit.targetType}`;
+            const screenX = Math.min(88, Math.max(12, 50 + dx * 3.6));
+            const screenY = Math.min(88, Math.max(12, 50 + dy * 3.6));
+            pop.style.left = `${screenX}%`;
+            pop.style.top = `${screenY}%`;
+            if (hit.kind === 'shield') {
+              pop.textContent = '🛡️0';
+            } else if (hit.kind === 'heal') {
+              pop.textContent = `+${hit.amount}`;
+            } else if (hit.kind === 'crit') {
+              pop.textContent = `⚡-${hit.amount}!`;
+            } else {
+              pop.textContent = `-${hit.amount}`;
+            }
+            floatingLayer.appendChild(pop);
+            setTimeout(() => {
+              if (pop.parentNode) {
+                pop.remove();
+              }
+            }, 750);
+          }
+        }
       };
       port.addEventListener('message', onHudMessage);
       releases.push(() => port.removeEventListener('message', onHudMessage));

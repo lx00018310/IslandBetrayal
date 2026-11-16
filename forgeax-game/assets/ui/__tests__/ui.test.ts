@@ -255,7 +255,7 @@ describe('game-3d Host UI lifecycle', () => {
     } finally { await ctx.fiber.dispose(); }
   });
 
-  it('exposes complete 21 relics with 3 growth tiers and syncs collected progress', async () => {
+  it('exposes complete 21 relics with 6 growth tiers and syncs collected progress', async () => {
     expect(RELIC_CATALOG).toHaveLength(21);
     const expectedDamageKinds = [
       'knife', 'arrow', 'laser', 'cyclone', 'boomerang', 'hammer',
@@ -276,10 +276,10 @@ describe('game-3d Host UI lifecycle', () => {
       expect(entry!.classificationName).toBe('伤害类');
       expect(entry!.name).toBeTruthy();
       expect(entry!.icon).toBeTruthy();
-      expect(entry!.levels).toHaveLength(3);
-      expect(entry!.levels[0].level).toBe(1);
-      expect(entry!.levels[1].level).toBe(2);
-      expect(entry!.levels[2].level).toBe(3);
+      expect(entry!.levels).toHaveLength(6);
+      for (let l = 1; l <= 6; l++) {
+        expect(entry!.levels[l - 1].level).toBe(l);
+      }
     }
 
     for (const kind of expectedEnhanceKinds) {
@@ -289,15 +289,19 @@ describe('game-3d Host UI lifecycle', () => {
       expect(entry!.classificationName).toBe('强化类');
       expect(entry!.name).toBeTruthy();
       expect(entry!.icon).toBeTruthy();
-      expect(entry!.levels).toHaveLength(3);
-      expect(entry!.levels[0].level).toBe(1);
-      expect(entry!.levels[1].level).toBe(2);
-      expect(entry!.levels[2].level).toBe(3);
+      expect(entry!.levels).toHaveLength(6);
+      for (let l = 1; l <= 6; l++) {
+        expect(entry!.levels[l - 1].level).toBe(l);
+      }
     }
 
     const channel = new MessageChannel();
     const { ctx } = hostFixture({ presentationPort: channel.port1 });
     const collectedBadge = hudElement('relic-collected-badge');
+    const resultRelicsBtn = hudElement('btn-result-relics');
+    const floatingLayer = hudElement('floating-layer');
+    expect(resultRelicsBtn).toBeDefined();
+    expect(floatingLayer).toBeDefined();
 
     const fiber = await ctx.plugin(uiPlugin, { guide: '019fb7ce-3600-7000-8000-000000000001' });
     try {
@@ -306,7 +310,11 @@ describe('game-3d Host UI lifecycle', () => {
         playerRelics: [
           { kind: 'knife', level: 2 },
           { kind: 'thunder', level: 1 },
-          { kind: 'mirror', level: 3 },
+          { kind: 'mirror', level: 6 },
+        ],
+        damageHits: [
+          { id: 1, x: 12, y: 12, amount: 25, kind: 'damage', targetType: 'monster' },
+          { id: 2, x: 11, y: 11, amount: 0, kind: 'shield', targetType: 'player' },
         ],
       });
       await new Promise((r) => setTimeout(r, 30));

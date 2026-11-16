@@ -135,7 +135,7 @@ export type RelicAffix =
 
 export interface CarryRelic {
   kind: RelicKind;
-  level: number; // 1..3
+  level: number; // 1..6
   affix?: RelicAffix;
 }
 

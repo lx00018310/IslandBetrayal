@@ -1022,6 +1022,8 @@ export const islandPlugin: Plugin = {
                 }
               }
 
+              const hitsToReport = sim.damageHits.length > 0 ? sim.damageHits.splice(0, sim.damageHits.length) : [];
+
               port.postMessage({
                 channel: 'island/hud-state',
                 elapsed: sim.elapsed,
@@ -1051,6 +1053,8 @@ export const islandPlugin: Plugin = {
                 pendingUpgrade: sim.pendingUpgrade,
                 upgradeChoices: sim.upgradeChoices,
                 playerRelics: getPlayerOwnedRelics(),
+                damageHits: hitsToReport,
+                playerPos: { x: p.x, y: p.y },
                 boss:
                   sim.raidPhase !== 'none' && sim.raidBossHp > 0
                     ? {

@@ -1292,7 +1292,7 @@
   align-items: center;
   justify-content: center;
   pointer-events: auto;
-  z-index: 60;
+  z-index: 70 !important;
   padding: 16px;
 }
 
@@ -1554,6 +1554,8 @@
   flex-direction: column;
   gap: 4px;
   border: 1px solid #1a293c;
+  max-height: 145px;
+  overflow-y: auto;
 }
 
 .growth-item {
@@ -1662,4 +1664,87 @@
     width: 100%;
     justify-content: space-between;
   }
+}
+
+/* 战斗命中跳字浮动层 */
+.combat-floating-layer {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  overflow: hidden;
+  z-index: 35;
+}
+
+@keyframes damagePopAnim {
+  0% {
+    opacity: 0;
+    transform: translate(-50%, 0) scale(0.6);
+  }
+  15% {
+    opacity: 1;
+    transform: translate(-50%, -10px) scale(1.15);
+  }
+  30% {
+    transform: translate(-50%, -18px) scale(1.0);
+  }
+  80% {
+    opacity: 0.95;
+    transform: translate(-50%, -36px) scale(0.95);
+  }
+  100% {
+    opacity: 0;
+    transform: translate(-50%, -46px) scale(0.8);
+  }
+}
+
+.combat-number-pop {
+  position: absolute;
+  font-family: inherit;
+  font-weight: 900;
+  pointer-events: none;
+  animation: damagePopAnim 0.75s ease-out forwards;
+  white-space: nowrap;
+  user-select: none;
+  text-shadow: 0 2px 4px rgba(0, 0, 0, 0.8), 0 0 2px #000;
+}
+
+/* 普通伤害：金黄/亮白 */
+.combat-number-pop.pop-damage {
+  color: #fef08a;
+  font-size: 15px;
+}
+
+/* 暴击伤害：大号橙红闪光 */
+.combat-number-pop.pop-crit {
+  color: #ff3b30;
+  font-size: 20px;
+  text-shadow: 0 0 8px rgba(255, 59, 48, 0.8), 0 2px 4px #000;
+}
+
+/* 玩家受击：醒目血红 */
+.combat-number-pop.pop-target-player {
+  color: #f87171;
+  font-size: 17px;
+}
+
+/* 玄甲格挡：金刚耀光蓝金 */
+.combat-number-pop.pop-shield {
+  color: #38bdf8;
+  font-size: 14px;
+}
+
+/* 生命吸血/自愈：翡翠绿 */
+.combat-number-pop.pop-heal {
+  color: #34d399;
+  font-size: 14px;
+}
+
+/* 结算弹窗中的查看卡片按钮强调 */
+.btn-result-relics {
+  border-color: #65d5b0 !important;
+  color: #65d5b0 !important;
+}
+.btn-result-relics:hover {
+  background: rgba(101, 213, 176, 0.15) !important;
+  color: #ffffff !important;
 }

@@ -420,6 +420,15 @@ export interface PlayerInputIntent {
   restart?: boolean;
 }
 
+export interface DamageHitEvent {
+  id: number;
+  x: number;
+  y: number;
+  amount: number;
+  kind: 'damage' | 'crit' | 'shield' | 'heal';
+  targetType: 'player' | 'enemy' | 'monster' | 'boss';
+}
+
 export interface SimulationState {
   tiles: TileState[];
   actors: ActorState[];
@@ -428,6 +437,8 @@ export interface SimulationState {
   loots: LootState[];
   particles: ParticleState[];
   floats: FloatTextState[];
+  damageHits: DamageHitEvent[];
+  nextHitId: number;
   invites: InviteState[];
   ignores: Map<string, number>;
   lastBreakEvent: BreakEvent | null;
@@ -778,7 +789,7 @@ export const BASE_RELIC_NAMES: Record<RelicKind, string> = {
 };
 
 export function grantRelicToActor(actor: ActorState, kind: RelicKind, level = 1): void {
-  const lvl = Math.min(3, Math.max(1, level));
+  const lvl = Math.min(6, Math.max(1, level));
   switch (kind) {
     case 'knife': actor.weaponKnife = lvl; break;
     case 'arrow': actor.weaponArrow = lvl; break;
@@ -802,7 +813,7 @@ export function grantRelicToActor(actor: ActorState, kind: RelicKind, level = 1)
     case 'vitality': {
       const prevLvl = actor.relicVitality ?? 0;
       actor.relicVitality = lvl;
-      const hpBonusTable = [0, 60, 120, 200];
+      const hpBonusTable = [0, 60, 120, 200, 300, 420, 560];
       const diffHp = hpBonusTable[lvl]! - hpBonusTable[prevLvl]!;
       if (diffHp > 0) {
         actor.maxHp += diffHp;
@@ -1077,6 +1088,8 @@ export function createInitialSimulation(options?: {
     loots: [],
     particles: [],
     floats: [],
+    damageHits: [],
+    nextHitId: 1,
     invites: [],
     ignores: new Map(),
     lastBreakEvent: null,
@@ -1189,6 +1202,28 @@ export function pulse(sim: SimulationState, text: string, x: number, y: number, 
     maxLife: 1.1,
     color,
   });
+}
+
+export function recordDamageHit(
+  sim: SimulationState,
+  x: number,
+  y: number,
+  amount: number,
+  kind: 'damage' | 'crit' | 'shield' | 'heal' = 'damage',
+  targetType: 'player' | 'enemy' | 'monster' | 'boss' = 'monster',
+): void {
+  if (sim.gameOver) return;
+  sim.damageHits.push({
+    id: sim.nextHitId++,
+    x: Number(x.toFixed(2)),
+    y: Number(y.toFixed(2)),
+    amount: Math.round(amount),
+    kind,
+    targetType,
+  });
+  if (sim.damageHits.length > 50) {
+    sim.damageHits.splice(0, sim.damageHits.length - 50);
+  }
 }
 
 export function burst(sim: SimulationState, x: number, y: number, color: string, count = 14): void {
@@ -1497,8 +1532,8 @@ export function eliminate(sim: SimulationState, a: ActorState, reason: string): 
 export function generateUpgradeChoices(actor: ActorState): UpgradeOption[] {
   const pool: UpgradeOption[] = [];
 
-  // 1. 核心宝物（未满 3 级）
-  if (actor.weaponKnife < 3) {
+  // 1. 核心宝物（未满 6 级）
+  if (actor.weaponKnife < 6) {
     const nextLvl = actor.weaponKnife + 1;
     pool.push({
       id: 'weapon_knife',
@@ -1510,31 +1545,33 @@ export function generateUpgradeChoices(actor: ActorState): UpgradeOption[] {
     });
   }
 
-  if (actor.weaponArrow < 3) {
+  if (actor.weaponArrow < 6) {
     const nextLvl = actor.weaponArrow + 1;
+    const arrowPenetrate = [0, 2, 3, 4, 5, 6, 8];
     pool.push({
       id: 'weapon_arrow',
       type: 'weapon',
       title: '宝物·破晓神弩',
-      description: `周期性向最近敌对目标射出高能穿透箭，穿透 ${nextLvl + 1} 个目标`,
-      currentValue: actor.weaponArrow === 0 ? '未习得' : `LV.${actor.weaponArrow} (穿透${actor.weaponArrow + 1}人)`,
-      nextValue: `LV.${nextLvl} (穿透${nextLvl + 1}人)`,
+      description: `周期性向最近敌对目标射出高能穿透箭，穿透 ${arrowPenetrate[nextLvl]!} 个目标`,
+      currentValue: actor.weaponArrow === 0 ? '未习得' : `LV.${actor.weaponArrow} (穿透${arrowPenetrate[actor.weaponArrow]!}人)`,
+      nextValue: `LV.${nextLvl} (穿透${arrowPenetrate[nextLvl]!}人)`,
     });
   }
 
-  if (actor.relicLaser < 3) {
+  if (actor.relicLaser < 6) {
     const nextLvl = actor.relicLaser + 1;
+    const laserBeams = [0, 8, 8, 12, 12, 16, 20];
     pool.push({
       id: 'relic_laser',
       type: 'weapon',
       title: '宝物·星芒棱镜',
       description: `每隔数秒向八面八方散射瞬间贯穿的耀眼晶石激光束，扫除周围围攻`,
-      currentValue: actor.relicLaser === 0 ? '未习得' : `LV.${actor.relicLaser} (8向激光)`,
-      nextValue: `LV.${nextLvl} (${nextLvl >= 3 ? '12向高能激光' : '8向强化激光'})`,
+      currentValue: actor.relicLaser === 0 ? '未习得' : `LV.${actor.relicLaser} (${laserBeams[actor.relicLaser]!}向激光)`,
+      nextValue: `LV.${nextLvl} (${laserBeams[nextLvl]!}向${nextLvl >= 5 ? '极光裂隙' : nextLvl >= 3 ? '高能激光' : '强化激光'})`,
     });
   }
 
-  if (actor.relicCyclone < 3) {
+  if (actor.relicCyclone < 6) {
     const nextLvl = actor.relicCyclone + 1;
     pool.push({
       id: 'relic_cyclone',
@@ -1546,7 +1583,7 @@ export function generateUpgradeChoices(actor: ActorState): UpgradeOption[] {
     });
   }
 
-  if (actor.relicBoomerang < 3) {
+  if (actor.relicBoomerang < 6) {
     const nextLvl = actor.relicBoomerang + 1;
     pool.push({
       id: 'relic_boomerang',
@@ -1558,7 +1595,7 @@ export function generateUpgradeChoices(actor: ActorState): UpgradeOption[] {
     });
   }
 
-  if (actor.relicHammer < 3) {
+  if (actor.relicHammer < 6) {
     const nextLvl = actor.relicHammer + 1;
     pool.push({
       id: 'relic_hammer',
@@ -1570,31 +1607,33 @@ export function generateUpgradeChoices(actor: ActorState): UpgradeOption[] {
     });
   }
 
-  if (actor.relicSmoke < 3) {
+  if (actor.relicSmoke < 6) {
     const nextLvl = actor.relicSmoke + 1;
+    const slowRates = [0, 40, 45, 50, 55, 60, 70];
     pool.push({
       id: 'relic_smoke',
       type: 'weapon',
       title: '宝物·遁影烟斗',
       description: `移动时在尾部喷射持续留存的毒云迷雾，踏入毒雾的敌人受到持续中毒并被大幅减速`,
-      currentValue: actor.relicSmoke === 0 ? '未习得' : `LV.${actor.relicSmoke} (减速40%)`,
-      nextValue: `LV.${nextLvl} (减速${35 + nextLvl * 5}%，留存+1s)`,
+      currentValue: actor.relicSmoke === 0 ? '未习得' : `LV.${actor.relicSmoke} (减速${slowRates[actor.relicSmoke]}%)`,
+      nextValue: `LV.${nextLvl} (减速${slowRates[nextLvl]}%，留存+1s)`,
     });
   }
 
-  if ((actor.relicHeal ?? 0) < 3) {
+  if ((actor.relicHeal ?? 0) < 6) {
     const nextLvl = (actor.relicHeal ?? 0) + 1;
+    const healRates = [0, 3, 5, 8, 11, 15, 20];
     pool.push({
       id: 'relic_heal',
       type: 'weapon',
       title: '宝物·生命宝珠',
       description: `加快未受攻击时的自然回血速度，缩短受击冷静时间；高阶觉醒战斗持续自愈`,
-      currentValue: (actor.relicHeal ?? 0) === 0 ? '未习得' : `LV.${actor.relicHeal} (+${actor.relicHeal === 1 ? 3 : 6}HP/s)`,
-      nextValue: `LV.${nextLvl} (+${nextLvl === 1 ? 3 : nextLvl === 2 ? 6 : 10}HP/s${nextLvl >= 3 ? '，战时自愈' : ''})`,
+      currentValue: (actor.relicHeal ?? 0) === 0 ? '未习得' : `LV.${actor.relicHeal} (+${healRates[actor.relicHeal]}HP/s)`,
+      nextValue: `LV.${nextLvl} (+${healRates[nextLvl]}HP/s${nextLvl >= 3 ? '，战时自愈' : ''})`,
     });
   }
 
-  if ((actor.relicThunder ?? 0) < 3) {
+  if ((actor.relicThunder ?? 0) < 6) {
     const nextLvl = (actor.relicThunder ?? 0) + 1;
     pool.push({
       id: 'relic_thunder',
@@ -1602,11 +1641,11 @@ export function generateUpgradeChoices(actor: ActorState): UpgradeOption[] {
       title: '宝物·鸣雷天珠',
       description: `周期性引天雷轰顶劈击范围内敌对目标，造成高额落雷重创与麻痹减速`,
       currentValue: (actor.relicThunder ?? 0) === 0 ? '未习得' : `LV.${actor.relicThunder}`,
-      nextValue: `LV.${nextLvl} (天雷重击，连锁弹射+1)`,
+      nextValue: `LV.${nextLvl} (天雷重击，连锁弹射+${nextLvl})`,
     });
   }
 
-  if ((actor.relicFrost ?? 0) < 3) {
+  if ((actor.relicFrost ?? 0) < 6) {
     const nextLvl = (actor.relicFrost ?? 0) + 1;
     pool.push({
       id: 'relic_frost',
@@ -1614,11 +1653,11 @@ export function generateUpgradeChoices(actor: ActorState): UpgradeOption[] {
       title: '宝物·冰魄雪莲',
       description: `周期性在脚下爆发极寒冰环霜气，冻结减速周围全部敌对目标并造成持续霜寒伤害`,
       currentValue: (actor.relicFrost ?? 0) === 0 ? '未习得' : `LV.${actor.relicFrost}`,
-      nextValue: `LV.${nextLvl} (冰环范围+25%，减速50%)`,
+      nextValue: `LV.${nextLvl} (冰环范围+${nextLvl * 25}%，霜冻强化)`,
     });
   }
 
-  if ((actor.relicShield ?? 0) < 3) {
+  if ((actor.relicShield ?? 0) < 6) {
     const nextLvl = (actor.relicShield ?? 0) + 1;
     pool.push({
       id: 'relic_shield',
@@ -1626,11 +1665,11 @@ export function generateUpgradeChoices(actor: ActorState): UpgradeOption[] {
       title: '宝物·金刚玄甲',
       description: `生成玄光金刚护盾抵挡受到的下一次直接伤害并震退敌人，升级大幅缩短充能时间`,
       currentValue: (actor.relicShield ?? 0) === 0 ? '未习得' : `LV.${actor.relicShield}`,
-      nextValue: `LV.${nextLvl} (护盾冷却缩短至${10 - nextLvl * 2}秒)`,
+      nextValue: `LV.${nextLvl} (护盾冷却缩短至${Math.max(3, 9 - nextLvl)}秒)`,
     });
   }
 
-  if ((actor.relicBlackhole ?? 0) < 3) {
+  if ((actor.relicBlackhole ?? 0) < 6) {
     const nextLvl = (actor.relicBlackhole ?? 0) + 1;
     pool.push({
       id: 'relic_blackhole',
@@ -1642,19 +1681,20 @@ export function generateUpgradeChoices(actor: ActorState): UpgradeOption[] {
     });
   }
 
-  if ((actor.relicDrain ?? 0) < 3) {
+  if ((actor.relicDrain ?? 0) < 6) {
     const nextLvl = (actor.relicDrain ?? 0) + 1;
+    const drainRates = [0, 25, 30, 35, 40, 45, 50];
     pool.push({
       id: 'relic_drain',
       type: 'weapon',
       title: '宝物·噬血魔翼',
       description: `造成的所有攻击与宝物伤害均按比例转化为生命值吸血回复，越战越勇`,
-      currentValue: (actor.relicDrain ?? 0) === 0 ? '未习得' : `LV.${actor.relicDrain} (吸血${15 + (actor.relicDrain ?? 0) * 10}%)`,
-      nextValue: `LV.${nextLvl} (吸血率提升至${15 + nextLvl * 10}%)`,
+      currentValue: (actor.relicDrain ?? 0) === 0 ? '未习得' : `LV.${actor.relicDrain} (吸血${drainRates[actor.relicDrain]}%)`,
+      nextValue: `LV.${nextLvl} (吸血率提升至${drainRates[nextLvl]}%)`,
     });
   }
 
-  if ((actor.relicSpikes ?? 0) < 3) {
+  if ((actor.relicSpikes ?? 0) < 6) {
     const nextLvl = (actor.relicSpikes ?? 0) + 1;
     pool.push({
       id: 'relic_spikes',
@@ -1666,7 +1706,7 @@ export function generateUpgradeChoices(actor: ActorState): UpgradeOption[] {
     });
   }
 
-  if ((actor.relicChain ?? 0) < 3) {
+  if ((actor.relicChain ?? 0) < 6) {
     const nextLvl = (actor.relicChain ?? 0) + 1;
     pool.push({
       id: 'relic_chain',
@@ -1678,7 +1718,7 @@ export function generateUpgradeChoices(actor: ActorState): UpgradeOption[] {
     });
   }
 
-  if ((actor.relicOrb ?? 0) < 3) {
+  if ((actor.relicOrb ?? 0) < 6) {
     const nextLvl = (actor.relicOrb ?? 0) + 1;
     pool.push({
       id: 'relic_orb',
@@ -1690,7 +1730,7 @@ export function generateUpgradeChoices(actor: ActorState): UpgradeOption[] {
     });
   }
 
-  if ((actor.relicFireRing ?? 0) < 3) {
+  if ((actor.relicFireRing ?? 0) < 6) {
     const nextLvl = (actor.relicFireRing ?? 0) + 1;
     pool.push({
       id: 'relic_fire_ring',
@@ -1702,35 +1742,36 @@ export function generateUpgradeChoices(actor: ActorState): UpgradeOption[] {
     });
   }
 
-  if ((actor.relicMirror ?? 0) < 3) {
+  if ((actor.relicMirror ?? 0) < 6) {
     const nextLvl = (actor.relicMirror ?? 0) + 1;
+    const mirrorPowers = [0, 50, 65, 80, 95, 100, 100];
     pool.push({
       id: 'relic_mirror',
       type: 'weapon',
       title: '宝物·幻影神镜',
       description: `召唤半透明虚影分身协同作战，分身复制本体攻击动作并造成额外协同伤害`,
       currentValue: (actor.relicMirror ?? 0) === 0 ? '未习得' : `LV.${actor.relicMirror}`,
-      nextValue: `LV.${nextLvl} (分身继承${35 + nextLvl * 15}%战力)`,
+      nextValue: `LV.${nextLvl} (分身继承${mirrorPowers[nextLvl]}%战力${nextLvl >= 5 ? '，双尊分身' : ''})`,
     });
   }
 
-  // 强化类宝物加入三选一升级候选项
-  if ((actor.relicMight ?? 0) < 3) {
+  // 强化类宝物加入三选一升级候选项（最高 6 级）
+  if ((actor.relicMight ?? 0) < 6) {
     const nextLvl = (actor.relicMight ?? 0) + 1;
-    const table = [0, 25, 50, 80];
+    const table = [0, 25, 50, 80, 115, 155, 200];
     pool.push({
       id: 'relic_might',
       type: 'weapon',
       title: '宝物·修罗战魂',
       description: `唤醒修罗战意，自身不进行攻击，但大幅提升所有攻击与技能的全伤害比例`,
       currentValue: (actor.relicMight ?? 0) === 0 ? '未习得' : `LV.${actor.relicMight} (+${table[actor.relicMight]}%伤害)`,
-      nextValue: `LV.${nextLvl} (全伤害提升 +${table[nextLvl]}%${nextLvl >= 3 ? '，暴击率+20%' : ''})`,
+      nextValue: `LV.${nextLvl} (全伤害提升 +${table[nextLvl]}%${nextLvl >= 6 ? '，修罗极境' : ''})`,
     });
   }
 
-  if ((actor.relicVitality ?? 0) < 3) {
+  if ((actor.relicVitality ?? 0) < 6) {
     const nextLvl = (actor.relicVitality ?? 0) + 1;
-    const table = [0, 60, 120, 200];
+    const table = [0, 60, 120, 200, 300, 420, 560];
     pool.push({
       id: 'relic_vitality',
       type: 'weapon',
@@ -1741,10 +1782,10 @@ export function generateUpgradeChoices(actor: ActorState): UpgradeOption[] {
     });
   }
 
-  if ((actor.relicHaste ?? 0) < 3) {
+  if ((actor.relicHaste ?? 0) < 6) {
     const nextLvl = (actor.relicHaste ?? 0) + 1;
-    const spTable = [0, 15, 25, 35];
-    const cdTable = [0, 20, 40, 60];
+    const spTable = [0, 15, 25, 35, 45, 55, 65];
+    const cdTable = [0, 20, 35, 50, 60, 70, 80];
     pool.push({
       id: 'relic_haste',
       type: 'weapon',
@@ -1776,68 +1817,68 @@ export function generateUpgradeChoices(actor: ActorState): UpgradeOption[] {
 export function applyUpgrade(actor: ActorState, upgrade: UpgradeOption): void {
   switch (upgrade.id) {
     case 'weapon_knife':
-      actor.weaponKnife = Math.min(3, actor.weaponKnife + 1);
+      actor.weaponKnife = Math.min(6, actor.weaponKnife + 1);
       break;
     case 'weapon_arrow':
-      actor.weaponArrow = Math.min(3, actor.weaponArrow + 1);
+      actor.weaponArrow = Math.min(6, actor.weaponArrow + 1);
       break;
     case 'relic_laser':
-      actor.relicLaser = Math.min(3, actor.relicLaser + 1);
+      actor.relicLaser = Math.min(6, actor.relicLaser + 1);
       break;
     case 'relic_cyclone':
-      actor.relicCyclone = Math.min(3, actor.relicCyclone + 1);
+      actor.relicCyclone = Math.min(6, actor.relicCyclone + 1);
       break;
     case 'relic_boomerang':
-      actor.relicBoomerang = Math.min(3, actor.relicBoomerang + 1);
+      actor.relicBoomerang = Math.min(6, actor.relicBoomerang + 1);
       break;
     case 'relic_hammer':
-      actor.relicHammer = Math.min(3, actor.relicHammer + 1);
+      actor.relicHammer = Math.min(6, actor.relicHammer + 1);
       break;
     case 'relic_smoke':
-      actor.relicSmoke = Math.min(3, actor.relicSmoke + 1);
+      actor.relicSmoke = Math.min(6, actor.relicSmoke + 1);
       break;
     case 'relic_heal':
-      actor.relicHeal = Math.min(3, (actor.relicHeal ?? 0) + 1);
+      actor.relicHeal = Math.min(6, (actor.relicHeal ?? 0) + 1);
       break;
     case 'relic_thunder':
-      actor.relicThunder = Math.min(3, (actor.relicThunder ?? 0) + 1);
+      actor.relicThunder = Math.min(6, (actor.relicThunder ?? 0) + 1);
       break;
     case 'relic_frost':
-      actor.relicFrost = Math.min(3, (actor.relicFrost ?? 0) + 1);
+      actor.relicFrost = Math.min(6, (actor.relicFrost ?? 0) + 1);
       break;
     case 'relic_shield':
-      actor.relicShield = Math.min(3, (actor.relicShield ?? 0) + 1);
+      actor.relicShield = Math.min(6, (actor.relicShield ?? 0) + 1);
       actor.shieldHp = 1; // 习得即刻获得一层护盾
       break;
     case 'relic_blackhole':
-      actor.relicBlackhole = Math.min(3, (actor.relicBlackhole ?? 0) + 1);
+      actor.relicBlackhole = Math.min(6, (actor.relicBlackhole ?? 0) + 1);
       break;
     case 'relic_drain':
-      actor.relicDrain = Math.min(3, (actor.relicDrain ?? 0) + 1);
+      actor.relicDrain = Math.min(6, (actor.relicDrain ?? 0) + 1);
       break;
     case 'relic_spikes':
-      actor.relicSpikes = Math.min(3, (actor.relicSpikes ?? 0) + 1);
+      actor.relicSpikes = Math.min(6, (actor.relicSpikes ?? 0) + 1);
       break;
     case 'relic_chain':
-      actor.relicChain = Math.min(3, (actor.relicChain ?? 0) + 1);
+      actor.relicChain = Math.min(6, (actor.relicChain ?? 0) + 1);
       break;
     case 'relic_orb':
-      actor.relicOrb = Math.min(3, (actor.relicOrb ?? 0) + 1);
+      actor.relicOrb = Math.min(6, (actor.relicOrb ?? 0) + 1);
       break;
     case 'relic_fire_ring':
-      actor.relicFireRing = Math.min(3, (actor.relicFireRing ?? 0) + 1);
+      actor.relicFireRing = Math.min(6, (actor.relicFireRing ?? 0) + 1);
       break;
     case 'relic_mirror':
-      actor.relicMirror = Math.min(3, (actor.relicMirror ?? 0) + 1);
+      actor.relicMirror = Math.min(6, (actor.relicMirror ?? 0) + 1);
       break;
     case 'relic_might':
-      actor.relicMight = Math.min(3, (actor.relicMight ?? 0) + 1);
+      actor.relicMight = Math.min(6, (actor.relicMight ?? 0) + 1);
       break;
     case 'relic_vitality': {
       const prevLvl = actor.relicVitality ?? 0;
-      const nextLvl = Math.min(3, prevLvl + 1);
+      const nextLvl = Math.min(6, prevLvl + 1);
       actor.relicVitality = nextLvl;
-      const hpBonusTable = [0, 60, 120, 200];
+      const hpBonusTable = [0, 60, 120, 200, 300, 420, 560];
       const diffHp = hpBonusTable[nextLvl]! - hpBonusTable[prevLvl]!;
       if (diffHp > 0) {
         actor.maxHp += diffHp;
@@ -1846,7 +1887,7 @@ export function applyUpgrade(actor: ActorState, upgrade: UpgradeOption): void {
       break;
     }
     case 'relic_haste':
-      actor.relicHaste = Math.min(3, (actor.relicHaste ?? 0) + 1);
+      actor.relicHaste = Math.min(6, (actor.relicHaste ?? 0) + 1);
       break;
     case 'relic_heal_full':
       actor.hp = actor.maxHp;
@@ -1854,7 +1895,7 @@ export function applyUpgrade(actor: ActorState, upgrade: UpgradeOption): void {
       break;
     case 'weapon_bomb':
       // 兼容旧存档，将 bomb 平滑转为激光宝物
-      actor.relicLaser = Math.min(3, actor.relicLaser + 1);
+      actor.relicLaser = Math.min(6, actor.relicLaser + 1);
       break;
     case 'stat_damage':
       actor.statDamageBonus += 0.15;
@@ -1950,8 +1991,8 @@ export function calculateAttackDamage(
   // 强化类宝物【修罗战魂】：提升全伤害比例（LV.1 +25%, LV.2 +50%, LV.3 +80%）
   let bonusDamage = attacker.statDamageBonus;
   if ((attacker.relicMight ?? 0) > 0) {
-    const mightTable = [0, 0.25, 0.50, 0.80];
-    bonusDamage += mightTable[attacker.relicMight]!;
+    const mightTable = [0, 0.25, 0.50, 0.80, 1.15, 1.55, 2.00];
+    bonusDamage += mightTable[Math.min(6, attacker.relicMight)]!;
   }
 
   // 唯一伤害出口：个人状态乘区 → 单局死亡增伤乘区（只乘一次）
@@ -1990,6 +2031,7 @@ export function resolveHostileHit(
   );
   if (hit.isCrit) {
     pulse(sim, '⚡暴击!', target.x, target.y - 0.5, '#ff4757');
+    recordDamageHit(sim, target.x, target.y, hit.damage, 'crit', target.isPlayer ? 'player' : 'enemy');
   }
 
   // 敌队宝箱先承伤（R02）
@@ -2026,6 +2068,7 @@ export function damageActor(sim: SimulationState, target: ActorState, amount: nu
     target.shieldTimer = Math.max(3.0, (10.0 - target.relicShield * 2.0) / (target.relicAffix === 'shieldCooldown' ? 1.4 : 1.0) / effAtkSpd);
     burst(sim, target.x, target.y, '#ffd700', 12);
     pulse(sim, '🛡️ 玄甲格挡！', target.x, target.y, '#ffd700');
+    recordDamageHit(sim, target.x, target.y, 0, 'shield', target.isPlayer ? 'player' : 'enemy');
     if (from) {
       const pushAng = Math.atan2(from.y - target.y, from.x - target.x);
       from.x += Math.cos(pushAng) * 1.5;
@@ -2042,6 +2085,7 @@ export function damageActor(sim: SimulationState, target: ActorState, amount: nu
   }
   target.hp -= finalAmount;
   target.hitFlash = 0.2;
+  recordDamageHit(sim, target.x, target.y, finalAmount, 'damage', target.isPlayer ? 'player' : 'enemy');
 
   // 宝物·噬血魔翼：攻击者命中回复生命值
   if (from && from.alive && (from.relicDrain ?? 0) > 0) {
@@ -2050,6 +2094,7 @@ export function damageActor(sim: SimulationState, target: ActorState, amount: nu
     if (healVal > 0) {
       from.hp += healVal;
       burst(sim, from.x, from.y, '#65d5b0', 4);
+      recordDamageHit(sim, from.x, from.y, healVal, 'heal', from.isPlayer ? 'player' : 'enemy');
     }
   }
 
@@ -2079,6 +2124,7 @@ export function damageMonster(sim: SimulationState, monster: MonsterState, amoun
     if (reward > 0) awardTreasure(sim, from, reward);
   }
   monster.hp -= amount;
+  recordDamageHit(sim, monster.x, monster.y, amount, 'damage', monster.kind === 'boss' ? 'boss' : 'monster');
 
   // 宝物·噬血魔翼：攻击怪物造成伤害同样享受生命吸血
   if (from && from.alive && (from.relicDrain ?? 0) > 0) {
@@ -2087,6 +2133,7 @@ export function damageMonster(sim: SimulationState, monster: MonsterState, amoun
     if (healVal > 0) {
       from.hp += healVal;
       burst(sim, from.x, from.y, '#65d5b0', 3);
+      recordDamageHit(sim, from.x, from.y, healVal, 'heal', from.isPlayer ? 'player' : 'enemy');
     }
   }
 
@@ -2199,7 +2246,7 @@ export function steerAroundCover(sim: SimulationState, actor: Vec2 & { id: numbe
 
 /** 获取角色的有效攻击速度增益（包含强化类宝物【疾风灵羽】加成） */
 export function getActorAttackSpeedBonus(actor: ActorState): number {
-  const hasteBonus = (actor.relicHaste ?? 0) > 0 ? [0, 0.20, 0.40, 0.60][actor.relicHaste]! : 0;
+  const hasteBonus = (actor.relicHaste ?? 0) > 0 ? [0, 0.20, 0.35, 0.50, 0.60, 0.70, 0.80][Math.min(6, actor.relicHaste)]! : 0;
   return actor.statAttackSpeedBonus + hasteBonus;
 }
 
@@ -3592,7 +3639,7 @@ export function stepSimulation(
       }
     }
     const isSlowed = a.slow > 0;
-    const hasteSpeedBonus = (a.relicHaste ?? 0) > 0 ? [0, 0.15, 0.25, 0.35][a.relicHaste]! : 0;
+    const hasteSpeedBonus = (a.relicHaste ?? 0) > 0 ? [0, 0.15, 0.25, 0.35, 0.45, 0.55, 0.65][Math.min(6, a.relicHaste)]! : 0;
     const sp =
       calculateEffectiveMoveSpeed(
         6.98,
@@ -3628,13 +3675,15 @@ export function stepSimulation(
       if (isOutOfCombat) {
         // 基础未受击自然回血 3.0 HP/秒
         regenRate = 3.0;
-        // 宝物等级加成：LV.1 +3, LV.2 +6, LV.3 +10 HP/秒
+        // 宝物等级加成：LV.1 +3, LV.2 +5, LV.3 +8, LV.4 +11, LV.5 +15, LV.6 +20 HP/秒
         if (a.relicHeal > 0) {
-          regenRate += a.relicHeal === 1 ? 3.0 : a.relicHeal === 2 ? 6.0 : 10.0;
+          const healBonusTable = [0, 3.0, 5.0, 8.0, 11.0, 15.0, 20.0];
+          regenRate += healBonusTable[Math.min(6, a.relicHeal)] ?? 3.0;
         }
       } else if (a.relicHeal >= 3) {
-        // LV.3 生命之泉：即使受到攻击，也拥有 3.0 HP/秒的不间断恒定自愈
-        regenRate = 3.0;
+        // LV.3+ 生命之泉：即使受到攻击，也拥有不间断恒定战时自愈能力
+        const combatRegenTable = [0, 0, 0, 3.0, 6.0, 10.0, 15.0];
+        regenRate = combatRegenTable[Math.min(6, a.relicHeal)] ?? 3.0;
       }
       if (a.relicAffix === 'healPower') {
         regenRate *= 1.35;
