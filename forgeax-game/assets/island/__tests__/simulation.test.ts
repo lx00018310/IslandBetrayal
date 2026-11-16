@@ -718,6 +718,28 @@ describe('荒岛分赃核心规则、肉鸽升级与战斗系统测试', () => {
     applyUpgrade(actor, knifeOpt);
     expect(actor.weaponKnife).toBe(6);
 
+    // 三选一为随机抽样，先将其余宝物全部顶到满级，使 weapon_knife 成为唯一候选，
+    // 避免随机洗牌漏抽导致断言偶发失败（产品逻辑：未满 6 级即会生成升级项）。
+    Object.assign(actor, {
+      weaponArrow: 6,
+      relicLaser: 6,
+      relicCyclone: 6,
+      relicBoomerang: 6,
+      relicHammer: 6,
+      relicSmoke: 6,
+      relicHeal: 6,
+      relicThunder: 6,
+      relicFrost: 6,
+      relicShield: 6,
+      relicBlackhole: 6,
+      relicDrain: 6,
+      relicSpikes: 6,
+      relicChain: 6,
+      relicOrb: 6,
+      relicFireRing: 6,
+      relicMirror: 6,
+    });
+    // might / vitality / haste 已在上方经 grantRelicToActor 升至 6 级
     actor.weaponKnife = 5;
     const choices = generateUpgradeChoices(actor);
     const knifeChoice = choices.find((c) => c.id === 'weapon_knife');

@@ -587,6 +587,9 @@ export const islandPlugin: Plugin = {
           return {
             elapsed: Number(sim.elapsed.toFixed(2)),
             progress: Number((sim.elapsed / MATCH_SECONDS).toFixed(3)),
+            // 地图中心与尺寸：供验收脚本按当前地图尺度走位，避免扩容后写死中心坐标。
+            center: (GRID_SIZE - 1) / 2,
+            mapSize: GRID_SIZE,
             phase: sim.finalPhase ? 'final' : sim.shrink > 0 ? 'shrink' : 'normal',
             shrink: Number(sim.shrink.toFixed(3)),
             landRadius: Number(currentSafeRadius(sim).toFixed(3)),

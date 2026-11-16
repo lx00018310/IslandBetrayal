@@ -1112,7 +1112,8 @@
 /* 战场雷达小地图面板 */
 .mini-map-panel {
   position: absolute;
-  top: 96px;
+  /* 与右上角玩家卡片（top:96px）垂直错开，避免雷达标题压住血量/状态文本 */
+  top: 200px;
   right: 12px;
   background: rgba(15, 23, 42, 0.90);
   border: 2px solid #334155;
@@ -1245,7 +1246,7 @@
   .mini-map-panel {
     transform: scale(0.8);
     transform-origin: top right;
-    top: 76px;
+    top: 172px;
     right: 6px;
   }
 }

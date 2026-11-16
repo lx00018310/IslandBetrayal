@@ -990,6 +990,9 @@ export function createInitialSimulation(options?: {
       relicOrb: 0,
       relicFireRing: 0,
       relicMirror: 0,
+      relicMight: 0,
+      relicVitality: 0,
+      relicHaste: 0,
       weaponBomb: 0,
       lastHitTimer: 0,
       statDamageBonus: 0,
@@ -2225,7 +2228,8 @@ export function awardTreasure(sim: SimulationState, actor: ActorState, amount: n
 function nearestSafeGround(sim: SimulationState, point: Vec2): Vec2 {
   const safe = sim.tiles.filter(t => t.isLand && !t.gone && t.r <= currentSafeRadius(sim) - 0.02 && !isInsideCover(sim, t.gx, t.gy))
     .sort((a, b) => Math.hypot(a.gx - point.x, a.gy - point.y) - Math.hypot(b.gx - point.x, b.gy - point.y))[0];
-  return safe ? { x: safe.gx, y: safe.gy } : { x: 11, y: 11 };
+  const center = (GRID_SIZE - 1) / 2;
+  return safe ? { x: safe.gx, y: safe.gy } : { x: center, y: center };
 }
 
 export function steerAroundCover(sim: SimulationState, actor: Vec2 & { id: number }, target: Vec2): Vec2 {
