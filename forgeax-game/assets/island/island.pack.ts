@@ -843,6 +843,10 @@ export const islandPlugin: Plugin = {
           name: 'island-simulation-step',
           queries: [],
           fn: () => {
+            // 平台 lifecycle pause：暂停时冻结整条对局循环（模拟/动画/输入都不推进）。
+            // 该标志由 assets/runtime/zaohua-platform-init.js 注册的 lifecycle adapter 写入。
+            if ((globalThis as any).__zaohuaGamePaused) return;
+
             const snap = world.getResource<InputSnapshot>(INPUT_SNAPSHOT_RESOURCE_KEY);
             if (!matchReady && snap) {
               // 输入已就绪但 UI 尚未交接存档：先以默认状态开局，但**不落盘**，
@@ -850,6 +854,8 @@ export const islandPlugin: Plugin = {
               matchReady = true;
               restartSimulation(sim);
               presentation.reset(sim);
+              // 平台加载上报：对局真正可玩时通知宿主（game.loaded 由 init 脚本轮询此标志触发）。
+              (globalThis as any).__zaohuaGameReady = true;
             }
 
             const dt = world.getResource(Time).delta;

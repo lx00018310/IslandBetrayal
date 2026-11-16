@@ -1,0 +1,313 @@
+<!doctype html>
+<!-- landing-diversity:
+  archetype: L3
+  title.placement: overlaid-top-left
+  slice.anchor: edge-to-edge
+  slice.motion_axis: radial
+  bg.id: BG-linear-vertical
+  hud.zones: TR, bottom-strip
+  hook.combo: H-A+H-F
+-->
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+<meta name="apple-mobile-web-app-capable" content="yes" />
+<meta name="theme-color" content="#8fb6c9" />
+<title>荒岛分赃</title>
+<style>
+  :root {
+    --safe-top: env(safe-area-inset-top, 0px);
+    --safe-right: env(safe-area-inset-right, 0px);
+    --safe-bottom: env(safe-area-inset-bottom, 0px);
+    --safe-left: env(safe-area-inset-left, 0px);
+    --host-top: max(92px, var(--safe-top));
+    --host-bottom: max(128px, var(--safe-bottom));
+    --mint: #65d5b0;
+    --mint-deep: #064e3b;
+    --gold: #ffd700;
+    --gold-soft: #ffe6a8;
+    --danger: #ef4444;
+    --sky-a: #9fc4d8;
+    --sky-b: #8fb6c9;
+    --void: #0f172a;
+    --ink: #eaf6f1;
+  }
+  * { box-sizing: border-box; }
+  html, body {
+    width: 100%; height: 100dvh; margin: 0; padding: 0;
+    overflow: hidden; overscroll-behavior: none; touch-action: manipulation;
+    background: var(--sky-b);
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+    -webkit-font-smoothing: antialiased;
+  }
+  #cover {
+    position: fixed; inset: 0; overflow: hidden;
+    background: linear-gradient(180deg, var(--sky-a) 0%, var(--sky-b) 46%, #3f6d84 78%, var(--void) 100%);
+  }
+  /* 远处漂浮云块 */
+  .cloud { position: absolute; background: #ffffff22; border-radius: 8px; filter: blur(1px); }
+  /* 场景舞台 */
+  #stage { position: absolute; inset: 0; }
+  svg { position: absolute; inset: 0; width: 100%; height: 100%; }
+  .paused #stage *, .paused .float, .paused .fx { animation-play-state: paused !important; }
+
+  /* 标题区（避开宿主顶部 UI） */
+  #title-wrap {
+    position: absolute; top: var(--host-top); left: max(16px, var(--safe-left));
+    z-index: 5; max-width: 62%;
+  }
+  #title {
+    margin: 0; color: var(--ink);
+    font-size: clamp(24px, 8vw, 40px); font-weight: 800; letter-spacing: .04em;
+    text-shadow: 0 3px 0 var(--mint-deep), 0 6px 18px #0f172a88;
+  }
+  #hook {
+    margin: 8px 0 0; color: var(--gold-soft);
+    font-size: clamp(12px, 3.6vw, 17px); font-weight: 700; letter-spacing: .08em;
+    text-shadow: 0 2px 6px #0f172a99;
+  }
+
+  /* 右上 HUD */
+  #hud-tr {
+    position: absolute; top: var(--host-top); right: max(12px, var(--safe-right));
+    z-index: 5; display: grid; gap: 6px; justify-items: end;
+  }
+  .pill {
+    background: #0f172acc; border: 1px solid #65d5b055; border-radius: 999px;
+    color: var(--ink); font-size: clamp(11px, 3vw, 14px); font-weight: 700;
+    padding: 5px 12px; display: flex; align-items: center; gap: 6px;
+    box-shadow: 0 2px 10px #0f172a66;
+  }
+  .dot { width: 8px; height: 8px; border-radius: 50%; display: inline-block; }
+  .dot.alive { background: var(--mint); box-shadow: 0 0 8px var(--mint); }
+  .dot.out { background: var(--danger); }
+
+  /* 底部数据条（避开宿主底部 UI） */
+  #hud-bottom {
+    position: absolute; left: max(12px, var(--safe-left));
+    right: max(12px, var(--safe-right)); bottom: var(--host-bottom);
+    z-index: 5; display: flex; gap: 8px; justify-content: space-between;
+  }
+  .stat {
+    flex: 1; background: #0f172ad9; border: 1px solid #ffffff1f; border-radius: 12px;
+    padding: 8px 4px; text-align: center; color: var(--ink);
+  }
+  .stat b { display: block; font-size: clamp(16px, 5vw, 24px); color: var(--gold); line-height: 1.1; }
+  .stat span { font-size: clamp(9px, 2.6vw, 12px); opacity: .75; letter-spacing: .05em; }
+
+  /* 飘字反馈 */
+  .fx { animation: floatUp 2.6s ease-out infinite; }
+  .fx.delay { animation-delay: 1.3s; }
+  @keyframes floatUp {
+    0% { opacity: 0; transform: translateY(0) scale(.8); }
+    18% { opacity: 1; transform: translateY(-6px) scale(1.05); }
+    70% { opacity: 1; }
+    100% { opacity: 0; transform: translateY(-30px) scale(1); }
+  }
+  .float { animation: bob 3s ease-in-out infinite; }
+  @keyframes bob { 0%,100% { transform: translateY(0); } 50% { transform: translateY(-5px); } }
+
+  /* 宝箱晶光 */
+  .sparkle { animation: twinkle 1.8s ease-in-out infinite; }
+  .sparkle.s2 { animation-delay: .6s; }
+  .sparkle.s3 { animation-delay: 1.2s; }
+  @keyframes twinkle { 0%,100% { opacity: .25; transform: scale(.7); } 50% { opacity: 1; transform: scale(1.15); } }
+
+  /* 预警连线脉冲 */
+  .warnline { animation: warnPulse 1.6s ease-in-out infinite; }
+  @keyframes warnPulse { 0%,100% { opacity: .35; } 50% { opacity: 1; } }
+  .alliance { animation: allyFlow 2.2s linear infinite; }
+  @keyframes allyFlow { to { stroke-dashoffset: -40; } }
+
+  /* 崩塌地块 */
+  .crumb1 { animation: crumb 3.4s ease-in infinite; }
+  .crumb2 { animation: crumb 3.4s ease-in 1.2s infinite; }
+  .crumb3 { animation: crumb 3.4s ease-in 2.2s infinite; }
+  @keyframes crumb {
+    0% { opacity: 0; transform: translate(0,0) rotate(0); }
+    10% { opacity: 1; }
+    100% { opacity: 0; transform: translate(14px, 60px) rotate(50deg); }
+  }
+
+  /* 结盟连线扫过 */
+  .tether { animation: tetherPulse 2.8s ease-in-out infinite; }
+  @keyframes tetherPulse { 0%,100% { opacity: .5; } 50% { opacity: 1; } }
+
+  @media (max-height: 600px) {
+    #hook { display: none; }
+    #title { font-size: clamp(20px, 7vw, 30px); }
+    .stat { padding: 5px 3px; }
+  }
+</style>
+</head>
+<body>
+<div id="cover" class="">
+  <div class="cloud" style="left:8%;top:22%;width:64px;height:18px"></div>
+  <div class="cloud" style="left:70%;top:16%;width:90px;height:20px"></div>
+  <div class="cloud" style="left:48%;top:30%;width:48px;height:14px"></div>
+
+  <div id="title-wrap">
+    <h1 id="title">荒岛分赃</h1>
+    <p id="hook">结盟攒宝，断线爆箱</p>
+  </div>
+
+  <div id="hud-tr">
+    <div class="pill"><span class="dot alive"></span>存活 <span id="aliveN">5</span>/10</div>
+    <div class="pill"><span class="dot out"></span>淘汰 <span id="outN">4</span></div>
+    <div class="pill">缩圈 <span id="shrinkN">02:41</span></div>
+  </div>
+
+  <div id="stage">
+    <svg viewBox="0 0 390 700" preserveAspectRatio="xMidYMid slice" role="img" aria-label="体素荒岛上，一名幸存者靠近金色宝箱，青色结盟连线与红色背叛预警并存">
+      <defs>
+        <linearGradient id="islandTop" x1="0" y1="0" x2="0" y2="1">
+          <stop offset="0" stop-color="#7fe0bc"/><stop offset="1" stop-color="#3aa583"/>
+        </linearGradient>
+        <linearGradient id="islandSide" x1="0" y1="0" x2="0" y2="1">
+          <stop offset="0" stop-color="#6b4a2f"/><stop offset="1" stop-color="#3b2a1c"/>
+        </linearGradient>
+        <linearGradient id="chest" x1="0" y1="0" x2="0" y2="1">
+          <stop offset="0" stop-color="#ffe67a"/><stop offset="1" stop-color="#e0a800"/>
+        </linearGradient>
+      </defs>
+
+      <!-- 主岛：正交体素块 -->
+      <g class="float">
+        <polygon points="60,430 200,400 340,430 205,462" fill="url(#islandTop)"/>
+        <polygon points="60,430 205,462 205,486 60,452" fill="url(#islandSide)"/>
+        <polygon points="205,462 340,430 340,452 205,486" fill="#4a3322"/>
+        <!-- 草地条纹 -->
+        <polygon points="90,428 200,406 205,412 96,434" fill="#65d5b0" opacity=".7"/>
+        <polygon points="215,410 315,430 312,436 212,416" fill="#65d5b0" opacity=".5"/>
+      </g>
+
+      <!-- 崩塌碎块坠入虚空 -->
+      <g>
+        <rect class="crumb1" x="72" y="470" width="22" height="18" fill="#5a3f28"/>
+        <rect class="crumb2" x="320" y="466" width="18" height="16" fill="#6b4a2f"/>
+        <rect class="crumb3" x="250" y="478" width="16" height="14" fill="#4a3322"/>
+      </g>
+
+      <!-- 结盟青色连线（从主角连到远端队友） -->
+      <path class="alliance" d="M150 380 Q 235 330 322 300" fill="none" stroke="#65d5b0" stroke-width="4" stroke-dasharray="10 6" stroke-linecap="round"/>
+
+      <!-- 红色背叛预警线 -->
+      <path class="warnline" d="M150 380 L 300 418" fill="none" stroke="#ef4444" stroke-width="3" stroke-linecap="round"/>
+
+      <!-- 远端队友剪影 -->
+      <g transform="translate(322,300)" opacity=".85">
+        <rect x="-9" y="-26" width="18" height="18" fill="#1e293b"/>
+        <rect x="-11" y="-8" width="22" height="20" fill="#334155"/>
+        <rect x="-9" y="12" width="7" height="12" fill="#1e293b"/>
+        <rect x="2" y="12" width="7" height="12" fill="#1e293b"/>
+      </g>
+
+      <!-- 主角（绿发体素幸存者）：外层定位、内层动画，避免 CSS transform 覆盖 SVG 定位 -->
+      <g transform="translate(150,380)">
+        <g class="float">
+          <!-- 接触影 -->
+          <ellipse cx="0" cy="24" rx="22" ry="6" fill="#0f172a55"/>
+          <!-- 腿 -->
+          <rect x="-14" y="2" width="10" height="20" fill="#334155"/>
+          <rect x="4" y="2" width="10" height="20" fill="#334155"/>
+          <!-- 身体 -->
+          <rect x="-16" y="-20" width="32" height="26" fill="#6d28d9"/>
+          <!-- 手臂 + 剑 -->
+          <rect x="14" y="-14" width="16" height="8" fill="#fbbf24"/>
+          <rect x="28" y="-30" width="5" height="30" fill="#cbd5e1" transform="rotate(24 30 -15)"/>
+          <!-- 头 -->
+          <rect x="-13" y="-46" width="26" height="24" fill="#f1c40f"/>
+          <!-- 头发 -->
+          <rect x="-14" y="-50" width="28" height="9" fill="#10b981"/>
+          <!-- 眼睛 -->
+          <rect x="-8" y="-39" width="5" height="5" fill="#0f172a"/>
+          <rect x="3" y="-39" width="5" height="5" fill="#0f172a"/>
+        </g>
+      </g>
+
+      <!-- 金色宝箱堆（奖励爆点） -->
+      <g transform="translate(232,392)">
+        <g class="sparkle"><circle cx="-26" cy="-30" r="4" fill="#fff3b0"/></g>
+        <g class="sparkle s2"><circle cx="30" cy="-38" r="3" fill="#ffd700"/></g>
+        <g class="sparkle s3"><circle cx="6" cy="-52" r="3.5" fill="#fff3b0"/></g>
+        <rect x="-22" y="-14" width="34" height="26" rx="2" fill="url(#chest)" stroke="#b8860b" stroke-width="2"/>
+        <rect x="-22" y="-4" width="34" height="6" fill="#b8860b"/>
+        <rect x="-8" y="-14" width="6" height="26" fill="#fff0a8"/>
+        <rect x="-16" y="-26" width="22" height="14" rx="2" fill="url(#chest)" stroke="#b8860b" stroke-width="1.5"/>
+        <rect x="-16" y="-20" width="22" height="4" fill="#b8860b"/>
+      </g>
+
+      <!-- 伤害飘字反馈 -->
+      <g class="fx" fill="#ffffff" font-weight="800" font-size="20" style="paint-order:stroke;stroke:#0f172a;stroke-width:3">
+        <text x="196" y="316">-12</text>
+      </g>
+      <g class="fx delay" fill="#ffd700" font-weight="800" font-size="16" style="paint-order:stroke;stroke:#0f172a;stroke-width:3">
+        <text x="268" y="352">宝箱 +5</text>
+      </g>
+    </svg>
+  </div>
+
+  <div id="hud-bottom">
+    <div class="stat"><b>03</b><span>本局获得宝物</span></div>
+    <div class="stat"><b id="boxN">2</b><span>打爆宝箱</span></div>
+    <div class="stat"><b id="killN">1</b><span>淘汰人数</span></div>
+  </div>
+</div>
+
+<script>
+(function () {
+  var root = document.getElementById('cover');
+  var playing = false;
+  var raf = null;
+  var timer = null;
+  var t = 0;
+
+  // 确定性循环：只读数值变化，不使用随机。
+  function tick() {
+    if (!playing) return;
+    t += 0.05;
+    var alive = 5 - (Math.floor(t / 4) % 3);
+    var out = 10 - alive;
+    var secs = 161 - (Math.floor(t) % 60);
+    var mm = '02:' + (secs < 10 ? '0' : '') + secs;
+    document.getElementById('aliveN').textContent = String(alive);
+    document.getElementById('outN').textContent = String(out);
+    document.getElementById('shrinkN').textContent = mm;
+    document.getElementById('boxN').textContent = String(2 + (Math.floor(t / 5) % 3));
+    document.getElementById('killN').textContent = String(1 + (Math.floor(t / 7) % 2));
+  }
+
+  function setCoverPlaying(active) {
+    if (active === playing) return;
+    playing = active;
+    if (active) {
+      root.classList.remove('paused');
+      timer = setInterval(tick, 50);
+    } else {
+      root.classList.add('paused');
+      if (timer) { clearInterval(timer); timer = null; }
+      if (raf) { cancelAnimationFrame(raf); raf = null; }
+    }
+  }
+
+  // 可见性与交叉观察门控，隐藏时近乎零动画消耗。
+  document.addEventListener('visibilitychange', function () {
+    setCoverPlaying(!document.hidden && (lastRatio > 0));
+  });
+  window.addEventListener('pagehide', function () { setCoverPlaying(false); });
+
+  var lastRatio = 1;
+  if ('IntersectionObserver' in window) {
+    var io = new IntersectionObserver(function (entries) {
+      lastRatio = entries[0].intersectionRatio || 0;
+      setCoverPlaying(!document.hidden && lastRatio > 0);
+    }, { threshold: 0 });
+    io.observe(document.documentElement);
+  }
+
+  setCoverPlaying(!document.hidden);
+})();
+</script>
+</body>
+</html>
