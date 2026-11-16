@@ -32,6 +32,11 @@ import {
   stepWeapons,
   TEAM_BREAK_DISTANCE,
   TEAM_WARNING_DISTANCE,
+  getActorOwnedRelicKinds,
+  DAMAGE_RELIC_KINDS,
+  ENHANCE_RELIC_KINDS,
+  grantRelicToActor,
+  getActorAttackSpeedBonus,
 } from '../simulation.ts';
 
 describe('荒岛分赃核心规则、肉鸽升级与战斗系统测试', () => {
@@ -268,7 +273,7 @@ describe('荒岛分赃核心规则、肉鸽升级与战斗系统测试', () => {
     expect(sim.bossRound).toBe(1);
   });
 
-  it('第二场 Boss 击破或 35 秒超时立即全场解盟', () => {
+  it('第二场 Boss 击破或 35 秒超时进入终局，保留结盟但组队减伤失效，且仍可组队', () => {
     for (const success of [true, false]) {
       const sim = createInitialSimulation();
       sim.bossRound = 1;
@@ -281,8 +286,14 @@ describe('荒岛分赃核心规则、肉鸽升级与战斗系统测试', () => {
       if (success) finishBossRaid(sim, true);
       else stepBossRaid(sim, 35);
       expect(sim.finalPhase).toBe(true);
-      expect(a.team).toBe(-1);
-      expect(b.team).toBe(-1);
+      // 依最新设计：终局保留队伍关系，且组队减伤失效
+      expect(a.team).toBe(b.id);
+      expect(b.team).toBe(a.id);
+
+      // 验证终局阶段组队减伤失效（普通阶段组队受伤害减免 20%，终局不再减免）
+      const hpBefore = a.hp;
+      damageActor(sim, a, 10, null);
+      expect(a.hp).toBe(hpBefore - 10);
     }
   });
 
@@ -560,5 +571,113 @@ describe('荒岛分赃核心规则、肉鸽升级与战斗系统测试', () => {
     // 世界血量加成生效 100 * 1.2 = 120
     expect(p.maxHp).toBe(120);
     expect(p.hp).toBe(120);
+  });
+
+  it('普通模式新局开局随机获得一个宝物，无限模式开局获得除已有宝物之外的另一个宝物', () => {
+    // 1. 普通模式新局：随机获得 1 个宝物，且必须是伤害类宝物
+    const normalSim = createInitialSimulation({ grantRandomRelic: true });
+    for (const actor of normalSim.actors) {
+      const owned = getActorOwnedRelicKinds(actor);
+      expect(owned).toHaveLength(1);
+      expect(DAMAGE_RELIC_KINDS).toContain(owned[0]!);
+      expect(ENHANCE_RELIC_KINDS).not.toContain(owned[0]!);
+    }
+    expect(normalSim.floats.some((f) => f.text.includes('开局获得：'))).toBe(true);
+
+    // 2. 无限模式新局：继承已有宝物（例如 knife LV.2），额外获得除了 knife 之外的另一个伤害类宝物
+    const carryRelics = new Map();
+    carryRelics.set(0, { kind: 'knife', level: 2 });
+    carryRelics.set(1, { kind: 'frost', level: 3 });
+
+    const endlessSim = createInitialSimulation({
+      grantRandomRelic: true,
+      carryRelics,
+    });
+
+    const p0 = endlessSim.actors[0]!;
+    expect(p0.weaponKnife).toBe(2);
+    const p0Owned = getActorOwnedRelicKinds(p0);
+    expect(p0Owned).toHaveLength(2);
+    expect(p0Owned).toContain('knife');
+    const extraKindP0 = p0Owned.find((k) => k !== 'knife');
+    expect(extraKindP0).toBeDefined();
+    expect(DAMAGE_RELIC_KINDS).toContain(extraKindP0!);
+    expect(ENHANCE_RELIC_KINDS).not.toContain(extraKindP0!);
+
+    const p1 = endlessSim.actors[1]!;
+    expect(p1.relicFrost).toBe(3);
+    const p1Owned = getActorOwnedRelicKinds(p1);
+    expect(p1Owned).toHaveLength(2);
+    expect(p1Owned).toContain('frost');
+    const extraKindP1 = p1Owned.find((k) => k !== 'frost');
+    expect(extraKindP1).toBeDefined();
+    expect(DAMAGE_RELIC_KINDS).toContain(extraKindP1!);
+    expect(ENHANCE_RELIC_KINDS).not.toContain(extraKindP1!);
+  });
+
+  it('开局随机宝物严格限定为伤害类宝物，且多次抽取无强化类宝物渗漏', () => {
+    expect(DAMAGE_RELIC_KINDS).toHaveLength(15);
+    expect(ENHANCE_RELIC_KINDS).toHaveLength(6);
+
+    for (let round = 0; round < 30; round++) {
+      const sim = createInitialSimulation({ grantRandomRelic: true });
+      for (const actor of sim.actors) {
+        const owned = getActorOwnedRelicKinds(actor);
+        expect(owned).toHaveLength(1);
+        const relicKind = owned[0]!;
+        expect(DAMAGE_RELIC_KINDS.includes(relicKind as never)).toBe(true);
+        expect(ENHANCE_RELIC_KINDS.includes(relicKind as never)).toBe(false);
+      }
+    }
+  });
+
+  it('新增强化类宝物（修罗战魂 might、盘古圣体 vitality、疾风灵羽 haste）数值成长生效', () => {
+    const sim = createInitialSimulation();
+    const actor = sim.actors[0]!;
+
+    // 1. might: 修罗战魂增伤 (+25% / +50% / +80%，四舍五入为整数伤害)
+    const baseDmg = calculateAttackDamage(sim, actor);
+    grantRelicToActor(actor, 'might', 1);
+    expect(actor.relicMight).toBe(1);
+    const dmgLvl1 = calculateAttackDamage(sim, actor);
+    expect(dmgLvl1).toBe(Math.round(baseDmg * 1.25));
+
+    grantRelicToActor(actor, 'might', 2);
+    expect(actor.relicMight).toBe(2);
+    const dmgLvl2 = calculateAttackDamage(sim, actor);
+    expect(dmgLvl2).toBe(Math.round(baseDmg * 1.5));
+
+    grantRelicToActor(actor, 'might', 3);
+    expect(actor.relicMight).toBe(3);
+    const dmgLvl3 = calculateAttackDamage(sim, actor);
+    expect(dmgLvl3).toBe(Math.round(baseDmg * 1.8));
+
+    // 2. vitality: 盘古圣体 (+60 / +120 / +200 HP)
+    const baseMaxHp = actor.maxHp;
+    grantRelicToActor(actor, 'vitality', 1);
+    expect(actor.relicVitality).toBe(1);
+    expect(actor.maxHp).toBe(baseMaxHp + 60);
+    expect(actor.hp).toBe(actor.maxHp);
+
+    grantRelicToActor(actor, 'vitality', 2);
+    expect(actor.relicVitality).toBe(2);
+    expect(actor.maxHp).toBe(baseMaxHp + 120);
+
+    grantRelicToActor(actor, 'vitality', 3);
+    expect(actor.relicVitality).toBe(3);
+    expect(actor.maxHp).toBe(baseMaxHp + 200);
+
+    // 3. haste: 疾风灵羽 (攻速/出招冷却缩减 +20% / +40% / +60%)
+    grantRelicToActor(actor, 'haste', 1);
+    expect(actor.relicHaste).toBe(1);
+    expect(getActorAttackSpeedBonus(actor)).toBeCloseTo(0.20);
+
+    grantRelicToActor(actor, 'haste', 2);
+    expect(actor.relicHaste).toBe(2);
+    expect(getActorAttackSpeedBonus(actor)).toBeCloseTo(0.40);
+
+    grantRelicToActor(actor, 'haste', 3);
+    expect(actor.relicHaste).toBe(3);
+    expect(getActorAttackSpeedBonus(actor)).toBeCloseTo(0.60);
   });
 });

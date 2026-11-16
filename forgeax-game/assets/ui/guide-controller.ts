@@ -16,6 +16,341 @@ import {
 } from '../island/stats.ts';
 import { ENDLESS_SAVE_KEY } from '../island/endless-save.ts';
 
+export interface RelicCatalogLevel {
+  level: number;
+  desc: string;
+}
+
+export interface RelicCatalogEntry {
+  kind: string;
+  name: string;
+  icon: string;
+  category: 'attack' | 'defense' | 'control';
+  categoryName: string;
+  classification: 'damage' | 'enhance';
+  classificationName: '伤害类' | '强化类';
+  desc: string;
+  levels: [RelicCatalogLevel, RelicCatalogLevel, RelicCatalogLevel];
+}
+
+export const RELIC_CATALOG: readonly RelicCatalogEntry[] = [
+  {
+    kind: 'knife',
+    name: '宝物·旋转飞刃',
+    icon: '🗡️',
+    category: 'attack',
+    categoryName: '攻击',
+    classification: 'damage',
+    classificationName: '伤害类',
+    desc: '召唤灵能飞刀在身周高速旋转切割触碰的一切敌人',
+    levels: [
+      { level: 1, desc: '召唤 1 把旋转飞刀高速护身切割' },
+      { level: 2, desc: '飞刀数量增至 2 把，旋转范围扩大' },
+      { level: 3, desc: '飞刀数量增至 3 把，超速回旋绞杀' },
+    ],
+  },
+  {
+    kind: 'arrow',
+    name: '宝物·破晓神弩',
+    icon: '🏹',
+    category: 'attack',
+    categoryName: '攻击',
+    classification: 'damage',
+    classificationName: '伤害类',
+    desc: '周期性向最近敌对目标射出高能穿透箭',
+    levels: [
+      { level: 1, desc: '周期射出穿透箭，穿透 2 个目标' },
+      { level: 2, desc: '穿透 3 个目标，箭矢飞行速度提升' },
+      { level: 3, desc: '穿透 4 个目标，极速穿透附带高额重创' },
+    ],
+  },
+  {
+    kind: 'laser',
+    name: '宝物·星芒棱镜',
+    icon: '✨',
+    category: 'attack',
+    categoryName: '攻击',
+    classification: 'damage',
+    classificationName: '伤害类',
+    desc: '每隔数秒向八面八方散射瞬间贯穿的耀眼晶石激光束',
+    levels: [
+      { level: 1, desc: '散射 8 向瞬间贯穿晶石激光束' },
+      { level: 2, desc: '8 向强化激光，射程与贯穿伤害提升' },
+      { level: 3, desc: '进阶为 12 向高能激光，全方位毁灭清场' },
+    ],
+  },
+  {
+    kind: 'cyclone',
+    name: '宝物·风暴海螺',
+    icon: '🌀',
+    category: 'attack',
+    categoryName: '攻击',
+    classification: 'damage',
+    classificationName: '伤害类',
+    desc: '向前推进并螺旋向外扩散的暴风，持续撕裂目标',
+    levels: [
+      { level: 1, desc: '向前推进暴风，扩散半径 1.9m 撕裂沿途目标' },
+      { level: 2, desc: '暴风扩散半径增至 2.3m，撕裂持续时间延长' },
+      { level: 3, desc: '暴风扩散半径增至 2.7m，超大风暴持续牵引' },
+    ],
+  },
+  {
+    kind: 'boomerang',
+    name: '宝物·灵风骨刃',
+    icon: '🪃',
+    category: 'attack',
+    categoryName: '攻击',
+    classification: 'damage',
+    classificationName: '伤害类',
+    desc: '高速飞行的回旋镖，往返双程强力贯穿',
+    levels: [
+      { level: 1, desc: '掷出回旋镖，折返归位往返贯穿' },
+      { level: 2, desc: '回旋镖往返折返双段 +50% 增伤' },
+      { level: 3, desc: '回旋镖折返双段 +75% 增伤，飞行极速' },
+    ],
+  },
+  {
+    kind: 'hammer',
+    name: '宝物·巨灵战锤',
+    icon: '🔨',
+    category: 'attack',
+    categoryName: '攻击',
+    classification: 'damage',
+    classificationName: '伤害类',
+    desc: '朝正前方巨力重锤砸地，扇形粉碎冲击并强烈击退',
+    levels: [
+      { level: 1, desc: '正前方扇形粉碎冲击，造成强力击退' },
+      { level: 2, desc: '震波范围 +40%，击退力度与碎石伤害强化' },
+      { level: 3, desc: '震波范围 +60%，造成大幅震荡眩晕与击飞' },
+    ],
+  },
+  {
+    kind: 'smoke',
+    name: '宝物·遁影烟斗',
+    icon: '💨',
+    category: 'control',
+    categoryName: '控制',
+    classification: 'damage',
+    classificationName: '伤害类',
+    desc: '移动时在尾部喷射毒云迷雾，中毒并大幅减速',
+    levels: [
+      { level: 1, desc: '尾部喷射留存毒雾，敌踏入减速 40% 并中毒' },
+      { level: 2, desc: '毒雾留存 3.5s，减速提升至 45%，范围扩大' },
+      { level: 3, desc: '毒雾留存 4.5s，减速提升至 50%，毒伤翻倍' },
+    ],
+  },
+  {
+    kind: 'heal',
+    name: '宝物·生命宝珠',
+    icon: '❤️',
+    category: 'defense',
+    categoryName: '生存',
+    classification: 'enhance',
+    classificationName: '强化类',
+    desc: '自然回血加速，缩短冷静时间，觉醒战时持续自愈',
+    levels: [
+      { level: 1, desc: '脱战自然回血 +3 HP/s，冷静时间缩短' },
+      { level: 2, desc: '脱战回血 +6 HP/s，受击冷静时间进一步缩短' },
+      { level: 3, desc: '回血 +10 HP/s，觉醒战时持续自愈能力' },
+    ],
+  },
+  {
+    kind: 'thunder',
+    name: '宝物·鸣雷天珠',
+    icon: '⚡',
+    category: 'attack',
+    categoryName: '攻击',
+    classification: 'damage',
+    classificationName: '伤害类',
+    desc: '周期性引天雷轰顶劈击目标，高额落雷重创与麻痹',
+    levels: [
+      { level: 1, desc: '周期引天雷轰顶劈击目标，造成高额落雷' },
+      { level: 2, desc: '天雷落击后连锁弹射 +1 次，造成麻痹减速' },
+      { level: 3, desc: '天雷连锁弹射 +2 次，多重落雷连环轰击' },
+    ],
+  },
+  {
+    kind: 'frost',
+    name: '宝物·冰魄雪莲',
+    icon: '❄️',
+    category: 'control',
+    categoryName: '控制',
+    classification: 'damage',
+    classificationName: '伤害类',
+    desc: '脚下爆发极寒冰环霜气，冻结减速周围全部敌对目标',
+    levels: [
+      { level: 1, desc: '周期脚下爆发极寒冰环，减速 40%' },
+      { level: 2, desc: '冰环范围 +25%，减速效果提升至 50%' },
+      { level: 3, desc: '冰环范围 +50%，霜冻霜爆并造成高额冻结' },
+    ],
+  },
+  {
+    kind: 'shield',
+    name: '宝物·金刚玄甲',
+    icon: '🛡️',
+    category: 'defense',
+    categoryName: '生存',
+    classification: 'enhance',
+    classificationName: '强化类',
+    desc: '金刚护盾抵挡受到的直接伤害并震退敌人',
+    levels: [
+      { level: 1, desc: '抵挡 1 次直接伤害并震退敌人，冷却 8 秒' },
+      { level: 2, desc: '护盾充能加速，抵挡冷却缩短至 6 秒' },
+      { level: 3, desc: '护盾充能加速，抵挡冷却缩短至 4 秒' },
+    ],
+  },
+  {
+    kind: 'blackhole',
+    name: '宝物·暗质奇点',
+    icon: '🕳️',
+    category: 'control',
+    categoryName: '控制',
+    classification: 'damage',
+    classificationName: '伤害类',
+    desc: '打出微型引力黑洞，强力吸附沿途怪物与敌对目标',
+    levels: [
+      { level: 1, desc: '打出微型黑洞，持续吸附沿途全部目标' },
+      { level: 2, desc: '黑洞吸附范围 +40%，引力牵引拉扯力加强' },
+      { level: 3, desc: '黑洞吸附范围 +60%，终末引力坍缩撕裂重创' },
+    ],
+  },
+  {
+    kind: 'drain',
+    name: '宝物·噬血魔翼',
+    icon: '🩸',
+    category: 'defense',
+    categoryName: '生存',
+    classification: 'enhance',
+    classificationName: '强化类',
+    desc: '所有攻击与宝物伤害按比例转化为生命值吸血回复',
+    levels: [
+      { level: 1, desc: '造成伤害的 25% 转化为自身生命吸血' },
+      { level: 2, desc: '吸血转化比例提升至 35%' },
+      { level: 3, desc: '吸血转化比例提升至 45%，持久续航' },
+    ],
+  },
+  {
+    kind: 'spikes',
+    name: '宝物·荆棘地刺',
+    icon: '🌵',
+    category: 'control',
+    categoryName: '控制',
+    classification: 'damage',
+    classificationName: '伤害类',
+    desc: '身后布设尖锐地刺陷阱，践踏陷阱受到流血穿刺',
+    levels: [
+      { level: 1, desc: '身后布设地刺陷阱留存 3s，造成穿刺流血' },
+      { level: 2, desc: '地刺留存延长至 4s，流血伤害提升 30%' },
+      { level: 3, desc: '地刺留存延长至 5s，范围扩大附带残废重伤' },
+    ],
+  },
+  {
+    kind: 'chain',
+    name: '宝物·乾坤缚索',
+    icon: '⛓️',
+    category: 'control',
+    categoryName: '控制',
+    classification: 'damage',
+    classificationName: '伤害类',
+    desc: '伸出灵索拘捕抓取最近目标拖拽至眼前并眩晕',
+    levels: [
+      { level: 1, desc: '伸出灵索抓取最近敌对目标拖至眼前并眩晕' },
+      { level: 2, desc: '缚索抓取距离与速度提升，附带破甲重创' },
+      { level: 3, desc: '抓取范围进一步扩大，施加更长眩晕与重击' },
+    ],
+  },
+  {
+    kind: 'orb',
+    name: '宝物·浮游灵球',
+    icon: '🔮',
+    category: 'attack',
+    categoryName: '攻击',
+    classification: 'damage',
+    classificationName: '伤害类',
+    desc: '法球自动盘旋伴飞，自动连发高频追踪灵弹打击敌人',
+    levels: [
+      { level: 1, desc: '召唤 1 颗浮游法球，自动发射追踪灵弹' },
+      { level: 2, desc: '浮游法球增至 2 颗，连发追踪弹幕频率加快' },
+      { level: 3, desc: '浮游法球增至 3 颗，全自动高频追踪灵能弹幕' },
+    ],
+  },
+  {
+    kind: 'fire_ring',
+    name: '宝物·赤炎火环',
+    icon: '🔥',
+    category: 'attack',
+    categoryName: '攻击',
+    classification: 'damage',
+    classificationName: '伤害类',
+    desc: '周期向外扩散灼热火环，穿透击退并点燃焚烧敌人',
+    levels: [
+      { level: 1, desc: '周期扩散 1 道火环，穿透击退并点燃触碰敌人' },
+      { level: 2, desc: '火环扩散速度与范围提升，灼烧伤害加剧' },
+      { level: 3, desc: '火环连续扩散 2 重烈焰，火浪重叠爆破' },
+    ],
+  },
+  {
+    kind: 'mirror',
+    name: '宝物·幻影神镜',
+    icon: '🪞',
+    category: 'attack',
+    categoryName: '攻击',
+    classification: 'damage',
+    classificationName: '伤害类',
+    desc: '召唤虚影分身协同作战，复制攻击动作造成额外协同伤害',
+    levels: [
+      { level: 1, desc: '召唤虚影分身协同攻击，继承 50% 战力' },
+      { level: 2, desc: '虚影分身继承 65% 战力，留存时间延长' },
+      { level: 3, desc: '虚影分身继承 80% 战力，分身协同爆发极强威力' },
+    ],
+  },
+  {
+    kind: 'might',
+    name: '宝物·修罗战魂',
+    icon: '🔥',
+    category: 'attack',
+    categoryName: '攻击',
+    classification: 'enhance',
+    classificationName: '强化类',
+    desc: '全伤直接提升，每级大幅提升普通攻击与武器绝技伤害',
+    levels: [
+      { level: 1, desc: '角色全伤害提高 25%' },
+      { level: 2, desc: '角色全伤害提高 50%' },
+      { level: 3, desc: '角色全伤害提高 80%，极意狂化' },
+    ],
+  },
+  {
+    kind: 'vitality',
+    name: '宝物·盘古圣体',
+    icon: '💚',
+    category: 'defense',
+    categoryName: '生存',
+    classification: 'enhance',
+    classificationName: '强化类',
+    desc: '强健生命体魄，永久大幅扩展最大生命上限并同额恢复',
+    levels: [
+      { level: 1, desc: '最大生命上限提升 60 点并同额恢复' },
+      { level: 2, desc: '最大生命上限累计提升 120 点并同额恢复' },
+      { level: 3, desc: '最大生命上限累计提升 200 点并同额恢复' },
+    ],
+  },
+  {
+    kind: 'haste',
+    name: '宝物·疾风灵羽',
+    icon: '🪶',
+    category: 'control',
+    categoryName: '机动',
+    classification: 'enhance',
+    classificationName: '强化类',
+    desc: '迅捷身法加持，提升移动速度并大幅缩短武器绝技与攻击冷却',
+    levels: [
+      { level: 1, desc: '移速 +15%，武器与普攻冷却缩减 20%' },
+      { level: 2, desc: '移速 +25%，武器与普攻冷却缩减 40%' },
+      { level: 3, desc: '移速 +35%，武器与普攻冷却缩减 60%' },
+    ],
+  },
+];
+
 export async function createGuideUi(
   asset: UiAsset,
   host: Pick<GameHost, 'uiRoot' | 'controlMode' | 'port' | 'presentationPort'>,
@@ -289,6 +624,106 @@ export async function createGuideUi(
     const worldBannerText = shadow?.querySelector<HTMLElement>('[data-ui-part="world-banner-text"]');
     const modeBadge = shadow?.querySelector<HTMLElement>('[data-ui-part="mode-badge"]');
 
+    // 宝物卡片图鉴元素
+    const btnRelicCatalog = shadow?.querySelector<HTMLButtonElement>('[data-ui-part="btn-relic-catalog"]');
+    const relicCollectedBadge = shadow?.querySelector<HTMLElement>('[data-ui-part="relic-collected-badge"]');
+    const relicCatalogModal = shadow?.querySelector<HTMLElement>('[data-ui-part="relic-catalog-modal"]');
+    const relicCatalogGrid = shadow?.querySelector<HTMLElement>('[data-ui-part="relic-catalog-grid"]');
+    const relicDialogCount = shadow?.querySelector<HTMLElement>('[data-ui-part="relic-dialog-count"]');
+    const relicTabOwned = shadow?.querySelector<HTMLElement>('[data-ui-part="relic-tab-owned"]');
+    const relicTabUnowned = shadow?.querySelector<HTMLElement>('[data-ui-part="relic-tab-unowned"]');
+    const btnCatalogClose = shadow?.querySelector<HTMLButtonElement>('[data-ui-part="btn-catalog-close"]');
+    const btnCatalogConfirm = shadow?.querySelector<HTMLButtonElement>('[data-ui-part="btn-catalog-confirm"]');
+
+    let currentRelicFilter: 'all' | 'damage' | 'enhance' | 'owned' | 'unowned' = 'all';
+    let isRelicCatalogOpen = false;
+    let latestPlayerRelicsMap: Record<string, number> = {};
+
+    const renderRelicCatalog = () => {
+      if (!relicCatalogGrid) return;
+      const totalCount = RELIC_CATALOG.length;
+      let ownedCount = 0;
+
+      for (const item of RELIC_CATALOG) {
+        if ((latestPlayerRelicsMap[item.kind] ?? 0) > 0) {
+          ownedCount++;
+        }
+      }
+
+      if (relicCollectedBadge) relicCollectedBadge.textContent = `${ownedCount}/${totalCount}`;
+      if (relicDialogCount) relicDialogCount.textContent = String(ownedCount);
+      if (relicTabOwned) relicTabOwned.textContent = String(ownedCount);
+      if (relicTabUnowned) relicTabUnowned.textContent = String(totalCount - ownedCount);
+
+      relicCatalogGrid.innerHTML = '';
+
+      for (const relic of RELIC_CATALOG) {
+        const currentLvl = latestPlayerRelicsMap[relic.kind] ?? 0;
+        const isOwned = currentLvl > 0;
+
+        if (currentRelicFilter === 'damage' && relic.classification !== 'damage') continue;
+        if (currentRelicFilter === 'enhance' && relic.classification !== 'enhance') continue;
+        if (currentRelicFilter === 'owned' && !isOwned) continue;
+        if (currentRelicFilter === 'unowned' && isOwned) continue;
+
+        const card = document.createElement('div');
+        card.className = `relic-catalog-card ${isOwned ? 'relic-card-unlocked' : 'relic-card-locked'}`;
+        card.setAttribute('data-relic-kind', relic.kind);
+
+        const badgeText = isOwned
+          ? currentLvl >= 3
+            ? 'LV.3 极境'
+            : `LV.${currentLvl}`
+          : '未收录';
+
+        card.innerHTML = `
+          <div class="card-top">
+            <div class="card-relic-icon">${relic.icon}</div>
+            <div class="card-info">
+              <div class="card-relic-name">${relic.name}</div>
+              <div class="card-tags-row">
+                <span class="card-relic-tag tag-class-${relic.classification}">${relic.classificationName}</span>
+                <span class="card-relic-tag tag-${relic.category}">${relic.categoryName}</span>
+              </div>
+            </div>
+            <span class="card-relic-level-badge">${badgeText}</span>
+          </div>
+          <div class="card-relic-desc">${relic.desc}</div>
+          <div class="relic-growth-list">
+            ${relic.levels
+              .map((lvl) => {
+                const isActive = isOwned && currentLvl === lvl.level;
+                const isPassed = isOwned && currentLvl > lvl.level;
+                const stateClass = isActive ? 'growth-active' : isPassed ? 'growth-passed' : '';
+                const stateBadge = isActive
+                  ? '<span class="growth-badge">● 当前生效</span>'
+                  : isPassed
+                    ? '<span class="growth-badge">✓ 已解锁</span>'
+                    : '<span class="growth-badge">未达成</span>';
+                return `
+                  <div class="growth-item ${stateClass}">
+                    <span class="growth-lvl">LV.${lvl.level}</span>
+                    <span class="growth-desc">${lvl.desc}</span>
+                    ${stateBadge}
+                  </div>
+                `;
+              })
+              .join('')}
+          </div>
+        `;
+        relicCatalogGrid.appendChild(card);
+      }
+    };
+
+    const toggleRelicCatalog = (force?: boolean) => {
+      if (!relicCatalogModal) return;
+      isRelicCatalogOpen = typeof force === 'boolean' ? force : !isRelicCatalogOpen;
+      relicCatalogModal.classList.toggle('hidden', !isRelicCatalogOpen);
+      if (isRelicCatalogOpen) {
+        renderRelicCatalog();
+      }
+    };
+
     // 模态按钮点击后主动失焦：否则按钮保留 DOM 焦点，之后按 Space 会同时触发
     // 游戏输入与该按钮的默认激活，一次按键连跳两级（结算 → 秘策 → 宝物）。
     // blur 可能不存在于测试桩，故按可选方法调用。
@@ -345,6 +780,60 @@ export async function createGuideUi(
         btnSwitchMode.addEventListener('click', () => {
           sendTouch({ kind: 'mode_select', mode: currentMode === 'endless' ? 'normal' : 'endless' });
         });
+      }
+
+      // 宝物图鉴交互监听
+      if (btnRelicCatalog) {
+        btnRelicCatalog.addEventListener('click', () => toggleRelicCatalog());
+        blurAfterClick(btnRelicCatalog);
+      }
+      if (btnCatalogClose) {
+        btnCatalogClose.addEventListener('click', () => toggleRelicCatalog(false));
+        blurAfterClick(btnCatalogClose);
+      }
+      if (btnCatalogConfirm) {
+        btnCatalogConfirm.addEventListener('click', () => toggleRelicCatalog(false));
+        blurAfterClick(btnCatalogConfirm);
+      }
+      if (relicCatalogModal) {
+        relicCatalogModal.addEventListener('click', (e) => {
+          if (e.target === relicCatalogModal) {
+            toggleRelicCatalog(false);
+          }
+        });
+      }
+
+      const catalogTabs = typeof shadow.querySelectorAll === 'function'
+        ? Array.from(shadow.querySelectorAll<HTMLButtonElement>('.catalog-tab'))
+        : [];
+      catalogTabs.forEach((tab) => {
+        tab.addEventListener('click', () => {
+          catalogTabs.forEach((t) => t.classList.remove('active'));
+          tab.classList.add('active');
+          const filter = tab.getAttribute('data-tab-filter');
+          if (
+            filter === 'all' ||
+            filter === 'damage' ||
+            filter === 'enhance' ||
+            filter === 'owned' ||
+            filter === 'unowned'
+          ) {
+            currentRelicFilter = filter;
+            renderRelicCatalog();
+          }
+        });
+      });
+
+      if (typeof window !== 'undefined') {
+        const onGlobalKey = (e: KeyboardEvent) => {
+          if (e.code === 'KeyB') {
+            toggleRelicCatalog();
+          } else if (e.code === 'Escape' && isRelicCatalogOpen) {
+            toggleRelicCatalog(false);
+          }
+        };
+        window.addEventListener('keydown', onGlobalKey);
+        releases.push(() => window.removeEventListener('keydown', onGlobalKey));
       }
     }
 
@@ -538,6 +1027,32 @@ export async function createGuideUi(
           playerXpTextElem.classList.add('gain-pulse-xp');
         }
         prevPlayerXp = xp;
+
+        // 宝物图鉴数据同步（兼容普通与无尽模式）
+        const incomingRelics =
+          (state.playerRelics as CarryRelic[] | undefined) ??
+          (state.endless as { ownedRelics?: CarryRelic[] } | undefined)?.ownedRelics ??
+          [];
+        const nextRelicsMap: Record<string, number> = {};
+        for (const r of incomingRelics) {
+          if (r && r.kind) nextRelicsMap[r.kind] = r.level;
+        }
+        latestPlayerRelicsMap = nextRelicsMap;
+
+        let catalogOwnedCount = 0;
+        for (const item of RELIC_CATALOG) {
+          if ((latestPlayerRelicsMap[item.kind] ?? 0) > 0) catalogOwnedCount++;
+        }
+        if (relicCollectedBadge) {
+          relicCollectedBadge.textContent = `${catalogOwnedCount}/${RELIC_CATALOG.length}`;
+        }
+        if (relicDialogCount) relicDialogCount.textContent = String(catalogOwnedCount);
+        if (relicTabOwned) relicTabOwned.textContent = String(catalogOwnedCount);
+        if (relicTabUnowned) relicTabUnowned.textContent = String(RELIC_CATALOG.length - catalogOwnedCount);
+
+        if (isRelicCatalogOpen) {
+          renderRelicCatalog();
+        }
 
         // 升级三选一面板弹窗同步
         const isUpgradePending = state.pendingUpgrade === true && !state.gameOver;

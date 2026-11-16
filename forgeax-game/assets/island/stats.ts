@@ -105,6 +105,9 @@ export type RelicKind =
   | 'orb'
   | 'fire_ring'
   | 'mirror'
+  | 'might'
+  | 'vitality'
+  | 'haste'
   | 'bomb';
 export type RelicAffix =
   | 'knifeArea'
@@ -125,6 +128,9 @@ export type RelicAffix =
   | 'orbCount'
   | 'fireRingBurn'
   | 'mirrorDuration'
+  | 'mightDamage'
+  | 'vitalityHp'
+  | 'hasteSpeed'
   | 'bombRadius';
 
 export interface CarryRelic {
@@ -492,5 +498,8 @@ export const RELIC_AFFIX_TEXT: Record<RelicAffix, string> = {
   orbCount: '灵球数量 +1',
   fireRingBurn: '灼烧持续 +40%',
   mirrorDuration: '幻象时长 +50%',
+  mightDamage: '伤害比例 +15%',
+  vitalityHp: '最大生命 +25',
+  hasteSpeed: '移动与出招 +15%',
   bombRadius: '爆炸范围 +15%',
 };

@@ -4,6 +4,7 @@ import { createRuntimePackPublication } from '@forgeax/engine/pack/runtime';
 import { uiAssetContribution } from '@forgeax/engine/ui';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { ui as uiPlugin } from '../ui.pack.ts';
+import { RELIC_CATALOG } from '../guide-controller.ts';
 
 const { elements, dispose, mountUi, label, toggle, signal, button, status, player, disposeVase, installPlayerControls, installVaseControls } = vi.hoisted(() => {
   const elements = new Map<string, unknown>();
@@ -25,7 +26,7 @@ const { elements, dispose, mountUi, label, toggle, signal, button, status, playe
       if (selector === '[data-ui-part="vase-controls"] button') return button;
       if (selector === '[data-ui-part="vase-status"]') return status;
       return null;
-    } } },
+    }, querySelectorAll: () => [] } },
   } })) };
 });
 vi.mock('../player-controls.ts', () => ({ installPlayerControls }));
@@ -252,5 +253,68 @@ describe('game-3d Host UI lifecycle', () => {
       expect(status.textContent).toBe('Vase generation is unavailable in this host.');
       await fiber.dispose();
     } finally { await ctx.fiber.dispose(); }
+  });
+
+  it('exposes complete 21 relics with 3 growth tiers and syncs collected progress', async () => {
+    expect(RELIC_CATALOG).toHaveLength(21);
+    const expectedDamageKinds = [
+      'knife', 'arrow', 'laser', 'cyclone', 'boomerang', 'hammer',
+      'smoke', 'thunder', 'frost', 'blackhole',
+      'spikes', 'chain', 'orb', 'fire_ring', 'mirror',
+    ];
+    const expectedEnhanceKinds = [
+      'heal', 'shield', 'drain', 'might', 'vitality', 'haste',
+    ];
+
+    expect(expectedDamageKinds).toHaveLength(15);
+    expect(expectedEnhanceKinds).toHaveLength(6);
+
+    for (const kind of expectedDamageKinds) {
+      const entry = RELIC_CATALOG.find((r) => r.kind === kind);
+      expect(entry).toBeDefined();
+      expect(entry!.classification).toBe('damage');
+      expect(entry!.classificationName).toBe('伤害类');
+      expect(entry!.name).toBeTruthy();
+      expect(entry!.icon).toBeTruthy();
+      expect(entry!.levels).toHaveLength(3);
+      expect(entry!.levels[0].level).toBe(1);
+      expect(entry!.levels[1].level).toBe(2);
+      expect(entry!.levels[2].level).toBe(3);
+    }
+
+    for (const kind of expectedEnhanceKinds) {
+      const entry = RELIC_CATALOG.find((r) => r.kind === kind);
+      expect(entry).toBeDefined();
+      expect(entry!.classification).toBe('enhance');
+      expect(entry!.classificationName).toBe('强化类');
+      expect(entry!.name).toBeTruthy();
+      expect(entry!.icon).toBeTruthy();
+      expect(entry!.levels).toHaveLength(3);
+      expect(entry!.levels[0].level).toBe(1);
+      expect(entry!.levels[1].level).toBe(2);
+      expect(entry!.levels[2].level).toBe(3);
+    }
+
+    const channel = new MessageChannel();
+    const { ctx } = hostFixture({ presentationPort: channel.port1 });
+    const collectedBadge = hudElement('relic-collected-badge');
+
+    const fiber = await ctx.plugin(uiPlugin, { guide: '019fb7ce-3600-7000-8000-000000000001' });
+    try {
+      channel.port2.postMessage({
+        channel: 'island/hud-state',
+        playerRelics: [
+          { kind: 'knife', level: 2 },
+          { kind: 'thunder', level: 1 },
+          { kind: 'mirror', level: 3 },
+        ],
+      });
+      await new Promise((r) => setTimeout(r, 30));
+
+      expect(collectedBadge.textContent).toBe('3/21');
+    } finally {
+      await fiber.dispose();
+      await ctx.fiber.dispose();
+    }
   });
 });

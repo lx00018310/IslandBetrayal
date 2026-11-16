@@ -23,6 +23,11 @@
   <div class="hud-col hud-stats-col">
     <div class="survivors-count" data-ui-part="survivors-count">存活 10/10</div>
     <div class="player-treasure" data-ui-part="player-treasure">◆ 0 · 爆箱 0</div>
+    <button type="button" class="btn-relic-catalog" data-ui-part="btn-relic-catalog" title="打开/关闭宝物图鉴 (快捷键 B)">
+      <span class="btn-relic-icon">📜</span>
+      <span class="btn-relic-text">宝物卡片</span>
+      <span class="relic-badge-count" data-ui-part="relic-collected-badge">0/21</span>
+    </button>
   </div>
 
   <div class="hud-col hud-speed-col">
@@ -181,6 +186,39 @@
       <!-- 动态填充 -->
     </div>
     <button type="button" class="btn-confirm-relic" data-ui-part="btn-confirm-relic">携带宝物出发 (Space)</button>
+  </div>
+</div>
+
+<!-- 宝物图鉴与卡片展示弹窗 -->
+<div class="relic-catalog-modal hidden" data-ui-part="relic-catalog-modal">
+  <div class="relic-catalog-dialog">
+    <div class="catalog-header">
+      <div class="catalog-header-titles">
+        <h2 class="catalog-title">📜 诸天宝物卡片图鉴</h2>
+        <span class="catalog-subtitle">收集进度：<strong class="catalog-highlight-count" data-ui-part="relic-dialog-count">0</strong> / 21 件宝物 · 按 B 或点击右上角关闭</span>
+      </div>
+      <div class="catalog-header-actions">
+        <div class="catalog-tabs">
+          <button type="button" class="catalog-tab active" data-tab-filter="all">全部 (21)</button>
+          <button type="button" class="catalog-tab" data-tab-filter="damage">⚔️ 伤害类 (15)</button>
+          <button type="button" class="catalog-tab" data-tab-filter="enhance">🛡️ 强化类 (6)</button>
+          <button type="button" class="catalog-tab" data-tab-filter="owned">已收录 (<span data-ui-part="relic-tab-owned">0</span>)</button>
+          <button type="button" class="catalog-tab" data-tab-filter="unowned">未收录 (<span data-ui-part="relic-tab-unowned">21</span>)</button>
+        </div>
+        <button type="button" class="btn-catalog-close" data-ui-part="btn-catalog-close" aria-label="关闭图鉴">✖</button>
+      </div>
+    </div>
+
+    <div class="catalog-body">
+      <div class="relic-cards-grid" data-ui-part="relic-catalog-grid">
+        <!-- 由 guide-controller.ts 动态挂载并刷新 21 种宝物卡片 -->
+      </div>
+    </div>
+
+    <div class="catalog-footer">
+      <span class="catalog-tip">💡 提示：彩色卡片为当前已拥有宝物，灰色为未收录；绿色/金色高亮项为当前生效等级效果</span>
+      <button type="button" class="btn-catalog-confirm" data-ui-part="btn-catalog-confirm">返回战场 (B / ESC)</button>
+    </div>
   </div>
 </div>
 

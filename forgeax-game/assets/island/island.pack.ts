@@ -124,7 +124,7 @@ export const islandPlugin: Plugin = {
       yield ctx.provide('gameScene', { root });
 
       // 初始化荒岛模拟与视觉呈现
-      const sim = createInitialSimulation();
+      const sim = createInitialSimulation({ grantRandomRelic: true });
       const presentation = setupPresentation(world, root, sim, host?.drawingBufferSize);
       yield () => presentation.dispose();
 
@@ -248,6 +248,7 @@ export const islandPlugin: Plugin = {
         const enemyScale = computeEnemyScale();
         restartSimulation(sim, { worldMultipliers, carryRelics, personalMultipliers, enemyScale,
           rules: allRules, grudges: new Map(Array.from(endlessProfiles, ([id, p]) => [id, p.grudge ?? createEmptyGrudgeRecord()])),
+          grantRandomRelic: true,
         });
         presentation.reset(sim);
         touchMoveX = 0;
@@ -266,20 +267,37 @@ export const islandPlugin: Plugin = {
         persistSave();
       };
 
+      const getActorOwnedRelics = (a: typeof sim.actors[0]): CarryRelic[] => {
+        if (!a) return [];
+        const list: CarryRelic[] = [];
+        if (a.weaponKnife > 0) list.push({ kind: 'knife', level: a.weaponKnife });
+        if (a.weaponArrow > 0) list.push({ kind: 'arrow', level: a.weaponArrow });
+        if (a.relicLaser > 0) list.push({ kind: 'laser', level: a.relicLaser });
+        if (a.relicCyclone > 0) list.push({ kind: 'cyclone', level: a.relicCyclone });
+        if (a.relicBoomerang > 0) list.push({ kind: 'boomerang', level: a.relicBoomerang });
+        if (a.relicHammer > 0) list.push({ kind: 'hammer', level: a.relicHammer });
+        if (a.relicSmoke > 0) list.push({ kind: 'smoke', level: a.relicSmoke });
+        if ((a.relicHeal ?? 0) > 0) list.push({ kind: 'heal', level: a.relicHeal! });
+        if ((a.relicThunder ?? 0) > 0) list.push({ kind: 'thunder', level: a.relicThunder! });
+        if ((a.relicFrost ?? 0) > 0) list.push({ kind: 'frost', level: a.relicFrost! });
+        if ((a.relicShield ?? 0) > 0) list.push({ kind: 'shield', level: a.relicShield! });
+        if ((a.relicBlackhole ?? 0) > 0) list.push({ kind: 'blackhole', level: a.relicBlackhole! });
+        if ((a.relicDrain ?? 0) > 0) list.push({ kind: 'drain', level: a.relicDrain! });
+        if ((a.relicSpikes ?? 0) > 0) list.push({ kind: 'spikes', level: a.relicSpikes! });
+        if ((a.relicChain ?? 0) > 0) list.push({ kind: 'chain', level: a.relicChain! });
+        if ((a.relicOrb ?? 0) > 0) list.push({ kind: 'orb', level: a.relicOrb! });
+        if ((a.relicFireRing ?? 0) > 0) list.push({ kind: 'fire_ring', level: a.relicFireRing! });
+        if ((a.relicMirror ?? 0) > 0) list.push({ kind: 'mirror', level: a.relicMirror! });
+        if ((a.relicMight ?? 0) > 0) list.push({ kind: 'might', level: a.relicMight! });
+        if ((a.relicVitality ?? 0) > 0) list.push({ kind: 'vitality', level: a.relicVitality! });
+        if ((a.relicHaste ?? 0) > 0) list.push({ kind: 'haste', level: a.relicHaste! });
+        if (a.weaponBomb > 0) list.push({ kind: 'bomb', level: a.weaponBomb });
+        return list;
+      };
+
       const getPlayerOwnedRelics = (): CarryRelic[] => {
         const p = sim.actors[0];
-        if (!p) return [];
-        const list: CarryRelic[] = [];
-        if (p.weaponKnife > 0) list.push({ kind: 'knife', level: p.weaponKnife });
-        if (p.weaponArrow > 0) list.push({ kind: 'arrow', level: p.weaponArrow });
-        if (p.relicLaser > 0) list.push({ kind: 'laser', level: p.relicLaser });
-        if (p.relicCyclone > 0) list.push({ kind: 'cyclone', level: p.relicCyclone });
-        if (p.relicBoomerang > 0) list.push({ kind: 'boomerang', level: p.relicBoomerang });
-        if (p.relicHammer > 0) list.push({ kind: 'hammer', level: p.relicHammer });
-        if (p.relicSmoke > 0) list.push({ kind: 'smoke', level: p.relicSmoke });
-        if (p.relicHeal > 0) list.push({ kind: 'heal', level: p.relicHeal });
-        if (p.weaponBomb > 0) list.push({ kind: 'bomb', level: p.weaponBomb });
-        return list;
+        return p ? getActorOwnedRelics(p) : [];
       };
 
       const aiDecideNextRound = (
@@ -287,33 +305,14 @@ export const islandPlugin: Plugin = {
         round: number,
       ): { rule: GlobalRule; relic: CarryRelic | null } => {
         const actor = sim.actors[actorId]!;
-        const owned: CarryRelic[] = [];
-        if (actor.weaponKnife > 0) owned.push({ kind: 'knife', level: actor.weaponKnife });
-        if (actor.weaponArrow > 0) owned.push({ kind: 'arrow', level: actor.weaponArrow });
-        if (actor.relicLaser > 0) owned.push({ kind: 'laser', level: actor.relicLaser });
-        if (actor.relicCyclone > 0) owned.push({ kind: 'cyclone', level: actor.relicCyclone });
-        if (actor.relicBoomerang > 0) owned.push({ kind: 'boomerang', level: actor.relicBoomerang });
-        if (actor.relicHammer > 0) owned.push({ kind: 'hammer', level: actor.relicHammer });
-        if (actor.relicSmoke > 0) owned.push({ kind: 'smoke', level: actor.relicSmoke });
-        if (actor.relicHeal > 0) owned.push({ kind: 'heal', level: actor.relicHeal });
-        if (actor.weaponBomb > 0) owned.push({ kind: 'bomb', level: actor.weaponBomb });
+        const owned = getActorOwnedRelics(actor);
         owned.sort((a, b) => b.level - a.level);
         const best = owned[0];
         const relic = best ? { ...best, affix: defaultRelicAffix(best.kind) } : null;
         const relics = new Map<number, CarryRelic | null>(sim.actors.map(a => {
-          const choices: CarryRelic[] = [
-            { kind: 'knife', level: a.weaponKnife },
-            { kind: 'arrow', level: a.weaponArrow },
-            { kind: 'laser', level: a.relicLaser },
-            { kind: 'cyclone', level: a.relicCyclone },
-            { kind: 'boomerang', level: a.relicBoomerang },
-            { kind: 'hammer', level: a.relicHammer },
-            { kind: 'smoke', level: a.relicSmoke },
-            { kind: 'heal', level: a.relicHeal ?? 0 },
-            { kind: 'bomb', level: a.weaponBomb },
-          ];
+          const choices = getActorOwnedRelics(a);
           choices.sort((a, b) => b.level - a.level);
-          return [a.id, choices[0]!.level > 0 ? choices[0]! : null];
+          return [a.id, choices[0]?.level ? choices[0] : null];
         }));
         relics.set(0, playerPendingRelic);
         const rule = chooseAiRule(actorId, round, actor.ai, endlessProfiles.get(actorId)?.grudge,
@@ -370,13 +369,13 @@ export const islandPlugin: Plugin = {
         upgradeHighlight = 0;
         ruleStatIndex = 0;
         relicHighlight = 0;
-        restartSimulation(sim);
+        restartSimulation(sim, { grantRandomRelic: true });
         presentation.reset(sim);
         persistSave();
       };
 
       const startNextNormalRound = () => {
-        restartSimulation(sim);
+        restartSimulation(sim, { grantRandomRelic: true });
         presentation.reset(sim);
         matchIndex++;
         roundFinishedLogged = false;
@@ -508,7 +507,7 @@ export const islandPlugin: Plugin = {
                     ruleAnnouncementTimer = 4.0;
                   } else {
                     // 切到普通模式：从普通单局开场（不消耗无限存档）
-                    restartSimulation(sim);
+                    restartSimulation(sim, { grantRandomRelic: true });
                     presentation.reset(sim);
                     roundFinishedLogged = false;
                     endlessPhase = 'playing';
@@ -1051,6 +1050,7 @@ export const islandPlugin: Plugin = {
                 playerXpNext: p.xpNext,
                 pendingUpgrade: sim.pendingUpgrade,
                 upgradeChoices: sim.upgradeChoices,
+                playerRelics: getPlayerOwnedRelics(),
                 boss:
                   sim.raidPhase !== 'none' && sim.raidBossHp > 0
                     ? {

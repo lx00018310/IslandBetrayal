@@ -9,6 +9,7 @@ import {
   damageActor,
   formTeam,
   generateUpgradeChoices,
+  getMinuteEpochConfig,
   giveActorXp,
   isInsideCover,
   segmentBlockedByCover,
@@ -323,7 +324,7 @@ describe('两场 Boss / 死亡增伤 / 逐分钟缩圈与掩体 / 升级队列 /
   // -------------------------------------------------------------------------
   // 新机制：组队 20% 减伤 与 未受击缓慢回血及宝物强化
   // -------------------------------------------------------------------------
-  it('组队机制：只要产生组队，受到的伤害减免 20%', () => {
+  it('组队机制：开局产生组队，受到的伤害减免 70%（实受 30% 伤害）', () => {
     const sim = createInitialSimulation();
     const a = sim.actors[1]!;
     const b = sim.actors[2]!;
@@ -333,7 +334,7 @@ describe('两场 Boss / 死亡增伤 / 逐分钟缩圈与掩体 / 升级队列 /
     damageActor(sim, a, 10, null);
     expect(a.hp).toBe(90);
 
-    // 组队状态：承受 10 点伤害，减免 20%（实受 8 点）
+    // 组队状态：第 1 分钟承受 10 点伤害，减免 70%（实受 3 点）
     a.x = 16; a.y = 16;
     b.x = 16.5; b.y = 16;
     formTeam(sim, a, b);
@@ -341,7 +342,7 @@ describe('两场 Boss / 死亡增伤 / 逐分钟缩圈与掩体 / 升级队列 /
 
     a.hp = 100;
     damageActor(sim, a, 10, null);
-    expect(a.hp).toBe(92); // 100 - 8 = 92
+    expect(a.hp).toBe(97); // 100 - 3 = 97
   });
 
   it('回血机制：未受击时缓慢回血，宝物加速回血且高阶支持战时自愈', () => {
@@ -433,5 +434,122 @@ describe('两场 Boss / 死亡增伤 / 逐分钟缩圈与掩体 / 升级队列 /
 
     damageActor(sim, target, 40, attacker);
     expect(attacker.hp).toBeGreaterThan(50);
+  });
+
+  // -------------------------------------------------------------------------
+  // 分钟纪元（Minute Epochs）机制变革测试
+  // -------------------------------------------------------------------------
+  it('分钟纪元配置：各分钟怪倍率与组队承伤比例严格按 190%/30% -> 160%/60% -> 130%/100% -> 100%/100% 递变', () => {
+    // 第 1 分钟 (0~59s)
+    const ep0 = getMinuteEpochConfig(10);
+    expect(ep0.minuteIndex).toBe(0);
+    expect(ep0.monsterScale).toBeCloseTo(1.9);
+    expect(ep0.teamDamageTakenRatio).toBeCloseTo(0.3);
+
+    // 第 2 分钟 (60~119s)
+    const ep1 = getMinuteEpochConfig(65);
+    expect(ep1.minuteIndex).toBe(1);
+    expect(ep1.monsterScale).toBeCloseTo(1.6);
+    expect(ep1.teamDamageTakenRatio).toBeCloseTo(0.6);
+
+    // 第 3 分钟 (120~179s)
+    const ep2 = getMinuteEpochConfig(125);
+    expect(ep2.minuteIndex).toBe(2);
+    expect(ep2.monsterScale).toBeCloseTo(1.3);
+    expect(ep2.teamDamageTakenRatio).toBeCloseTo(1.0);
+
+    // 第 4 分钟及以后 (180s+)
+    const ep3 = getMinuteEpochConfig(185);
+    expect(ep3.minuteIndex).toBe(3);
+    expect(ep3.monsterScale).toBeCloseTo(1.0);
+    expect(ep3.teamDamageTakenRatio).toBeCloseTo(1.0);
+  });
+
+  it('分钟纪元动态承伤：组队受伤害在 1m(30%)、2m(60%)、3m(100%)、4m(100%) 精确生效', () => {
+    const sim = createInitialSimulation();
+    const a = sim.actors[1]!;
+    const b = sim.actors[2]!;
+    a.x = 20; a.y = 20; b.x = 21; b.y = 20;
+    formTeam(sim, a, b);
+
+    // 第 1 分钟：10 点伤害 * 0.3 = 3 点伤害
+    sim.elapsed = 10;
+    a.hp = 100;
+    damageActor(sim, a, 10, null);
+    expect(a.hp).toBe(97);
+
+    // 第 2 分钟：10 点伤害 * 0.6 = 6 点伤害
+    sim.elapsed = 70;
+    a.hp = 100;
+    damageActor(sim, a, 10, null);
+    expect(a.hp).toBe(94);
+
+    // 第 3 分钟：10 点伤害 * 1.0 = 10 点伤害（减伤完全失效）
+    sim.elapsed = 130;
+    a.hp = 100;
+    damageActor(sim, a, 10, null);
+    expect(a.hp).toBe(90);
+
+    // 第 4 分钟：10 点伤害 * 1.0 = 10 点伤害
+    sim.elapsed = 190;
+    a.hp = 100;
+    damageActor(sim, a, 10, null);
+    expect(a.hp).toBe(90);
+  });
+
+  it('分钟跨越时小怪属性平滑同步更新', () => {
+    const sim = createInitialSimulation();
+    sim.elapsed = 59.9;
+    sim.lastNotifiedMinute = 0;
+    const chaser = sim.monsters.find(m => m.alive && m.kind === 'chaser')!;
+    const hp0 = chaser.maxHp;
+    expect(hp0).toBe(38); // 20 * 1.9 = 38
+
+    // 跨过 60 秒触发机制变革
+    stepSimulation(sim, 0.2, { moveX: 0, moveY: 0 });
+    expect(sim.lastNotifiedMinute).toBe(1);
+    // 进入第 2 分钟，怪血量上限平滑更新为 20 * 1.6 = 32
+    expect(chaser.maxHp).toBe(32);
+    expect(chaser.damage).toBe(8); // 5 * 1.6 = 8
+  });
+
+  it('第 4 分钟开始角色间对打伤害从 20% 完全放开为 100% 全额结算', () => {
+    const sim = createInitialSimulation({ rng: () => 0.99 });
+    const attacker = sim.actors[1]!;
+    const victim = sim.actors[2]!;
+
+    // 前 3 分钟内讧保护（以 70s 为例）：10 点伤害受 0.2 压制，只扣 2 点
+    sim.elapsed = 70;
+    victim.hp = 100;
+    resolveHostileHit(sim, victim, 10, attacker);
+    expect(victim.hp).toBe(98);
+
+    // 第 4 分钟开始（180s+）：伤害放开为 100%，10 点伤害实打实扣 10 点
+    sim.elapsed = 180;
+    victim.hp = 100;
+    resolveHostileHit(sim, victim, 10, attacker);
+    expect(victim.hp).toBe(90);
+  });
+
+  it('全宝物技能均正确计算全场淘汰死亡增伤（解决后期刮痧问题）', () => {
+    const sim = createInitialSimulation();
+    const p = sim.actors[0]!;
+    p.relicThunder = 1;
+    p.thunderTimer = 0;
+    // 基础伤害（0 淘汰）：10 * 1.55 = 16 左右
+    const m = sim.monsters[0]!;
+    m.x = p.x + 1; m.y = p.y; m.hp = 999; m.maxHp = 999;
+    p.attackCd = 999; // 屏蔽普攻，单测宝物
+
+    // 淘汰 2 名角色，使 deathMult = 1.44
+    damageActor(sim, sim.actors[2]!, 999, null);
+    damageActor(sim, sim.actors[3]!, 999, null);
+    expect(sim.eliminatedCount).toBe(2);
+
+    const hpBefore = m.hp;
+    stepWeapons(sim, 0.1);
+    const dealt = hpBefore - m.hp;
+    // 雷电基础伤害为 Math.round(10 * 1.55) = 16，乘以 1.44 约为 23 点
+    expect(dealt).toBeGreaterThanOrEqual(21);
   });
 });

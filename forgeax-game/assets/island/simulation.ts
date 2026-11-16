@@ -76,7 +76,7 @@ export const ACTOR_HP_REGEN_PER_SECOND = 5.0;
 export const AI_RETREAT_HP_RATIO = 0.5;
 
 /** 玩家出生保护期（真实秒，含加载与开局无操作窗口） */
-export const PLAYER_SPAWN_PROTECTION_SECONDS = 20.0;
+export const PLAYER_SPAWN_PROTECTION_SECONDS = 3.0;
 
 export const PLAYER_COLORS = [
   '#e05a4f', '#3f8ee0', '#e8b53c', '#5fbf6a', '#a06bdd',
@@ -89,6 +89,35 @@ export const PLAYER_NAMES = [
 
 export type AiPersonality = 'honest' | 'greedy' | 'raider';
 export type MonsterKind = 'chaser' | 'tank' | 'dasher' | 'boss';
+
+/** 每一分钟纪元机制变革配置 */
+export interface MinuteEpochConfig {
+  minuteIndex: number;
+  monsterScale: number;
+  teamDamageTakenRatio: number;
+  label: string;
+}
+
+/** 获取指定时钟（秒）所属分钟纪元配置 */
+export function getMinuteEpochConfig(elapsed: number): MinuteEpochConfig {
+  const minuteIndex = Math.floor(Math.max(0, elapsed) / 60);
+  if (minuteIndex === 0) {
+    return { minuteIndex: 0, monsterScale: 1.9, teamDamageTakenRatio: 0.3, label: '第 1 分钟：凶兽横行·同舟共济 (怪190% 组队承伤30%)' };
+  } else if (minuteIndex === 1) {
+    return { minuteIndex: 1, monsterScale: 1.6, teamDamageTakenRatio: 0.6, label: '第 2 分钟：兽潮渐衰·貌合神离 (怪160% 组队承伤60%)' };
+  } else if (minuteIndex === 2) {
+    return { minuteIndex: 2, monsterScale: 1.3, teamDamageTakenRatio: 1.0, label: '第 3 分钟：火力觉醒·各怀鬼胎 (怪130% 组队承伤100%)' };
+  } else {
+    return { minuteIndex: Math.min(minuteIndex, 3), monsterScale: 1.0, teamDamageTakenRatio: 1.0, label: '第 4 分钟+：兽潮衰微·终局分赃 (怪100% 组队承伤100%)' };
+  }
+}
+
+/** 怪物基础基准数值（100% 稳态） */
+export const BASE_MONSTER_CONFIG: Record<Exclude<MonsterKind, 'boss'>, { baseHp: number; baseDamage: number; speed: number }> = {
+  tank: { baseHp: 30, baseDamage: 8, speed: 2.2 },
+  dasher: { baseHp: 15, baseDamage: 4, speed: 4.8 },
+  chaser: { baseHp: 20, baseDamage: 5, speed: 3.6 },
+};
 export type WeaponKind = 'knife' | 'arrow' | 'laser' | 'cyclone' | 'boomerang' | 'hammer' | 'smoke' | 'bomb';
 export type MatchEventKind = 'none' | 'treasure_rain' | 'monster_frenzy';
 
@@ -155,6 +184,9 @@ export interface ActorState {
   relicOrb: number;    // 0..3 浮游灵球 (悬浮法球自动连发攻击)
   relicFireRing: number; // 0..3 赤炎火环 (扩散火环与灼烧火径)
   relicMirror: number; // 0..3 幻影神镜 (召唤分身并肩协同作战)
+  relicMight: number;  // 0..3 修罗战魂 (纯伤害比例增幅)
+  relicVitality: number; // 0..3 盘古圣体 (最大生命上限拓宽)
+  relicHaste: number;  // 0..3 疾风灵羽 (移速与出招攻速爆发)
   weaponBomb: number;  // 0..3 范围炸弹 (保留兼容)
   lastHitTimer: number;// 受击冷静计时器 (<=0 表示脱战/安全)
   statDamageBonus: number; // 百分比增益 e.g. 0.15
@@ -413,6 +445,7 @@ export interface SimulationState {
   overtime: boolean;
   overtimeResolution: string | null;
   nextEntityId: number;
+  lastNotifiedMinute: number;
 
   // 统一数值与世界修正
   rules: ReturnType<typeof aggregateGlobalRules>;
@@ -529,6 +562,9 @@ export function defaultRelicAffix(kind: RelicKind): RelicAffix {
   if (kind === 'orb') return 'orbCount';
   if (kind === 'fire_ring') return 'fireRingBurn';
   if (kind === 'mirror') return 'mirrorDuration';
+  if (kind === 'might') return 'mightDamage';
+  if (kind === 'vitality') return 'vitalityHp';
+  if (kind === 'haste') return 'hasteSpeed';
   return 'bombRadius';
 }
 
@@ -682,6 +718,130 @@ export function ignorePair(sim: SimulationState, a: number, b: number): boolean 
   return true;
 }
 
+/** ⚔️ 直接造成伤害的宝物（15 种，开局宝物严格从此池抽选） */
+export const DAMAGE_RELIC_KINDS: readonly RelicKind[] = [
+  'knife',
+  'arrow',
+  'laser',
+  'cyclone',
+  'boomerang',
+  'hammer',
+  'thunder',
+  'frost',
+  'blackhole',
+  'spikes',
+  'chain',
+  'orb',
+  'fire_ring',
+  'mirror',
+  'smoke',
+] as const;
+
+/** 🛡️ 增加伤害比例/血量/攻速等强化类宝物（6 种，局内升级或图鉴获取，不开局直赋） */
+export const ENHANCE_RELIC_KINDS: readonly RelicKind[] = [
+  'might',
+  'vitality',
+  'haste',
+  'heal',
+  'shield',
+  'drain',
+] as const;
+
+export const ALL_BASE_RELIC_KINDS: readonly RelicKind[] = [
+  ...DAMAGE_RELIC_KINDS,
+  ...ENHANCE_RELIC_KINDS,
+] as const;
+
+export const BASE_RELIC_NAMES: Record<RelicKind, string> = {
+  knife: '旋转飞刃',
+  arrow: '破晓神弩',
+  laser: '星芒棱镜',
+  cyclone: '风暴海螺',
+  boomerang: '灵风骨刃',
+  hammer: '巨灵战锤',
+  smoke: '遁影烟斗',
+  heal: '生命宝珠',
+  thunder: '鸣雷天珠',
+  frost: '冰魄雪莲',
+  shield: '金刚玄甲',
+  blackhole: '暗质奇点',
+  drain: '噬血魔翼',
+  spikes: '荆棘地刺',
+  chain: '乾坤缚索',
+  orb: '浮游灵球',
+  fire_ring: '赤炎火环',
+  mirror: '幻影神镜',
+  might: '修罗战魂',
+  vitality: '盘古圣体',
+  haste: '疾风灵羽',
+  bomb: '霹雳轰雷',
+};
+
+export function grantRelicToActor(actor: ActorState, kind: RelicKind, level = 1): void {
+  const lvl = Math.min(3, Math.max(1, level));
+  switch (kind) {
+    case 'knife': actor.weaponKnife = lvl; break;
+    case 'arrow': actor.weaponArrow = lvl; break;
+    case 'laser': actor.relicLaser = lvl; break;
+    case 'cyclone': actor.relicCyclone = lvl; break;
+    case 'boomerang': actor.relicBoomerang = lvl; break;
+    case 'hammer': actor.relicHammer = lvl; break;
+    case 'smoke': actor.relicSmoke = lvl; break;
+    case 'heal': actor.relicHeal = lvl; break;
+    case 'thunder': actor.relicThunder = lvl; break;
+    case 'frost': actor.relicFrost = lvl; break;
+    case 'shield': actor.relicShield = lvl; break;
+    case 'blackhole': actor.relicBlackhole = lvl; break;
+    case 'drain': actor.relicDrain = lvl; break;
+    case 'spikes': actor.relicSpikes = lvl; break;
+    case 'chain': actor.relicChain = lvl; break;
+    case 'orb': actor.relicOrb = lvl; break;
+    case 'fire_ring': actor.relicFireRing = lvl; break;
+    case 'mirror': actor.relicMirror = lvl; break;
+    case 'might': actor.relicMight = lvl; break;
+    case 'vitality': {
+      const prevLvl = actor.relicVitality ?? 0;
+      actor.relicVitality = lvl;
+      const hpBonusTable = [0, 60, 120, 200];
+      const diffHp = hpBonusTable[lvl]! - hpBonusTable[prevLvl]!;
+      if (diffHp > 0) {
+        actor.maxHp += diffHp;
+        actor.hp += diffHp;
+      }
+      break;
+    }
+    case 'haste': actor.relicHaste = lvl; break;
+    case 'bomb': actor.weaponBomb = lvl; break;
+  }
+}
+
+export function getActorOwnedRelicKinds(actor: ActorState): RelicKind[] {
+  const kinds: RelicKind[] = [];
+  if (actor.weaponKnife > 0) kinds.push('knife');
+  if (actor.weaponArrow > 0) kinds.push('arrow');
+  if (actor.relicLaser > 0) kinds.push('laser');
+  if (actor.relicCyclone > 0) kinds.push('cyclone');
+  if (actor.relicBoomerang > 0) kinds.push('boomerang');
+  if (actor.relicHammer > 0) kinds.push('hammer');
+  if (actor.relicSmoke > 0) kinds.push('smoke');
+  if ((actor.relicHeal ?? 0) > 0) kinds.push('heal');
+  if ((actor.relicThunder ?? 0) > 0) kinds.push('thunder');
+  if ((actor.relicFrost ?? 0) > 0) kinds.push('frost');
+  if ((actor.relicShield ?? 0) > 0) kinds.push('shield');
+  if ((actor.relicBlackhole ?? 0) > 0) kinds.push('blackhole');
+  if ((actor.relicDrain ?? 0) > 0) kinds.push('drain');
+  if ((actor.relicSpikes ?? 0) > 0) kinds.push('spikes');
+  if ((actor.relicChain ?? 0) > 0) kinds.push('chain');
+  if ((actor.relicOrb ?? 0) > 0) kinds.push('orb');
+  if ((actor.relicFireRing ?? 0) > 0) kinds.push('fire_ring');
+  if ((actor.relicMirror ?? 0) > 0) kinds.push('mirror');
+  if ((actor.relicMight ?? 0) > 0) kinds.push('might');
+  if ((actor.relicVitality ?? 0) > 0) kinds.push('vitality');
+  if ((actor.relicHaste ?? 0) > 0) kinds.push('haste');
+  if (actor.weaponBomb > 0) kinds.push('bomb');
+  return kinds;
+}
+
 export function createInitialSimulation(options?: {
   rules?: readonly GlobalRule[];
   grudges?: Map<number, GrudgeRecord>;
@@ -692,6 +852,8 @@ export function createInitialSimulation(options?: {
   /** 敌人难度成长（无限模式按局数与战力缩放怪物/Boss） */
   enemyScale?: { hp: number; damage: number };
   rng?: () => number;
+  /** 开局随机获得一个宝物（无限模式下排除自身已有宝物） */
+  grantRandomRelic?: boolean;
 }): SimulationState {
   const center = (GRID_SIZE - 1) / 2;
   const tiles: TileState[] = [];
@@ -852,41 +1014,43 @@ export function createInitialSimulation(options?: {
     for (const actor of actors) {
       const relic = options.carryRelics.get(actor.id);
       if (relic) {
-        const lvl = Math.min(3, Math.max(1, relic.level));
-        if (relic.kind === 'knife') actor.weaponKnife = lvl;
-        else if (relic.kind === 'arrow') actor.weaponArrow = lvl;
-        else if (relic.kind === 'laser') actor.relicLaser = lvl;
-        else if (relic.kind === 'cyclone') actor.relicCyclone = lvl;
-        else if (relic.kind === 'boomerang') actor.relicBoomerang = lvl;
-        else if (relic.kind === 'hammer') actor.relicHammer = lvl;
-        else if (relic.kind === 'smoke') actor.relicSmoke = lvl;
-        else if (relic.kind === 'heal') actor.relicHeal = lvl;
-        else if (relic.kind === 'thunder') actor.relicThunder = lvl;
-        else if (relic.kind === 'frost') actor.relicFrost = lvl;
-        else if (relic.kind === 'shield') actor.relicShield = lvl;
-        else if (relic.kind === 'blackhole') actor.relicBlackhole = lvl;
-        else if (relic.kind === 'drain') actor.relicDrain = lvl;
-        else if (relic.kind === 'spikes') actor.relicSpikes = lvl;
-        else if (relic.kind === 'chain') actor.relicChain = lvl;
-        else if (relic.kind === 'orb') actor.relicOrb = lvl;
-        else if (relic.kind === 'fire_ring') actor.relicFireRing = lvl;
-        else if (relic.kind === 'mirror') actor.relicMirror = lvl;
-        else if (relic.kind === 'bomb') actor.weaponBomb = lvl;
+        grantRelicToActor(actor, relic.kind, relic.level);
         actor.relicAffix = relic.affix ?? defaultRelicAffix(relic.kind);
       }
     }
   }
 
-  // 初始生成 12 只基础怪物，随波次逐步扩容至 40 只
+  // 每次进入新对局：开局随机获得一个宝物；且必须是【伤害类宝物】，不能是强化类宝物
+  const rng = options?.rng ?? Math.random;
+  let playerGrantedRelicName: string | null = null;
+  if (options?.grantRandomRelic) {
+    for (const actor of actors) {
+      const owned = new Set(getActorOwnedRelicKinds(actor));
+      // 严格从 15 种直接造成伤害的宝物池中抽取，排除自身已有伤害宝物
+      const pool = DAMAGE_RELIC_KINDS.filter((k) => !owned.has(k));
+      if (pool.length > 0) {
+        const chosenKind = pool[Math.floor(rng() * pool.length)]!;
+        grantRelicToActor(actor, chosenKind, 1);
+        if (!actor.relicAffix) {
+          actor.relicAffix = defaultRelicAffix(chosenKind);
+        }
+        if (actor.isPlayer) {
+          playerGrantedRelicName = BASE_RELIC_NAMES[chosenKind];
+        }
+      }
+    }
+  }
+
+  // 初始生成 12 只基础怪物，随波次逐步扩容至 40 只（应用第 1 分钟 190% 纪元倍率）
+  const initialEpoch = getMinuteEpochConfig(0);
   const monsters: MonsterState[] = [];
   for (let i = 0; i < 40; i++) {
     const a = (i / 12) * Math.PI * 2 + 0.3;
     const isInitial = i < 12;
-    const kind: MonsterKind = i % 5 === 0 ? 'tank' : i % 3 === 0 ? 'dasher' : 'chaser';
-    const baseHp = kind === 'tank' ? 8 : kind === 'dasher' ? 4 : 3;
-    const speed = kind === 'tank' ? 2.03 : kind === 'dasher' ? 4.95 : 3.83;
-    const hp = Math.max(1, Math.round(baseHp * enemyHpScale));
-    const damage = Math.max(1, Math.round((kind === 'tank' ? 1.2 : 1) * enemyDamageScale));
+    const kind: Exclude<MonsterKind, 'boss'> = i % 5 === 0 ? 'tank' : i % 3 === 0 ? 'dasher' : 'chaser';
+    const cfg = BASE_MONSTER_CONFIG[kind];
+    const hp = Math.max(1, Math.round(cfg.baseHp * enemyHpScale * initialEpoch.monsterScale));
+    const damage = Math.max(1, Math.round(cfg.baseDamage * enemyDamageScale * initialEpoch.monsterScale));
 
     monsters.push({
       id: i,
@@ -899,13 +1063,13 @@ export function createInitialSimulation(options?: {
       respawn: isInitial ? 0 : 4 + (i % 5) * 2,
       wobble: i,
       hitFlash: 0,
-      speed,
+      speed: cfg.speed,
       damage,
       attackCd: 0,
     });
   }
 
-  return {
+  const sim: SimulationState = {
     tiles,
     actors,
     monsters,
@@ -930,6 +1094,7 @@ export function createInitialSimulation(options?: {
     overtime: false,
     overtimeResolution: null,
     nextEntityId: 100,
+    lastNotifiedMinute: 0,
 
     rules: aggregateGlobalRules(options?.rules ?? []),
     grudges: options?.grudges ?? new Map(),
@@ -987,6 +1152,12 @@ export function createInitialSimulation(options?: {
     boss: null,
     maxMonsters: 16,
   };
+
+  if (playerGrantedRelicName && actors[0]) {
+    pulse(sim, `开局获得：${playerGrantedRelicName}`, actors[0].x, actors[0].y, '#ffe6a8');
+  }
+
+  return sim;
 }
 
 export function tileAt(sim: SimulationState, gx: number, gy: number): TileState | null {
@@ -1128,7 +1299,6 @@ export function formTeam(sim: SimulationState, a: ActorState, b: ActorState): bo
     a.team >= 0 ||
     b.team >= 0 ||
     a.id === b.id ||
-    sim.finalPhase ||
     sim.gameOver ||
     refusesAlliance(sim, a, b) || refusesAlliance(sim, b, a) ||
     isPairIgnored(sim, a.id, b.id) ||
@@ -1173,7 +1343,6 @@ export function sendInvite(sim: SimulationState, fromId: number, toId: number): 
     from.team >= 0 ||
     to.team >= 0 ||
     fromId === toId ||
-    sim.finalPhase ||
     sim.gameOver ||
     refusesAlliance(sim, from, to) || refusesAlliance(sim, to, from) ||
     isPairIgnored(sim, fromId, toId) ||
@@ -1216,7 +1385,7 @@ export function acceptInvite(sim: SimulationState, inviteId: number, recipientId
 }
 
 export function getNearbyCandidate(sim: SimulationState, actor: ActorState): CandidateInfo | null {
-  if (!actor.alive || actor.team >= 0 || sim.finalPhase || sim.gameOver) return null;
+  if (!actor.alive || actor.team >= 0 || sim.gameOver) return null;
 
   let bestEligible: ActorState | null = null;
   let bestEligibleDist = ALLY_INTERACT_DISTANCE;
@@ -1545,6 +1714,47 @@ export function generateUpgradeChoices(actor: ActorState): UpgradeOption[] {
     });
   }
 
+  // 强化类宝物加入三选一升级候选项
+  if ((actor.relicMight ?? 0) < 3) {
+    const nextLvl = (actor.relicMight ?? 0) + 1;
+    const table = [0, 25, 50, 80];
+    pool.push({
+      id: 'relic_might',
+      type: 'weapon',
+      title: '宝物·修罗战魂',
+      description: `唤醒修罗战意，自身不进行攻击，但大幅提升所有攻击与技能的全伤害比例`,
+      currentValue: (actor.relicMight ?? 0) === 0 ? '未习得' : `LV.${actor.relicMight} (+${table[actor.relicMight]}%伤害)`,
+      nextValue: `LV.${nextLvl} (全伤害提升 +${table[nextLvl]}%${nextLvl >= 3 ? '，暴击率+20%' : ''})`,
+    });
+  }
+
+  if ((actor.relicVitality ?? 0) < 3) {
+    const nextLvl = (actor.relicVitality ?? 0) + 1;
+    const table = [0, 60, 120, 200];
+    pool.push({
+      id: 'relic_vitality',
+      type: 'weapon',
+      title: '宝物·盘古圣体',
+      description: `拓宽生命本源，大幅提升最大生命值上限并立即治愈伤势，增强生存韧性`,
+      currentValue: (actor.relicVitality ?? 0) === 0 ? '未习得' : `LV.${actor.relicVitality} (+${table[actor.relicVitality]}HP)`,
+      nextValue: `LV.${nextLvl} (生命上限提升 +${table[nextLvl]}HP，减伤${nextLvl * 5}%)`,
+    });
+  }
+
+  if ((actor.relicHaste ?? 0) < 3) {
+    const nextLvl = (actor.relicHaste ?? 0) + 1;
+    const spTable = [0, 15, 25, 35];
+    const cdTable = [0, 20, 40, 60];
+    pool.push({
+      id: 'relic_haste',
+      type: 'weapon',
+      title: '宝物·疾风灵羽',
+      description: `身轻如燕身法通灵，大幅强化移动速度并极大缩短攻击出招冷却与冲刺CD`,
+      currentValue: (actor.relicHaste ?? 0) === 0 ? '未习得' : `LV.${actor.relicHaste} (移速+${spTable[actor.relicHaste]}%)`,
+      nextValue: `LV.${nextLvl} (移速+${spTable[nextLvl]}%，出招冷却缩短${cdTable[nextLvl]}%)`,
+    });
+  }
+
   // 若全部 18 种宝物全满（极罕见），兜底奖励
   if (pool.length === 0) {
     pool.push({
@@ -1619,6 +1829,24 @@ export function applyUpgrade(actor: ActorState, upgrade: UpgradeOption): void {
       break;
     case 'relic_mirror':
       actor.relicMirror = Math.min(3, (actor.relicMirror ?? 0) + 1);
+      break;
+    case 'relic_might':
+      actor.relicMight = Math.min(3, (actor.relicMight ?? 0) + 1);
+      break;
+    case 'relic_vitality': {
+      const prevLvl = actor.relicVitality ?? 0;
+      const nextLvl = Math.min(3, prevLvl + 1);
+      actor.relicVitality = nextLvl;
+      const hpBonusTable = [0, 60, 120, 200];
+      const diffHp = hpBonusTable[nextLvl]! - hpBonusTable[prevLvl]!;
+      if (diffHp > 0) {
+        actor.maxHp += diffHp;
+        actor.hp += diffHp;
+      }
+      break;
+    }
+    case 'relic_haste':
+      actor.relicHaste = Math.min(3, (actor.relicHaste ?? 0) + 1);
       break;
     case 'relic_heal_full':
       actor.hp = actor.maxHp;
@@ -1719,10 +1947,17 @@ export function calculateAttackDamage(
     }
   }
 
+  // 强化类宝物【修罗战魂】：提升全伤害比例（LV.1 +25%, LV.2 +50%, LV.3 +80%）
+  let bonusDamage = attacker.statDamageBonus;
+  if ((attacker.relicMight ?? 0) > 0) {
+    const mightTable = [0, 0.25, 0.50, 0.80];
+    bonusDamage += mightTable[attacker.relicMight]!;
+  }
+
   // 唯一伤害出口：个人状态乘区 → 单局死亡增伤乘区（只乘一次）
   return calculateEffectiveDamage(
     baseDamage,
-    attacker.statDamageBonus,
+    bonusDamage,
     sim.worldMultipliers.damage,
     attacker.personalMultiplier,
     includeDeathMultiplier ? survivalDamageMultiplier(sim.eliminatedCount, sim.rules.bloodFeudBase) : 1,
@@ -1776,7 +2011,8 @@ export function resolveHostileHit(
   if (target.isPlayer && sim.elapsed < PLAYER_SPAWN_PROTECTION_SECONDS) {
     return;
   }
-  const scale = attacker && !sim.finalPhase ? PRE_FINAL_ACTOR_DAMAGE_SCALE : 1;
+  // 角色对角色伤害：前 3 分钟内讧保护（20%），第 4 分钟开始及终局全额结算（100%）
+  const scale = attacker && !(sim.finalPhase || sim.elapsed >= 180) ? PRE_FINAL_ACTOR_DAMAGE_SCALE : 1;
   damageActor(sim, target, Math.max(1, Math.round(hit.damage * scale)), attacker);
 }
 
@@ -1798,10 +2034,11 @@ export function damageActor(sim: SimulationState, target: ActorState, amount: nu
     return;
   }
 
-  // 机制：只要产生了组队（target.team >= 0），受到的伤害直接减免 20%
+  // 机制：按分钟纪元动态弱化组队减伤：0m(30%承伤，减免70%) -> 1m(60%承伤，减免40%) -> 2m+(100%承伤，减免0%)
   let finalAmount = amount;
   if (target.team >= 0) {
-    finalAmount = Math.max(1, Math.round(finalAmount * 0.8));
+    const { teamDamageTakenRatio } = getMinuteEpochConfig(sim.elapsed);
+    finalAmount = Math.max(1, Math.round(finalAmount * teamDamageTakenRatio));
   }
   target.hp -= finalAmount;
   target.hitFlash = 0.2;
@@ -1864,7 +2101,7 @@ export function damageMonster(sim: SimulationState, monster: MonsterState, amoun
     if (from) {
       const isBoss = monster.kind === 'boss';
       if (isBoss) { finishBossRaid(sim, true); return; }
-      giveActorXp(sim, from, isBoss ? 8 : 1);
+      giveActorXp(sim, from, isBoss ? 8 : 2);
 
       if (isBoss) {
         pulse(sim, '🏆 混沌巨兽被击败！大量宝物掉落！', monster.x, monster.y, '#ffd700');
@@ -1960,6 +2197,12 @@ export function steerAroundCover(sim: SimulationState, actor: Vec2 & { id: numbe
   return target;
 }
 
+/** 获取角色的有效攻击速度增益（包含强化类宝物【疾风灵羽】加成） */
+export function getActorAttackSpeedBonus(actor: ActorState): number {
+  const hasteBonus = (actor.relicHaste ?? 0) > 0 ? [0, 0.20, 0.40, 0.60][actor.relicHaste]! : 0;
+  return actor.statAttackSpeedBonus + hasteBonus;
+}
+
 /** 模拟附加武器：飞刀、穿透箭、范围炸弹 */
 export function stepWeapons(sim: SimulationState, dt: number): void {
   const center = (GRID_SIZE - 1) / 2;
@@ -1967,7 +2210,7 @@ export function stepWeapons(sim: SimulationState, dt: number): void {
   // 1. 环绕飞刀
   for (const a of aliveActors(sim)) {
     if (sim.gameOver) return;
-    const attackSpeed = calculateEffectiveAttackSpeed(a.statAttackSpeedBonus, sim.worldMultipliers.attackSpeed);
+    const attackSpeed = calculateEffectiveAttackSpeed(getActorAttackSpeedBonus(a), sim.worldMultipliers.attackSpeed);
     if (a.weaponKnife > 0) {
       a.knifeAngle += dt * 3.6 * attackSpeed;
       const count = a.weaponKnife + (a.relicAffix === 'knifeArea' ? 1 : 0);
@@ -2021,7 +2264,7 @@ export function stepWeapons(sim: SimulationState, dt: number): void {
       a.arrowTimer -= dt;
       if (a.arrowTimer <= 0) {
         const effAtkSpd = calculateEffectiveAttackSpeed(
-          a.statAttackSpeedBonus,
+          getActorAttackSpeedBonus(a),
           sim.worldMultipliers.attackSpeed,
         );
         // 攻速在属性出口限幅，攻击周期必须为正
@@ -2067,7 +2310,7 @@ export function stepWeapons(sim: SimulationState, dt: number): void {
     if (a.relicLaser > 0) {
       a.laserTimer -= dt;
       if (a.laserTimer <= 0) {
-        const effAtkSpd = calculateEffectiveAttackSpeed(a.statAttackSpeedBonus, sim.worldMultipliers.attackSpeed);
+        const effAtkSpd = calculateEffectiveAttackSpeed(getActorAttackSpeedBonus(a), sim.worldMultipliers.attackSpeed);
         a.laserTimer = Math.max(MIN_LEGAL_CYCLE, (3.2 - a.relicLaser * 0.4) / effAtkSpd);
         const rayCount = a.relicLaser >= 3 ? 12 : 8;
         const length = (6.0 + a.relicLaser * 0.8) * (1 + a.statAreaBonus) * (a.relicAffix === 'laserWidth' ? 1.25 : 1);
@@ -2120,12 +2363,13 @@ export function stepWeapons(sim: SimulationState, dt: number): void {
     if (a.relicCyclone > 0) {
       a.cycloneTimer -= dt;
       if (a.cycloneTimer <= 0) {
-        const effAtkSpd = calculateEffectiveAttackSpeed(a.statAttackSpeedBonus, sim.worldMultipliers.attackSpeed);
+        const effAtkSpd = calculateEffectiveAttackSpeed(getActorAttackSpeedBonus(a), sim.worldMultipliers.attackSpeed);
         a.cycloneTimer = Math.max(MIN_LEGAL_CYCLE, (2.6 - a.relicCyclone * 0.3) / effAtkSpd);
         const speed = 4.2;
         const dirX = Math.cos(a.facing) || 1;
         const dirY = Math.sin(a.facing) || 0;
-        const cycloneDmg = Math.round(calculateAttackDamage(sim, a, false) * (0.6 + a.relicCyclone * 0.2) * sim.rules.weaponModifiers.cyclone);
+        const deathMult = survivalDamageMultiplier(sim.eliminatedCount, sim.rules.bloodFeudBase);
+        const cycloneDmg = Math.max(1, Math.round(calculateAttackDamage(sim, a, false) * (0.6 + a.relicCyclone * 0.2) * sim.rules.weaponModifiers.cyclone * deathMult));
 
         sim.cyclones.push({
           id: sim.nextEntityId++,
@@ -2146,12 +2390,13 @@ export function stepWeapons(sim: SimulationState, dt: number): void {
     if (a.relicBoomerang > 0) {
       a.boomerangTimer -= dt;
       if (a.boomerangTimer <= 0) {
-        const effAtkSpd = calculateEffectiveAttackSpeed(a.statAttackSpeedBonus, sim.worldMultipliers.attackSpeed);
+        const effAtkSpd = calculateEffectiveAttackSpeed(getActorAttackSpeedBonus(a), sim.worldMultipliers.attackSpeed);
         a.boomerangTimer = Math.max(MIN_LEGAL_CYCLE, (2.2 - a.relicBoomerang * 0.25) / effAtkSpd);
         const flySpeed = 8.0 * (a.relicAffix === 'boomerangSpeed' ? 1.35 : 1);
         const dirX = Math.cos(a.facing) || 1;
         const dirY = Math.sin(a.facing) || 0;
-        const boomDmg = Math.round(calculateAttackDamage(sim, a, false) * (0.9 + a.relicBoomerang * 0.25) * sim.rules.weaponModifiers.boomerang);
+        const deathMult = survivalDamageMultiplier(sim.eliminatedCount, sim.rules.bloodFeudBase);
+        const boomDmg = Math.max(1, Math.round(calculateAttackDamage(sim, a, false) * (0.9 + a.relicBoomerang * 0.25) * sim.rules.weaponModifiers.boomerang * deathMult));
 
         sim.boomerangs.push({
           id: sim.nextEntityId++,
@@ -2175,7 +2420,7 @@ export function stepWeapons(sim: SimulationState, dt: number): void {
     if (a.relicHammer > 0) {
       a.hammerTimer -= dt;
       if (a.hammerTimer <= 0) {
-        const effAtkSpd = calculateEffectiveAttackSpeed(a.statAttackSpeedBonus, sim.worldMultipliers.attackSpeed);
+        const effAtkSpd = calculateEffectiveAttackSpeed(getActorAttackSpeedBonus(a), sim.worldMultipliers.attackSpeed);
         a.hammerTimer = Math.max(MIN_LEGAL_CYCLE, (2.4 - a.relicHammer * 0.3) / effAtkSpd);
         const reach = (2.2 + a.relicHammer * 0.3) * (1 + a.statAreaBonus);
         const hammerDmg = Math.round(calculateAttackDamage(sim, a, false) * (1.5 + a.relicHammer * 0.4) * sim.rules.weaponModifiers.hammer);
@@ -2203,7 +2448,9 @@ export function stepWeapons(sim: SimulationState, dt: number): void {
             let diff = Math.abs(angToM - a.facing);
             while (diff > Math.PI) diff = Math.abs(diff - Math.PI * 2);
             if (diff <= (Math.PI / 3) && !segmentBlockedByCover(sim, a.x, a.y, m.x, m.y)) {
-              damageMonster(sim, m, effHammerDmg, a);
+              const crit = calculateEffectiveCrit(sim.effectiveMultipliers.critChance, a.personalMultiplier);
+              const hit = resolveHitDamage(effHammerDmg, crit.critChance, crit.critMultiplier, sim.rng ?? Math.random);
+              damageMonster(sim, m, hit.damage, a);
               // 击退怪物
               const pushX = Math.cos(angToM) * 1.8;
               const pushY = Math.sin(angToM) * 1.8;
@@ -2238,7 +2485,8 @@ export function stepWeapons(sim: SimulationState, dt: number): void {
       if (a.smokeTimer <= 0 && speedSq > 0.16) {
         a.smokeTimer = 0.35;
         const norm = Math.hypot(a.vx, a.vy) || 1;
-        const smokeDmg = Math.round(calculateAttackDamage(sim, a, false) * (0.35 + a.relicSmoke * 0.15) * sim.rules.weaponModifiers.smoke);
+        const deathMult = survivalDamageMultiplier(sim.eliminatedCount, sim.rules.bloodFeudBase);
+        const smokeDmg = Math.max(1, Math.round(calculateAttackDamage(sim, a, false) * (0.35 + a.relicSmoke * 0.15) * sim.rules.weaponModifiers.smoke * deathMult));
         sim.smokes.push({
           id: sim.nextEntityId++,
           ownerId: a.id,
@@ -2257,7 +2505,7 @@ export function stepWeapons(sim: SimulationState, dt: number): void {
     if (a.weaponBomb > 0) {
       a.bombTimer -= dt;
       if (a.bombTimer <= 0) {
-        const effAtkSpd = calculateEffectiveAttackSpeed(a.statAttackSpeedBonus, sim.worldMultipliers.attackSpeed);
+        const effAtkSpd = calculateEffectiveAttackSpeed(getActorAttackSpeedBonus(a), sim.worldMultipliers.attackSpeed);
         a.bombTimer = Math.max(MIN_LEGAL_CYCLE, (2.8 - a.weaponBomb * 0.35) / effAtkSpd);
         const radius = (1.8 + a.weaponBomb * 0.45) * (1 + a.statAreaBonus) * (a.relicAffix === 'bombRadius' ? 1.15 : 1);
         const bombDmg = Math.round(calculateAttackDamage(sim, a, false) * 1.3 * sim.rules.weaponModifiers.bomb);
@@ -2279,9 +2527,10 @@ export function stepWeapons(sim: SimulationState, dt: number): void {
     if ((a.relicThunder ?? 0) > 0) {
       a.thunderTimer -= dt;
       if (a.thunderTimer <= 0) {
-        const effAtkSpd = calculateEffectiveAttackSpeed(a.statAttackSpeedBonus, sim.worldMultipliers.attackSpeed);
+        const effAtkSpd = calculateEffectiveAttackSpeed(getActorAttackSpeedBonus(a), sim.worldMultipliers.attackSpeed);
         a.thunderTimer = Math.max(MIN_LEGAL_CYCLE, (3.2 - a.relicThunder * 0.35) / effAtkSpd);
-        const thunderDmg = Math.round(calculateAttackDamage(sim, a, false) * (1.2 + a.relicThunder * 0.35) * (sim.rules.weaponModifiers.thunder ?? 1));
+        const deathMult = survivalDamageMultiplier(sim.eliminatedCount, sim.rules.bloodFeudBase);
+        const thunderDmg = Math.max(1, Math.round(calculateAttackDamage(sim, a, false) * (1.2 + a.relicThunder * 0.35) * (sim.rules.weaponModifiers.thunder ?? 1) * deathMult));
         // 搜寻范围内最近敌对目标
         let targetPos: (Vec2 & { id: number; isMonster?: boolean }) | null = null;
         let minD = 8.0;
@@ -2302,7 +2551,11 @@ export function stepWeapons(sim: SimulationState, dt: number): void {
           pulse(sim, '⚡ 天雷轰顶！', targetPos.x, targetPos.y, '#ffd700');
           if (targetPos.isMonster) {
             const m = sim.monsters.find(xm => xm.id === targetPos!.id);
-            if (m && m.alive) damageMonster(sim, m, thunderDmg, a);
+            if (m && m.alive) {
+              const crit = calculateEffectiveCrit(sim.effectiveMultipliers.critChance, a.personalMultiplier);
+              const hit = resolveHitDamage(thunderDmg, crit.critChance, crit.critMultiplier, sim.rng ?? Math.random);
+              damageMonster(sim, m, hit.damage, a);
+            }
           } else {
             const o = sim.actors[targetPos.id];
             if (o && o.alive) {
@@ -2316,7 +2569,9 @@ export function stepWeapons(sim: SimulationState, dt: number): void {
             for (const m of sim.monsters) {
               if (m.alive && m.id !== targetPos.id && dist(targetPos, m) < 4.0) {
                 burst(sim, m.x, m.y, '#ffd700', 8);
-                damageMonster(sim, m, chainDmg, a);
+                const crit = calculateEffectiveCrit(sim.effectiveMultipliers.critChance, a.personalMultiplier);
+                const hit = resolveHitDamage(chainDmg, crit.critChance, crit.critMultiplier, sim.rng ?? Math.random);
+                damageMonster(sim, m, hit.damage, a);
                 break;
               }
             }
@@ -2329,15 +2584,18 @@ export function stepWeapons(sim: SimulationState, dt: number): void {
     if ((a.relicFrost ?? 0) > 0) {
       a.frostTimer -= dt;
       if (a.frostTimer <= 0) {
-        const effAtkSpd = calculateEffectiveAttackSpeed(a.statAttackSpeedBonus, sim.worldMultipliers.attackSpeed);
+        const effAtkSpd = calculateEffectiveAttackSpeed(getActorAttackSpeedBonus(a), sim.worldMultipliers.attackSpeed);
         a.frostTimer = Math.max(MIN_LEGAL_CYCLE, (3.2 - a.relicFrost * 0.3) / effAtkSpd);
         const frostRadius = (2.8 + a.relicFrost * 0.5) * (1 + a.statAreaBonus);
-        const frostDmg = Math.round(calculateAttackDamage(sim, a, false) * (0.6 + a.relicFrost * 0.2) * (sim.rules.weaponModifiers.frost ?? 1));
+        const deathMult = survivalDamageMultiplier(sim.eliminatedCount, sim.rules.bloodFeudBase);
+        const frostDmg = Math.max(1, Math.round(calculateAttackDamage(sim, a, false) * (0.6 + a.relicFrost * 0.2) * (sim.rules.weaponModifiers.frost ?? 1) * deathMult));
         burst(sim, a.x, a.y, '#67e8f9', 16);
         pulse(sim, '❄️ 冰环爆发！', a.x, a.y, '#67e8f9');
         for (const m of sim.monsters) {
           if (m.alive && dist(a, m) <= frostRadius && !segmentBlockedByCover(sim, a.x, a.y, m.x, m.y)) {
-            damageMonster(sim, m, frostDmg, a);
+            const crit = calculateEffectiveCrit(sim.effectiveMultipliers.critChance, a.personalMultiplier);
+            const hit = resolveHitDamage(frostDmg, crit.critChance, crit.critMultiplier, sim.rng ?? Math.random);
+            damageMonster(sim, m, hit.damage, a);
             m.speed = Math.max(1.0, m.speed * 0.5);
           }
         }
@@ -2364,19 +2622,22 @@ export function stepWeapons(sim: SimulationState, dt: number): void {
     if ((a.relicBlackhole ?? 0) > 0) {
       a.blackholeTimer -= dt;
       if (a.blackholeTimer <= 0) {
-        const effAtkSpd = calculateEffectiveAttackSpeed(a.statAttackSpeedBonus, sim.worldMultipliers.attackSpeed);
+        const effAtkSpd = calculateEffectiveAttackSpeed(getActorAttackSpeedBonus(a), sim.worldMultipliers.attackSpeed);
         a.blackholeTimer = Math.max(MIN_LEGAL_CYCLE, (4.0 - a.relicBlackhole * 0.35) / effAtkSpd);
         const dirX = Math.cos(a.facing) || 1;
         const dirY = Math.sin(a.facing) || 0;
         const holeX = a.x + dirX * 2.5;
         const holeY = a.y + dirY * 2.5;
         const holeRadius = (3.2 + a.relicBlackhole * 0.4) * (1 + a.statAreaBonus);
-        const holeDmg = Math.round(calculateAttackDamage(sim, a, false) * (0.7 + a.relicBlackhole * 0.2) * (sim.rules.weaponModifiers.blackhole ?? 1));
+        const deathMult = survivalDamageMultiplier(sim.eliminatedCount, sim.rules.bloodFeudBase);
+        const holeDmg = Math.max(1, Math.round(calculateAttackDamage(sim, a, false) * (0.7 + a.relicBlackhole * 0.2) * (sim.rules.weaponModifiers.blackhole ?? 1) * deathMult));
         burst(sim, holeX, holeY, '#9333ea', 16);
         pulse(sim, '🌀 引力奇点！', holeX, holeY, '#9333ea');
         for (const m of sim.monsters) {
           if (m.alive && Math.hypot(m.x - holeX, m.y - holeY) <= holeRadius) {
-            damageMonster(sim, m, holeDmg, a);
+            const crit = calculateEffectiveCrit(sim.effectiveMultipliers.critChance, a.personalMultiplier);
+            const hit = resolveHitDamage(holeDmg, crit.critChance, crit.critMultiplier, sim.rng ?? Math.random);
+            damageMonster(sim, m, hit.damage, a);
             m.x += (holeX - m.x) * 0.4;
             m.y += (holeY - m.y) * 0.4;
           }
@@ -2398,11 +2659,14 @@ export function stepWeapons(sim: SimulationState, dt: number): void {
       const spdSq = a.vx * a.vx + a.vy * a.vy;
       if (a.spikesTimer <= 0 && spdSq > 0.16) {
         a.spikesTimer = 0.65;
-        const spikesDmg = Math.round(calculateAttackDamage(sim, a, false) * (0.4 + a.relicSpikes * 0.15) * (sim.rules.weaponModifiers.spikes ?? 1));
+        const deathMult = survivalDamageMultiplier(sim.eliminatedCount, sim.rules.bloodFeudBase);
+        const spikesDmg = Math.max(1, Math.round(calculateAttackDamage(sim, a, false) * (0.4 + a.relicSpikes * 0.15) * (sim.rules.weaponModifiers.spikes ?? 1) * deathMult));
         burst(sim, a.x, a.y, '#f59e0b', 4);
         for (const m of sim.monsters) {
           if (m.alive && dist(a, m) < 1.2) {
-            damageMonster(sim, m, spikesDmg, a);
+            const crit = calculateEffectiveCrit(sim.effectiveMultipliers.critChance, a.personalMultiplier);
+            const hit = resolveHitDamage(spikesDmg, crit.critChance, crit.critMultiplier, sim.rng ?? Math.random);
+            damageMonster(sim, m, hit.damage, a);
           }
         }
         for (const o of aliveActors(sim)) {
@@ -2418,9 +2682,10 @@ export function stepWeapons(sim: SimulationState, dt: number): void {
     if ((a.relicChain ?? 0) > 0) {
       a.chainTimer -= dt;
       if (a.chainTimer <= 0) {
-        const effAtkSpd = calculateEffectiveAttackSpeed(a.statAttackSpeedBonus, sim.worldMultipliers.attackSpeed);
+        const effAtkSpd = calculateEffectiveAttackSpeed(getActorAttackSpeedBonus(a), sim.worldMultipliers.attackSpeed);
         a.chainTimer = Math.max(MIN_LEGAL_CYCLE, (3.6 - a.relicChain * 0.35) / effAtkSpd);
-        const chainDmg = Math.round(calculateAttackDamage(sim, a, false) * (0.9 + a.relicChain * 0.3) * (sim.rules.weaponModifiers.chain ?? 1));
+        const deathMult = survivalDamageMultiplier(sim.eliminatedCount, sim.rules.bloodFeudBase);
+        const chainDmg = Math.max(1, Math.round(calculateAttackDamage(sim, a, false) * (0.9 + a.relicChain * 0.3) * (sim.rules.weaponModifiers.chain ?? 1) * deathMult));
         let closest: (ActorState | MonsterState) | null = null;
         let minD = 7.0;
         for (const m of sim.monsters) {
@@ -2441,7 +2706,9 @@ export function stepWeapons(sim: SimulationState, dt: number): void {
           closest.x = a.x + Math.cos(ang) * 1.2;
           closest.y = a.y + Math.sin(ang) * 1.2;
           if ('kind' in closest) {
-            damageMonster(sim, closest, chainDmg, a);
+            const crit = calculateEffectiveCrit(sim.effectiveMultipliers.critChance, a.personalMultiplier);
+            const hit = resolveHitDamage(chainDmg, crit.critChance, crit.critMultiplier, sim.rng ?? Math.random);
+            damageMonster(sim, closest, hit.damage, a);
           } else {
             resolveHostileHit(sim, closest, chainDmg, a);
             closest.slow = Math.max(closest.slow, 0.6);
@@ -2455,9 +2722,10 @@ export function stepWeapons(sim: SimulationState, dt: number): void {
       a.orbAngle += dt * 3.5;
       a.orbTimer -= dt;
       if (a.orbTimer <= 0) {
-        const effAtkSpd = calculateEffectiveAttackSpeed(a.statAttackSpeedBonus, sim.worldMultipliers.attackSpeed);
+        const effAtkSpd = calculateEffectiveAttackSpeed(getActorAttackSpeedBonus(a), sim.worldMultipliers.attackSpeed);
         a.orbTimer = Math.max(MIN_LEGAL_CYCLE, 1.2 / effAtkSpd);
-        const orbDmg = Math.round(calculateAttackDamage(sim, a, false) * (0.5 + a.relicOrb * 0.2) * (sim.rules.weaponModifiers.orb ?? 1));
+        const deathMult = survivalDamageMultiplier(sim.eliminatedCount, sim.rules.bloodFeudBase);
+        const orbDmg = Math.max(1, Math.round(calculateAttackDamage(sim, a, false) * (0.5 + a.relicOrb * 0.2) * (sim.rules.weaponModifiers.orb ?? 1) * deathMult));
         let nearestTarget: (Vec2 & { isMonster?: boolean; id: number }) | null = null;
         let minD = 6.5;
         for (const m of sim.monsters) {
@@ -2470,7 +2738,11 @@ export function stepWeapons(sim: SimulationState, dt: number): void {
           burst(sim, nearestTarget.x, nearestTarget.y, '#34d399', 6);
           if (nearestTarget.isMonster) {
             const m = sim.monsters.find(xm => xm.id === nearestTarget!.id);
-            if (m && m.alive) damageMonster(sim, m, orbDmg, a);
+            if (m && m.alive) {
+              const crit = calculateEffectiveCrit(sim.effectiveMultipliers.critChance, a.personalMultiplier);
+              const hit = resolveHitDamage(orbDmg, crit.critChance, crit.critMultiplier, sim.rng ?? Math.random);
+              damageMonster(sim, m, hit.damage, a);
+            }
           } else {
             const o = sim.actors[nearestTarget.id];
             if (o && o.alive) resolveHostileHit(sim, o, orbDmg, a);
@@ -2483,15 +2755,18 @@ export function stepWeapons(sim: SimulationState, dt: number): void {
     if ((a.relicFireRing ?? 0) > 0) {
       a.fireRingTimer -= dt;
       if (a.fireRingTimer <= 0) {
-        const effAtkSpd = calculateEffectiveAttackSpeed(a.statAttackSpeedBonus, sim.worldMultipliers.attackSpeed);
+        const effAtkSpd = calculateEffectiveAttackSpeed(getActorAttackSpeedBonus(a), sim.worldMultipliers.attackSpeed);
         a.fireRingTimer = Math.max(MIN_LEGAL_CYCLE, (3.0 - a.relicFireRing * 0.3) / effAtkSpd);
         const ringRadius = (3.0 + a.relicFireRing * 0.5) * (1 + a.statAreaBonus);
-        const fireDmg = Math.round(calculateAttackDamage(sim, a, false) * (0.7 + a.relicFireRing * 0.25) * (sim.rules.weaponModifiers.fire_ring ?? 1));
+        const deathMult = survivalDamageMultiplier(sim.eliminatedCount, sim.rules.bloodFeudBase);
+        const fireDmg = Math.max(1, Math.round(calculateAttackDamage(sim, a, false) * (0.7 + a.relicFireRing * 0.25) * (sim.rules.weaponModifiers.fire_ring ?? 1) * deathMult));
         burst(sim, a.x, a.y, '#ef4444', 16);
         pulse(sim, '🔥 赤炎火环！', a.x, a.y, '#ef4444');
         for (const m of sim.monsters) {
           if (m.alive && dist(a, m) <= ringRadius && !segmentBlockedByCover(sim, a.x, a.y, m.x, m.y)) {
-            damageMonster(sim, m, fireDmg, a);
+            const crit = calculateEffectiveCrit(sim.effectiveMultipliers.critChance, a.personalMultiplier);
+            const hit = resolveHitDamage(fireDmg, crit.critChance, crit.critMultiplier, sim.rng ?? Math.random);
+            damageMonster(sim, m, hit.damage, a);
           }
         }
         for (const o of aliveActors(sim)) {
@@ -2509,16 +2784,19 @@ export function stepWeapons(sim: SimulationState, dt: number): void {
     if ((a.relicMirror ?? 0) > 0) {
       a.mirrorTimer -= dt;
       if (a.mirrorTimer <= 0) {
-        const effAtkSpd = calculateEffectiveAttackSpeed(a.statAttackSpeedBonus, sim.worldMultipliers.attackSpeed);
+        const effAtkSpd = calculateEffectiveAttackSpeed(getActorAttackSpeedBonus(a), sim.worldMultipliers.attackSpeed);
         a.mirrorTimer = Math.max(MIN_LEGAL_CYCLE, (4.0 - a.relicMirror * 0.35) / effAtkSpd);
-        const mirrorDmg = Math.round(calculateAttackDamage(sim, a, false) * (0.5 + a.relicMirror * 0.15) * (sim.rules.weaponModifiers.mirror ?? 1));
+        const deathMult = survivalDamageMultiplier(sim.eliminatedCount, sim.rules.bloodFeudBase);
+        const mirrorDmg = Math.max(1, Math.round(calculateAttackDamage(sim, a, false) * (0.5 + a.relicMirror * 0.15) * (sim.rules.weaponModifiers.mirror ?? 1) * deathMult));
         const mx = a.x + Math.cos(a.facing + 1.57) * 1.2;
         const my = a.y + Math.sin(a.facing + 1.57) * 1.2;
         burst(sim, mx, my, '#e0e7ff', 10);
         pulse(sim, '👥 幻影协同！', mx, my, '#e0e7ff');
         for (const m of sim.monsters) {
           if (m.alive && Math.hypot(m.x - mx, m.y - my) <= 2.2) {
-            damageMonster(sim, m, mirrorDmg, a);
+            const crit = calculateEffectiveCrit(sim.effectiveMultipliers.critChance, a.personalMultiplier);
+            const hit = resolveHitDamage(mirrorDmg, crit.critChance, crit.critMultiplier, sim.rng ?? Math.random);
+            damageMonster(sim, m, hit.damage, a);
           }
         }
         for (const o of aliveActors(sim)) {
@@ -2610,7 +2888,9 @@ export function stepWeapons(sim: SimulationState, dt: number): void {
         const cd = c.hitCooldowns.get(key) ?? 0;
         if (sim.elapsed >= cd) {
           c.hitCooldowns.set(key, sim.elapsed + 0.3);
-          damageMonster(sim, m, c.damage, owner);
+          const crit = calculateEffectiveCrit(sim.effectiveMultipliers.critChance, owner.personalMultiplier);
+          const hit = resolveHitDamage(c.damage, crit.critChance, crit.critMultiplier, sim.rng ?? Math.random);
+          damageMonster(sim, m, hit.damage, owner);
           const dx = c.x - m.x;
           const dy = c.y - m.y;
           const d = Math.hypot(dx, dy) || 1;
@@ -2665,7 +2945,9 @@ export function stepWeapons(sim: SimulationState, dt: number): void {
     for (const m of sim.monsters) {
       if (!m.alive || dist(b, m) > 0.85 || b.hitMonsterIds.includes(m.id)) continue;
       b.hitMonsterIds.push(m.id);
-      damageMonster(sim, m, b.damage, owner);
+      const crit = calculateEffectiveCrit(sim.effectiveMultipliers.critChance, owner.personalMultiplier);
+      const hit = resolveHitDamage(b.damage, crit.critChance, crit.critMultiplier, sim.rng ?? Math.random);
+      damageMonster(sim, m, hit.damage, owner);
     }
     for (const o of aliveActors(sim)) {
       if (o.id === b.ownerId || (owner.team >= 0 && owner.team === o.id) || dist(b, o) > 0.85 || b.hitActorIds.includes(o.id)) continue;
@@ -2696,7 +2978,9 @@ export function stepWeapons(sim: SimulationState, dt: number): void {
         const cd = s.hitCooldowns.get(key) ?? 0;
         if (sim.elapsed >= cd) {
           s.hitCooldowns.set(key, sim.elapsed + 0.5);
-          damageMonster(sim, m, s.damage, owner);
+          const crit = calculateEffectiveCrit(sim.effectiveMultipliers.critChance, owner.personalMultiplier);
+          const hit = resolveHitDamage(s.damage, crit.critChance, crit.critMultiplier, sim.rng ?? Math.random);
+          damageMonster(sim, m, hit.damage, owner);
         }
       }
       for (const o of aliveActors(sim)) {
@@ -2776,7 +3060,7 @@ export function decideAI(sim: SimulationState, a: ActorState): void {
 
   // 1. 处理发给自己的待处理组队邀请
   const pendingToMe = sim.invites.find((inv) => inv.toId === a.id && sim.elapsed <= inv.expiresAt);
-  if (pendingToMe && a.team < 0 && !sim.finalPhase) {
+  if (pendingToMe && a.team < 0) {
     const fromActor = sim.actors[pendingToMe.fromId];
     if (fromActor && fromActor.alive && dist(a, fromActor) <= ALLY_INTERACT_DISTANCE && !isPairIgnored(sim, a.id, fromActor.id)) {
       const grudge = getGrudgeScore(sim.grudges.get(a.id) ?? createEmptyGrudgeRecord(), fromActor.id);
@@ -2859,12 +3143,24 @@ export function decideAI(sim: SimulationState, a: ActorState): void {
     return;
   }
 
-  // 3. 终局混战阶段
+  // 3. 终局混战阶段（优先追击其他敌手；若全场只剩队友，则主动拉开距离断线背叛决出最终胜者）
   if (sim.finalPhase) {
-    const others = aliveActors(sim).filter((o) => o !== a);
-    const t = others.sort((p, q) => dist(a, p) - dist(a, q))[0];
-    a.aim = t ? { x: t.x, y: t.y } : { x: center, y: center };
-    return;
+    const enemies = aliveActors(sim).filter((o) => o !== a && o.id !== a.team);
+    if (enemies.length > 0) {
+      const t = enemies.sort((p, q) => dist(a, p) - dist(a, q))[0];
+      a.aim = t ? { x: t.x, y: t.y } : { x: center, y: center };
+      return;
+    } else if (partner) {
+      a.runningAwayFromPartner = true;
+      const dx = a.x - partner.x || 1;
+      const dy = a.y - partner.y || 1;
+      const dlen = Math.hypot(dx, dy);
+      a.aim = {
+        x: clamp(a.x + (dx / dlen) * 4.0, 1.5, GRID_SIZE - 2.5),
+        y: clamp(a.y + (dy / dlen) * 4.0, 1.5, GRID_SIZE - 2.5),
+      };
+      return;
+    }
   }
 
   // 4. 已有队伍状态
@@ -2901,7 +3197,7 @@ export function decideAI(sim: SimulationState, a: ActorState): void {
       y: (a.y + partner.y) / 2 + (Math.random() - 0.5) * 2.0,
     };
     return;
-  } else if (!sim.finalPhase && a.ai !== 'raider') {
+  } else if (a.ai !== 'raider') {
     // 5. 单人未组队：寻找附近未组队未屏蔽角色
     const candidate = getNearbyCandidate(sim, a);
     if (candidate && candidate.canInvite) {
@@ -2959,8 +3255,8 @@ export function startBossRaid(sim: SimulationState): void {
 export function enterFinalPhase(sim: SimulationState): void {
   if (sim.finalPhase || sim.gameOver) return;
   sim.finalPhase = true;
-  for (const a of aliveActors(sim)) if (a.team >= 0) disbandTeam(sim, a, 'final');
-  sim.invites.length = 0;
+  // 保持队伍关系与继续组队能力；终局阶段组队伤害减免失效，伤害全额结算
+  pulse(sim, '⚔️ 终局决战！组队减伤失效，淘汰所有对手！', (GRID_SIZE - 1) / 2, (GRID_SIZE - 1) / 2, '#ff3b30');
 }
 
 export function stepBossRaid(sim: SimulationState, dt: number): void {
@@ -3031,6 +3327,7 @@ export function restartSimulation(
     personalMultipliers?: Map<number, number>;
     enemyScale?: { hp: number; damage: number };
     rng?: () => number;
+    grantRandomRelic?: boolean;
   },
 ): void {
   const initial = createInitialSimulation(options);
@@ -3069,6 +3366,7 @@ export function stepSimulation(
   const dt = dtRaw * sim.speed;
   const center = (GRID_SIZE - 1) / 2;
 
+  const prevElapsed = sim.elapsed;
   sim.elapsed += dt;
   if (sim.raidPhase === 'none' && sim.bossRound < 2 && sim.elapsed >= RAID_TRIGGER_SECONDS[sim.bossRound as 0 | 1]!) startBossRaid(sim);
   stepBossRaid(sim, dt);
@@ -3094,6 +3392,27 @@ export function stepSimulation(
     );
   }
   sim.shrink = 1 - currentSafeRadius(sim) / 0.98;
+
+  // 分钟纪元（Minute Epochs）机制变革侦测与全场小怪属性刷新（仅在真实跨越分钟整点时触发）
+  const prevMinute = Math.floor(prevElapsed / 60);
+  const currentMinute = Math.floor(sim.elapsed / 60);
+  if (currentMinute > prevMinute && currentMinute > sim.lastNotifiedMinute) {
+    sim.lastNotifiedMinute = currentMinute;
+    const epoch = getMinuteEpochConfig(sim.elapsed);
+    pulse(sim, `⚡ 机制变革 · ${epoch.label}`, center, center, '#ffd166');
+    // 场上存活非 Boss 怪物平滑同步当前分钟属性上限与伤害
+    for (const m of sim.monsters) {
+      if (m.kind === 'boss') continue;
+      const cfg = BASE_MONSTER_CONFIG[m.kind];
+      if (cfg) {
+        const newMaxHp = Math.max(1, Math.round(cfg.baseHp * sim.enemyHpScale * epoch.monsterScale));
+        const hpRatio = m.maxHp > 0 ? m.hp / m.maxHp : 1;
+        m.maxHp = newMaxHp;
+        m.hp = Math.max(1, Math.round(newMaxHp * hpRatio));
+        m.damage = Math.max(1, Math.round(cfg.baseDamage * sim.enemyDamageScale * epoch.monsterScale));
+      }
+    }
+  }
 
   if (sim.elapsed >= 275) enterFinalPhase(sim);
 
@@ -3273,10 +3592,11 @@ export function stepSimulation(
       }
     }
     const isSlowed = a.slow > 0;
+    const hasteSpeedBonus = (a.relicHaste ?? 0) > 0 ? [0, 0.15, 0.25, 0.35][a.relicHaste]! : 0;
     const sp =
       calculateEffectiveMoveSpeed(
         6.98,
-        a.statSpeedBonus,
+        a.statSpeedBonus + hasteSpeedBonus,
         sim.worldMultipliers.moveSpeed,
         isSlowed,
         a.personalMultiplier * sim.rules.moveSpeedModifier * (a.team >= 0 ? sim.rules.teamSpeedModifier : 1),
@@ -3426,6 +3746,13 @@ export function stepSimulation(
           const x = gx + (Math.random() - 0.5) * 0.8, y = gy + (Math.random() - 0.5) * 0.8;
           const actualTile = tileAt(sim, Math.round(x), Math.round(y));
           if (isInsideCover(sim, x, y) || !actualTile?.isLand || actualTile.gone || actualTile.r > currentRadius - 0.04) continue;
+          const epoch = getMinuteEpochConfig(sim.elapsed);
+          const cfg = BASE_MONSTER_CONFIG[deadMonster.kind as Exclude<MonsterKind, 'boss'>];
+          if (cfg) {
+            deadMonster.maxHp = Math.max(1, Math.round(cfg.baseHp * sim.enemyHpScale * epoch.monsterScale));
+            deadMonster.damage = Math.max(1, Math.round(cfg.baseDamage * sim.enemyDamageScale * epoch.monsterScale));
+            deadMonster.speed = cfg.speed;
+          }
           deadMonster.x = x;
           deadMonster.y = y;
           deadMonster.hp = deadMonster.maxHp;
@@ -3465,7 +3792,10 @@ export function stepSimulation(
     for (const m of sim.monsters) {
       if (!m.alive || (m.kind === 'boss' && sim.raidPhase !== 'fight')) continue;
       const d = dist(a, m);
-      if (d <= reach && !segmentBlockedByCover(sim, a.x, a.y, m.x, m.y)) targets.push({ score: m.kind === 'boss' ? 250 : m.kind === 'tank' ? 220 : 100, distance: d, monster: m });
+      if (d <= reach && !segmentBlockedByCover(sim, a.x, a.y, m.x, m.y)) {
+        const monsterScore = sim.finalPhase ? 120 : (m.kind === 'boss' ? 250 : m.kind === 'tank' ? 220 : 100);
+        targets.push({ score: monsterScore, distance: d, monster: m });
+      }
     }
     for (const c of sim.chests) {
       const d = dist(a, c);
@@ -3475,14 +3805,15 @@ export function stepSimulation(
       if (o === a || o.id === a.team) continue;
       const d = dist(a, o);
       const looting = o.hp / o.maxHp < 0.4 && sim.loots.some(l => l.value > 0 && dist(l, o) < 1.5);
-      if (d <= reach && !segmentBlockedByCover(sim, a.x, a.y, o.x, o.y)) targets.push({ score: looting ? 600 : d <= 1.2 ? 200 : 50, distance: d, actor: o });
+      const actorScore = sim.finalPhase ? (looting ? 950 : 800) : (looting ? 600 : d <= 1.2 ? 200 : 50);
+      if (d <= reach && !segmentBlockedByCover(sim, a.x, a.y, o.x, o.y)) targets.push({ score: actorScore, distance: d, actor: o });
     }
     const chosen = targets.sort((p, q) => q.score - p.score || p.distance - q.distance)[0];
     if (chosen) { targetMonster = chosen.monster ?? null; targetActor = chosen.actor ?? null; targetChest = chosen.chest ?? null; }
 
     if (targetChest) {
       const effAtkSpd = calculateEffectiveAttackSpeed(
-        a.statAttackSpeedBonus,
+        getActorAttackSpeedBonus(a),
         sim.worldMultipliers.attackSpeed,
         a.personalMultiplier,
       );
@@ -3506,7 +3837,7 @@ export function stepSimulation(
 
     if (targetMonster) {
       const effAtkSpd = calculateEffectiveAttackSpeed(
-        a.statAttackSpeedBonus,
+        getActorAttackSpeedBonus(a),
         sim.worldMultipliers.attackSpeed,
         a.personalMultiplier,
       );
@@ -3525,7 +3856,7 @@ export function stepSimulation(
         continue;
       }
       const effAtkSpd = calculateEffectiveAttackSpeed(
-        a.statAttackSpeedBonus,
+        getActorAttackSpeedBonus(a),
         sim.worldMultipliers.attackSpeed,
         a.personalMultiplier,
       );
